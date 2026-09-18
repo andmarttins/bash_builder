@@ -1,0 +1,23 @@
+import { Injectable, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { rm, writeFile } from 'node:fs/promises';
+import { KafkaConsumerService } from '../kafka/kafka-consumer.service.js';
+import { WorkerDatabaseHealthService } from './worker-database-health.service.js';
+
+export const workerReadinessPath = '/tmp/builder-worker-ready';
+
+@Injectable()
+export class WorkerReadinessService implements OnApplicationBootstrap, OnModuleDestroy {
+  public constructor(
+    private readonly consumer: KafkaConsumerService,
+    private readonly database: WorkerDatabaseHealthService
+  ) {}
+
+  public async onApplicationBootstrap(): Promise<void> {
+    if (!this.consumer.isReady() || !this.database.isReady()) throw new Error('Worker dependencies are not ready.');
+    await writeFile(workerReadinessPath, 'ready\n', { mode: 0o600 });
+  }
+
+  public async onModuleDestroy(): Promise<void> {
+    await rm(workerReadinessPath, { force: true });
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@builder/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "start:dev": "nest start --watch",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@builder/contracts": "file:../../packages/contracts",
+    "@nestjs/common": "12.0.3",
+    "@nestjs/core": "12.0.3",
+    "@prisma/client": "6.19.3",
+    "kafkajs": "2.2.4",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "pg": "8.16.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "12.0.0"
+  }
+}

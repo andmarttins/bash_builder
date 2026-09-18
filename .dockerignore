@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+source-review
+ANALISE_E_PLANO_MODERNIZACAO.md
+

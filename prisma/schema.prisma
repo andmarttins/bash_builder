@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
+model Organization {
+  id          String             @id @default(uuid()) @db.Uuid
+  slug        String             @unique @db.VarChar(63)
+  name        String             @db.VarChar(160)
+  status      OrganizationStatus @default(ACTIVE)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships Membership[]
+  settings    TenantSetting[]
+  auditLogs   AuditLog[]
+  outbox      OutboxEvent[]
+
+  @@map("organizations")
+}
+
+model IdentityUser {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique @db.Citext
+  passwordHash String?      @map("password_hash") @db.VarChar(255)
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships  Membership[]
+
+  @@map("identity_users")
+}
+
+model Membership {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  identityUserId String           @map("identity_user_id") @db.Uuid
+  role           MembershipRole   @default(MEMBER)
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  identityUser   IdentityUser     @relation(fields: [identityUserId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, identityUserId])
+  @@index([identityUserId, status])
+  @@index([organizationId, status])
+  @@map("memberships")
+}
+
+model TenantSetting {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  key            String       @db.VarChar(120)
+  value          Json
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, key])
+  @@map("tenant_settings")
+}
+
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  actorId        String?      @map("actor_id") @db.Uuid
+  action         String       @db.VarChar(160)
+  resourceType   String       @map("resource_type") @db.VarChar(120)
+  resourceId     String?      @map("resource_id") @db.Uuid
+  requestId      String?      @map("request_id") @db.Uuid
+  metadata       Json         @default("{}")
+  occurredAt     DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, occurredAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+model OutboxEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  aggregateId    String       @map("aggregate_id") @db.Uuid
+  eventType      String       @map("event_type") @db.VarChar(120)
+  schemaVersion  Int          @default(1) @map("schema_version")
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attemptCount   Int          @default(0) @map("attempt_count")
+  availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(6)
+  leasedUntil    DateTime?    @map("leased_until") @db.Timestamptz(6)
+  publishedAt    DateTime?    @map("published_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([status, availableAt])
+  @@map("outbox_events")
+}

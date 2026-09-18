@@ -1,0 +1,47 @@
+{
+  "name": "builder-solutions-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @builder/contracts && npm run build -w @builder/api && npm run build -w @builder/worker && npm run build -w @builder/web",
+    "dev:api": "npm run start:dev -w @builder/api",
+    "dev:web": "npm run dev -w @builder/web",
+    "dev:worker": "npm run start:dev -w @builder/worker",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "test:integration": "vitest run apps/api/src/platform/database/rls.integration.spec.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --pretty false",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:status": "prisma migrate status --schema prisma/schema.prisma",
+    "db:validate": "cross-env DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder prisma validate --schema prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
+    "@typescript-eslint/eslint-plugin": "8.46.4",
+    "@typescript-eslint/parser": "8.46.4",
+    "cross-env": "10.1.0",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "eslint-plugin-react-refresh": "0.4.24",
+    "prisma": "6.19.3",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4",
+    "vitest": "5.0.1"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
+  }
+}
