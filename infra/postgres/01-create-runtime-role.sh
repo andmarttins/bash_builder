@@ -3,10 +3,14 @@ set -eu
 
 : "${APP_MIGRATOR_DB_PASSWORD:?APP_MIGRATOR_DB_PASSWORD is required}"
 : "${APP_RUNTIME_DB_PASSWORD:?APP_RUNTIME_DB_PASSWORD is required}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+
+export PGPASSWORD="$POSTGRES_PASSWORD"
 
 psql --set=ON_ERROR_STOP=1 \
   --username "$POSTGRES_USER" \
   --dbname "$POSTGRES_DB" \
+  --set=db_name="$POSTGRES_DB" \
   --set=migrator_password="$APP_MIGRATOR_DB_PASSWORD" \
   --set=runtime_password="$APP_RUNTIME_DB_PASSWORD" <<'SQL'
 DO $$
@@ -21,9 +25,9 @@ END
 $$;
 ALTER ROLE app_migrator PASSWORD :'migrator_password';
 ALTER ROLE app_runtime PASSWORD :'runtime_password';
-REVOKE ALL ON DATABASE CURRENT_DATABASE() FROM PUBLIC;
-GRANT CONNECT, CREATE, TEMPORARY ON DATABASE CURRENT_DATABASE() TO app_migrator;
-GRANT CONNECT, TEMPORARY ON DATABASE CURRENT_DATABASE() TO app_runtime;
+REVOKE ALL ON DATABASE :"db_name" FROM PUBLIC;
+GRANT CONNECT, CREATE, TEMPORARY ON DATABASE :"db_name" TO app_migrator;
+GRANT CONNECT, TEMPORARY ON DATABASE :"db_name" TO app_runtime;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO app_migrator;
 GRANT USAGE ON SCHEMA public TO app_runtime;

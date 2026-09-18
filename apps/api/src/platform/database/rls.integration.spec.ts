@@ -15,27 +15,6 @@ describeIntegration('PostgreSQL row-level security', () => {
 
   beforeAll(async () => {
     await bootstrap.connect();
-    await bootstrap.query(`
-      DO $$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_migrator') THEN
-          CREATE ROLE app_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD 'migrator-test-password';
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_runtime') THEN
-          CREATE ROLE app_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD 'runtime-test-password';
-        END IF;
-      END
-      $$;
-      REVOKE ALL ON DATABASE builder_test FROM PUBLIC;
-      GRANT CONNECT, CREATE, TEMPORARY ON DATABASE builder_test TO app_migrator;
-      GRANT CONNECT, TEMPORARY ON DATABASE builder_test TO app_runtime;
-      REVOKE ALL ON SCHEMA public FROM PUBLIC;
-      GRANT USAGE, CREATE ON SCHEMA public TO app_migrator;
-      GRANT USAGE ON SCHEMA public TO app_runtime;
-      CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION app_migrator;
-      CREATE EXTENSION IF NOT EXISTS citext;
-      CREATE EXTENSION IF NOT EXISTS pgcrypto;
-    `);
     execFileSync('npm', ['run', 'db:deploy'], {
       cwd: process.cwd(),
       env: { ...process.env, DATABASE_URL: migratorUrl },
@@ -45,6 +24,10 @@ describeIntegration('PostgreSQL row-level security', () => {
       "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'app_migrator'"
     );
     expect(rolePrivileges.rows).toEqual([{ rolsuper: false, rolbypassrls: false }]);
+    const requiredExtensions = await bootstrap.query<{ extname: string }>(
+      "SELECT extname FROM pg_extension WHERE extname IN ('citext', 'pgcrypto') ORDER BY extname"
+    );
+    expect(requiredExtensions.rows).toEqual([{ extname: 'citext' }, { extname: 'pgcrypto' }]);
     await bootstrap.query('DELETE FROM "organizations"');
     await bootstrap.query(
       'INSERT INTO "organizations" (id, slug, name, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',

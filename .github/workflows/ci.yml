@@ -36,6 +36,17 @@ jobs:
           node-version: 24.15.0
           cache: npm
       - run: npm ci
+      - name: Validate PostgreSQL bootstrap script
+        run: >-
+          docker run --rm --network host
+          -e PGHOST=127.0.0.1
+          -e POSTGRES_DB=builder_test
+          -e POSTGRES_USER=postgres_bootstrap
+          -e POSTGRES_PASSWORD=bootstrap-test-password
+          -e APP_MIGRATOR_DB_PASSWORD=migrator-test-password
+          -e APP_RUNTIME_DB_PASSWORD=runtime-test-password
+          -v "${{ github.workspace }}/infra/postgres/01-create-runtime-role.sh:/init.sh:ro"
+          postgres:18.1-alpine sh /init.sh
       - run: npm run db:generate
       - run: npm run db:validate
       - run: npm run lint

@@ -12,6 +12,8 @@ Cadastre os valores de `.env.example` na interface de Environment do Dokploy. Ge
 
 `POSTGRES_USER` é apenas o usuário superusuário de bootstrap: sua senha não entra em `migrate`, API ou worker. `MIGRATOR_DATABASE_URL` usa `app_migrator`; `DATABASE_URL` usa `app_runtime`. Não inverta as credenciais: a API/worker com migrator tornaria RLS inefetivo. Não use arquivo `.env` nem secrets em Git.
 
+Guarde a senha de bootstrap exclusivamente no ambiente do banco. Depois da inicialização confirmada, mantenha-a fora de runbooks de aplicação e faça a rotação em procedimento controlado; ela nunca é uma variável dos containers `migrate`, `api` ou `worker`.
+
 ## Ordem do primeiro deploy
 
 1. Defina domínio de `web`, `APP_ORIGIN` com `https://` e todas as variáveis.
