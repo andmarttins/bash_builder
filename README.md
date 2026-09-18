@@ -13,7 +13,7 @@ Base do novo Builder Solutions multi-tenant. O projeto substitui o legado gradua
 ## Desenvolvimento
 
 1. Copie `.env.example` para `.env` e troque todos os valores de senha.
-2. Inicie PostgreSQL e Redpanda com `docker compose up -d postgres redpanda`.
+2. Inicie PostgreSQL, Redis e Redpanda como serviços locais independentes e configure as URLs no `.env`. O Compose desta base não cria PostgreSQL nem Redis.
 3. Instale dependências: `npm install`.
 4. Gere o cliente e aplique migrations: `npm run db:generate` e `npm run db:deploy`.
 5. Rode `npm run dev:api`, `npm run dev:worker` e `npm run dev:web` em terminais separados.
@@ -22,17 +22,19 @@ Validações: `npm run lint`, `npm run typecheck`, `npm test` e `npm run build`.
 
 ## Primeiro deploy no Dokploy
 
-1. Crie um projeto e um serviço **Compose** a partir deste repositório.
-2. Selecione `docker-compose.yml`. Configure no Dokploy as variáveis de `.env.example`; use secrets, não arquivo `.env` no Git.
-3. Crie domínio HTTPS para `web` (porta interna `80`). A API fica interna; exponha-a apenas se houver integração externa, com domínio próprio e `APP_ORIGIN` exata.
-4. Na primeira instalação, execute o serviço `migrate` uma vez e confirme conclusão. Em seguida inicie `api`, `worker`, `web`, `postgres` e `redpanda`.
+1. Crie PostgreSQL 18 e Redis como serviços independentes do Dokploy, sem portas públicas. Crie também o banco `builder` no PostgreSQL.
+2. Crie um serviço **Compose** a partir deste repositório e selecione `docker-compose.yml`. Configure no Dokploy as variáveis de `.env.example`; use secrets, não arquivo `.env` no Git.
+3. Use somente os hostnames internos dos serviços separados nas URLs PostgreSQL e Redis. `BOOTSTRAP_DATABASE_URL` fica disponível apenas para o job `db-bootstrap`; nunca para API, worker ou `migrate`.
+4. Crie domínio HTTPS para `web` (porta interna `80`). A API fica interna; exponha-a apenas se houver integração externa, com domínio próprio e `APP_ORIGIN` exata.
+5. No primeiro deploy, `db-bootstrap` cria os papéis limitados, `migrate` aplica o schema e então API, worker, web e Redpanda iniciam. Verifique a conclusão dos dois jobs.
 5. Depois de validar health checks, crie o primeiro tenant pela futura interface administrativa. A base não inclui seed de conta administrativa para evitar credenciais padrão.
 
-`postgres_data` e `redpanda_data` são volumes persistentes. Produção requer backup/PITR do PostgreSQL, backup de objetos quando o storage entrar, rotação de segredos e monitoramento de health/lag do worker.
+O volume `redpanda_data` é persistente. Configure no serviço PostgreSQL separado backup/PITR, retenção e teste de restauração antes de usar dados reais. Produção também requer rotação de segredos e monitoramento de health/lag do worker.
 
 ## Segurança já definida na base
 
 - O usuário de bootstrap do PostgreSQL não entra em nenhum container de aplicação. O runtime usa `app_runtime`, sem propriedade das tabelas e sem `BYPASSRLS`; migrations usam `app_migrator`, também sem privilégio de superusuário/BYPASSRLS.
 - Dados tenant-owned são protegidos por RLS e o acesso de aplicação deve ocorrer em `withTenantTransaction`, que usa `SET LOCAL app.tenant_id`.
-- O broker é interno no Compose. Nenhuma porta de banco ou Kafka é publicada no host.
+- PostgreSQL e Redis são serviços independentes internos do Dokploy. A API verifica ambos em `/ready`; Redis fica preparado para cache, rate limit distribuído e jobs posteriores.
+- O broker é interno no Compose. Nenhuma porta de banco, Redis ou Kafka é publicada no host.
 - Esta base ainda não contém autenticação, UI administrativa ou formulários: esses módulos serão adicionados sobre os contratos de tenancy e auditoria já versionados.
