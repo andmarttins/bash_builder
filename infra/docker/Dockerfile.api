@@ -21,6 +21,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY --from=production-dependencies /app/node_modules ./node_modules
+# npm workspaces may retain production packages that cannot be hoisted at the
+# workspace root (for example @prisma/adapter-pg). Preserve that resolution
+# path in the runtime image as well.
+COPY --from=production-dependencies /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/api/dist ./apps/api/dist
