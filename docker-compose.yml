@@ -14,6 +14,7 @@ services:
     volumes:
       - ./infra/postgres/01-create-runtime-role.sh:/init.sh:ro
     command: ["sh", "/init.sh"]
+    networks: [dokploy-network]
 
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v25.3.1
@@ -42,6 +43,7 @@ services:
       interval: 10s
       timeout: 10s
       retries: 12
+    networks: [platform-internal]
 
   migrate:
     build:
@@ -53,6 +55,7 @@ services:
     depends_on:
       db-bootstrap:
         condition: service_completed_successfully
+    networks: [dokploy-network]
 
   api:
     build:
@@ -77,6 +80,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
+    networks: [platform-internal, dokploy-network]
 
   worker:
     build:
@@ -103,6 +107,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    networks: [platform-internal, dokploy-network]
 
   web:
     build:
@@ -112,8 +117,8 @@ services:
     init: true
     security_opt:
       - no-new-privileges:true
-    ports:
-      - "${WEB_PORT:-8080}:80"
+    expose:
+      - "80"
     depends_on:
       api:
         condition: service_healthy
@@ -122,6 +127,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    networks: [platform-internal]
 
 volumes:
   redpanda_data:
+
+networks:
+  # Shared only by components that need the independent Dokploy data services.
+  dokploy-network:
+    external: true
+  # Keeps API-to-web, worker-to-Kafka and Kafka traffic out of the global network.
+  platform-internal:
+    internal: true

@@ -5,7 +5,15 @@ const apiEnvironmentSchema = z.object({
   API_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   APP_ORIGIN: z.string().url(),
   DATABASE_URL: z.string().url(),
-  REDIS_URL: z.string().url()
+  REDIS_URL: z.string().url().superRefine((value, context) => {
+    const url = new URL(value);
+    if (url.protocol !== 'redis:' && url.protocol !== 'rediss:') {
+      context.addIssue({ code: 'custom', message: 'REDIS_URL must use redis:// or rediss://.', path: [] });
+    }
+    if (!url.password) {
+      context.addIssue({ code: 'custom', message: 'REDIS_URL must include an authenticated Redis password.', path: [] });
+    }
+  })
 }).superRefine((value, context) => {
   const origin = new URL(value.APP_ORIGIN);
   if (value.NODE_ENV === 'production' && origin.protocol !== 'https:') {

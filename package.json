@@ -18,7 +18,7 @@
     "dev:worker": "npm run start:dev -w @builder/worker",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
-    "test:integration": "vitest run apps/api/src/platform/database/rls.integration.spec.ts",
+    "test:integration": "vitest run apps/api/src/platform/database/rls.integration.spec.ts apps/api/src/platform/redis/redis.integration.spec.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
