@@ -12,10 +12,12 @@ describeIntegration('Redis connection security', () => {
     maxRetriesPerRequest: 1,
     retryStrategy: () => null
   });
+  // Redis correctly emits an error event before rejecting an unauthenticated
+  // connection. Observe it so the expected security failure is not unhandled.
+  unauthenticated.on('error', () => undefined);
 
   beforeAll(async () => {
     await authenticated.connect();
-    await unauthenticated.connect();
   });
 
   afterAll(() => {
@@ -30,6 +32,6 @@ describeIntegration('Redis connection security', () => {
   });
 
   it('rejects a connection without the configured password', async () => {
-    await expect(unauthenticated.ping()).rejects.toThrow(/NOAUTH/i);
+    await expect(unauthenticated.connect()).rejects.toThrow(/NOAUTH/i);
   });
 });
