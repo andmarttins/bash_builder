@@ -1,5 +1,10 @@
 # Análise do Builder Solutions 9 e plano para a nova versão multi-tenant
 
+> A comparação factual entre o repositório legado e a plataforma atual está em
+> [LEGACY_COMPARISON.md](docs/LEGACY_COMPARISON.md). Este documento preserva a
+> arquitetura-alvo; a matriz de capacidades e os gates de migração são a fonte
+> de verdade para decidir o que entra em cada corte.
+
 ## Escopo e método
 
 Esta análise é estática e foi feita sobre o commit `a4a0e0637ba7d47901b71b7d2c626ac5e2595f24` do repositório informado, clonado apenas para leitura em `source-review/`. Não foram modificados código, dados nem configurações do sistema legado.
