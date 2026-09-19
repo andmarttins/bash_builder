@@ -1,30 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Redis } from 'ioredis';
+import { createConnection } from 'node:net';
 
 const redisUrl = process.env.TEST_REDIS_URL;
 const describeIntegration = redisUrl ? describe : describe.skip;
 
 describeIntegration('Redis connection security', () => {
   const authenticated = new Redis(redisUrl!, { lazyConnect: true, maxRetriesPerRequest: 1 });
-  const unauthenticated = new Redis('redis://localhost:6379', {
-    enableReadyCheck: false,
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
-    retryStrategy: () => null
-  });
-  // Redis correctly emits an error event before rejecting an unauthenticated
-  // connection. Observe it so the expected security failure is not unhandled.
-  unauthenticated.on('error', () => undefined);
 
   beforeAll(async () => {
     await authenticated.connect();
   });
 
   afterAll(() => {
-    // The unauthenticated PING may terminate its connection after NOAUTH;
-    // `quit()` rejects in that valid state, whereas disconnect is idempotent.
     authenticated.disconnect();
-    unauthenticated.disconnect();
   });
 
   it('accepts the authenticated internal URL', async () => {
@@ -32,6 +21,34 @@ describeIntegration('Redis connection security', () => {
   });
 
   it('rejects a connection without the configured password', async () => {
-    await expect(unauthenticated.connect()).rejects.toThrow(/NOAUTH/i);
+    await expect(rawUnauthenticatedPing()).resolves.toMatch(/NOAUTH/i);
   });
 });
+
+function rawUnauthenticatedPing(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port: 6379 });
+    let settled = false;
+    let response = '';
+    const succeed = (value: string) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.setTimeout(2_000);
+    socket.once('connect', () => socket.write('*1\r\n$4\r\nPING\r\n'));
+    socket.on('data', (chunk) => {
+      response += chunk.toString('utf8');
+      if (response.includes('\r\n')) succeed(response);
+    });
+    socket.once('timeout', () => fail(new Error('Redis did not answer unauthenticated PING.')));
+    socket.once('error', fail);
+  });
+}
