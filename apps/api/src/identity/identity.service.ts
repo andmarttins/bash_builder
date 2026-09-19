@@ -15,6 +15,11 @@ const bootstrapSchema = z.object({
   organizationSlug: z.string().trim().toLowerCase().min(3).max(63).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)
 });
 const loginSchema = z.object({ email: emailSchema, password: passwordSchema });
+const organizationSwitchSchema = z.object({ organizationId: z.uuid() });
+const invitationAcceptanceSchema = z.object({
+  token: z.string().min(32).max(200),
+  password: passwordSchema
+});
 const changePasswordSchema = z.object({
   currentPassword: passwordSchema,
   newPassword: passwordSchema
@@ -125,6 +130,43 @@ export class IdentityService {
     await this.prisma.$executeRaw`
       SELECT app.revoke_auth_session(${this.tokenHash(token)}::char(64))
     `;
+  }
+
+  public async switchOrganization(token: string | undefined, input: unknown): Promise<{ token: string; identity: SessionIdentity }> {
+    if (!token) {
+      throw new UnauthorizedException('Sign in before switching organizations.');
+    }
+    const { organizationId } = validated(organizationSwitchSchema, input);
+    const nextToken = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + sessionLifetimeSeconds * 1000);
+    const rows = await this.prisma.$queryRaw<SessionRecord[]>`
+      SELECT * FROM app.switch_auth_session(
+        ${this.tokenHash(token)}::char(64),
+        ${organizationId}::uuid,
+        ${this.tokenHash(nextToken)}::char(64),
+        ${expiresAt}::timestamptz
+      )
+    `;
+    const record = rows[0];
+    if (!record) {
+      throw new UnauthorizedException('The selected organization is not available to this session.');
+    }
+    return { token: nextToken, identity: this.toIdentity(record) };
+  }
+
+  public async acceptInvitation(input: unknown): Promise<{ token: string; identity: SessionIdentity }> {
+    const data = validated(invitationAcceptanceSchema, input);
+    const passwordHash = await this.passwords.hash(data.password);
+    const rows = await this.prisma.$queryRaw<SessionRecord[]>`
+      SELECT * FROM app.redeem_organization_invitation(
+        ${this.tokenHash(data.token)}::char(64), ${passwordHash}
+      )
+    `;
+    const record = rows[0];
+    if (!record) {
+      throw new UnauthorizedException('This invitation is invalid, expired, or already in use.');
+    }
+    return this.createSession(record);
   }
 
   public async changePassword(token: string | undefined, input: unknown): Promise<SessionIdentity> {

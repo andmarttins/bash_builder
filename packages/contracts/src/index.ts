@@ -19,6 +19,7 @@ export const tenantContextSchema = z.object({
 
 export type TenantContext = z.infer<typeof tenantContextSchema>;
 export type MembershipRole = z.infer<typeof membershipRoleSchema>;
+export type MembershipStatus = z.infer<typeof membershipStatusSchema>;
 
 export const outboxEventSchema = z.object({
   eventId: z.uuid(),
@@ -31,4 +32,3 @@ export const outboxEventSchema = z.object({
 });
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;
-

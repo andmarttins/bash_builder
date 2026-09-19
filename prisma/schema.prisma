@@ -57,6 +57,7 @@ model IdentityUser {
   updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships  Membership[]
   sessions     AuthSession[]
+  invitationsCreated OrganizationInvitation[] @relation("InvitationsCreatedBy")
 
   @@map("identity_users")
 }
@@ -75,6 +76,23 @@ model AuthSession {
   @@index([expiresAt])
   @@index([identityUserId])
   @@map("auth_sessions")
+}
+
+model OrganizationInvitation {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  email          String       @db.Citext
+  role           MembershipRole
+  tokenHash      String       @unique @map("token_hash") @db.Char(64)
+  expiresAt      DateTime     @map("expires_at") @db.Timestamptz(6)
+  createdById    String       @map("created_by_id") @db.Uuid
+  acceptedAt     DateTime?    @map("accepted_at") @db.Timestamptz(6)
+  revokedAt      DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy      IdentityUser @relation("InvitationsCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, expiresAt])
+  @@map("organization_invitations")
 }
 
 model Membership {

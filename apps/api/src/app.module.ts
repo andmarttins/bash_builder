@@ -8,9 +8,14 @@ import { PasswordService } from './identity/password.service.js';
 import { PrismaService } from './platform/database/prisma.service.js';
 import { RedisService } from './platform/redis/redis.service.js';
 import { TenantTransactionService } from './platform/tenant/tenant-transaction.service.js';
+import { MembershipRoleGuard } from './identity/membership-role.guard.js';
+import { SessionContextGuard } from './identity/session-context.guard.js';
+import { OrganizationAccessController } from './organizations/organization-access.controller.js';
+import { OrganizationAccessService } from './organizations/organization-access.service.js';
+import { OrganizationInvitationController } from './organizations/organization-invitation.controller.js';
 
 @Module({
-  controllers: [HealthController, IdentityController],
+  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController],
   providers: [
     PrismaService,
     RedisService,
@@ -18,7 +23,10 @@ import { TenantTransactionService } from './platform/tenant/tenant-transaction.s
     BootstrapAuthorizationService,
     PasswordService,
     LoginRateLimitService,
-    IdentityService
+    IdentityService,
+    SessionContextGuard,
+    MembershipRoleGuard,
+    OrganizationAccessService
   ]
 })
 export class AppModule {}
