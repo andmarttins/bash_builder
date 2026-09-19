@@ -18,8 +18,11 @@ describeIntegration('Redis connection security', () => {
     await unauthenticated.connect();
   });
 
-  afterAll(async () => {
-    await Promise.all([authenticated.quit(), unauthenticated.quit()]);
+  afterAll(() => {
+    // The unauthenticated PING may terminate its connection after NOAUTH;
+    // `quit()` rejects in that valid state, whereas disconnect is idempotent.
+    authenticated.disconnect();
+    unauthenticated.disconnect();
   });
 
   it('accepts the authenticated internal URL', async () => {

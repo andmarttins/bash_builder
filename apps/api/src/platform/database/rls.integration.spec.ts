@@ -78,13 +78,22 @@ describeIntegration('PostgreSQL row-level security', () => {
       ['owner@example.com', 'argon2id$fixture', 'First organization', 'first-organization']
     );
     expect(created.rows).toHaveLength(1);
-    await expect(runtime.query('SELECT * FROM "auth_sessions"')).rejects.toThrow(/permission denied/i);
-
     const tokenHash = 'a'.repeat(64);
     await runtime.query(
       'SELECT app.create_auth_session($1::char(64), $2::uuid, $3::uuid, $4::uuid, NOW() + INTERVAL \'1 hour\')',
       [tokenHash, created.rows[0]!.identity_user_id, created.rows[0]!.organization_id, created.rows[0]!.membership_id]
     );
+    // A bootstrap session remains valid only for its mandatory password change;
+    // organization administration stays blocked until that procedure succeeds.
+    expect((await runtime.query(
+      'SELECT * FROM app.create_organization_for_platform_admin($1::char(64), $2, $3)',
+      [tokenHash, 'Blocked organization', 'blocked-organization']
+    )).rows).toEqual([]);
+    expect((await runtime.query(
+      'SELECT * FROM app.change_own_password($1::char(64), $2)',
+      [tokenHash, 'argon2id$replacement']
+    )).rows).toHaveLength(1);
+    await expect(runtime.query('SELECT * FROM "auth_sessions"')).rejects.toThrow(/permission denied/i);
     const session = await runtime.query('SELECT * FROM app.resolve_auth_session($1::char(64))', [tokenHash]);
     expect(session.rows).toHaveLength(1);
     const repeated = await runtime.query('SELECT * FROM app.bootstrap_first_admin($1::citext, $2, $3, $4)', ['other@example.com', 'hash', 'Other', 'other']);
