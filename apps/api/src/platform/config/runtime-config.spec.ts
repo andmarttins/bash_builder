@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getApiRuntimeConfig } from './runtime-config.js';
+import { getApiRuntimeConfig, trustedAppOrigins } from './runtime-config.js';
 
 describe('getApiRuntimeConfig', () => {
   it('rejects a non-HTTPS origin in production', () => {
@@ -19,6 +19,14 @@ describe('getApiRuntimeConfig', () => {
     expect(getApiRuntimeConfig({
       NODE_ENV: 'production', API_PORT: '3000', APP_ORIGIN: 'https://app.example.com, https://www.app.example.com', DATABASE_URL: 'postgresql://a:b@db:5432/app', REDIS_URL: 'redis://:secret@redis:6379', BOOTSTRAP_TOKEN: 'a'.repeat(32)
     }).APP_ORIGIN).toContain('www.app.example.com');
+  });
+
+  it('permits only the conventional HTTPS www companion of a configured origin', () => {
+    expect(trustedAppOrigins('https://app.example.com')).toEqual([
+      'https://app.example.com',
+      'https://www.app.example.com'
+    ]);
+    expect(trustedAppOrigins('http://app.example.com')).toEqual(['http://app.example.com']);
   });
 
   it('requires an authenticated Redis URL with a supported protocol', () => {

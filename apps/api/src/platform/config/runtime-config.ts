@@ -14,6 +14,18 @@ export function parseAppOrigins(value: string): string[] {
   });
 }
 
+export function trustedAppOrigins(value: string): string[] {
+  const configuredOrigins = parseAppOrigins(value);
+  const conventionalWwwAliases = configuredOrigins.flatMap((origin) => {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:' || url.hostname.startsWith('www.')) {
+      return [];
+    }
+    return [`https://www.${url.hostname}`];
+  });
+  return [...new Set([...configuredOrigins, ...conventionalWwwAliases])];
+}
+
 const apiEnvironmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),

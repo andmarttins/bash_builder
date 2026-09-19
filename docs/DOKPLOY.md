@@ -43,7 +43,7 @@ O segredo de bootstrap entra somente na API e não entra em `migrate` ou worker.
 
 ## Ordem do primeiro deploy
 
-1. Crie os dois serviços de dados, confirme em Connection que estão em `dokploy-network`, copie os Internal Connection URLs, defina `APP_ORIGIN` com todas as origens HTTPS públicas exatas do web, separadas por vírgula (por exemplo, domínio raiz e `www`), e gere `BOOTSTRAP_TOKEN` no cofre de senhas.
+1. Crie os dois serviços de dados, confirme em Connection que estão em `dokploy-network`, copie os Internal Connection URLs, defina `APP_ORIGIN` com as origens HTTPS públicas exatas do web, separadas por vírgula quando houver mais de uma, e gere `BOOTSTRAP_TOKEN` no cofre de senhas. A variante HTTPS convencional `www` do domínio primário é aceita automaticamente.
 2. Preencha todas as variáveis no Compose, configure o domínio do `web` e use Preview Compose para confirmar: dados + jobs + API/worker em `dokploy-network`; web, API, worker e Redpanda em `platform-internal`.
 3. Confirme que `db-bootstrap` terminou com sucesso. Ele é idempotente e cria os papéis `app_migrator` e `app_runtime` no PostgreSQL separado.
 4. Confirme que `migrate` terminou com sucesso. Ele aplica migrations uma única vez e é pré-requisito de API e worker.

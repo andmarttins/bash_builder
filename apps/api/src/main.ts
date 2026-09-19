@@ -8,7 +8,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyRequest } from 'fastify';
 import { AppModule } from './app.module.js';
-import { getApiRuntimeConfig, parseAppOrigins } from './platform/config/runtime-config.js';
+import { getApiRuntimeConfig, trustedAppOrigins } from './platform/config/runtime-config.js';
 import { isTrustedMutationOrigin } from './platform/http/origin-policy.js';
 
 const logger = new Logger('Bootstrap');
@@ -21,7 +21,7 @@ async function bootstrap(): Promise<void> {
     { bufferLogs: true }
   );
 
-  const origins = parseAppOrigins(config.APP_ORIGIN);
+  const origins = trustedAppOrigins(config.APP_ORIGIN);
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cookie);
