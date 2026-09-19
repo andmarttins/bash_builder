@@ -9,7 +9,8 @@ import { IdentityService, sessionCookieName } from './identity.service.js';
 const signedInIdentity = {
   user: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'owner@example.com' },
   organization: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12', name: 'Acme', slug: 'acme' },
-  membership: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13', role: 'OWNER' as const }
+  membership: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13', role: 'OWNER' as const },
+  access: { isPlatformAdmin: true, requiresPasswordChange: true }
 };
 
 describe('IdentityController HTTP flow', () => {
@@ -18,6 +19,7 @@ describe('IdentityController HTTP flow', () => {
     bootstrapStatus: vi.fn().mockResolvedValue({ bootstrapRequired: true }),
     bootstrap: vi.fn().mockResolvedValue({ token: 'bootstrap-session', identity: signedInIdentity }),
     login: vi.fn().mockResolvedValue({ token: 'login-session', identity: signedInIdentity }),
+    changePassword: vi.fn().mockResolvedValue({ ...signedInIdentity, access: { isPlatformAdmin: true, requiresPasswordChange: false } }),
     session: vi.fn().mockResolvedValue(signedInIdentity),
     logout: vi.fn().mockResolvedValue(undefined)
   };
@@ -55,7 +57,16 @@ describe('IdentityController HTTP flow', () => {
     expect(identity.bootstrap).toHaveBeenCalledWith(expect.anything(), '127.0.0.1', 'installation-code');
   });
 
-  it('supports session lookup, logout revocation and invalid login errors', async () => {
+  it('supports mandatory password replacement, session lookup, logout revocation and invalid login errors', async () => {
+    const passwordChange = await app.inject({
+      method: 'POST', url: '/v1/auth/change-password',
+      cookies: { [sessionCookieName]: 'login-session' },
+      payload: { currentPassword: 'temporary password', newPassword: 'permanent secure password' }
+    });
+    expect(passwordChange.statusCode).toBe(201);
+    expect(passwordChange.json().identity.access.requiresPasswordChange).toBe(false);
+    expect(identity.changePassword).toHaveBeenCalledWith('login-session', expect.anything());
+
     const session = await app.inject({ method: 'GET', url: '/v1/auth/session', cookies: { [sessionCookieName]: 'login-session' } });
     expect(session.statusCode).toBe(200);
     expect(session.json()).toEqual({ identity: signedInIdentity });

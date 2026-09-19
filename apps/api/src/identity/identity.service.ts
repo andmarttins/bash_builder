@@ -15,6 +15,13 @@ const bootstrapSchema = z.object({
   organizationSlug: z.string().trim().toLowerCase().min(3).max(63).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)
 });
 const loginSchema = z.object({ email: emailSchema, password: passwordSchema });
+const changePasswordSchema = z.object({
+  currentPassword: passwordSchema,
+  newPassword: passwordSchema
+}).refine((data) => data.currentPassword !== data.newPassword, {
+  message: 'Choose a password different from the temporary password.',
+  path: ['newPassword']
+});
 
 type SessionRecord = {
   identity_user_id: string;
@@ -24,14 +31,18 @@ type SessionRecord = {
   organization_name: string;
   organization_slug: string;
   role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
+  is_platform_admin: boolean;
+  must_change_password: boolean;
 };
 
 type LoginRecord = SessionRecord & { password_hash: string; identity_active: boolean };
+type PasswordChangeSubject = { identity_user_id: string; password_hash: string; identity_active: boolean };
 
 export type SessionIdentity = {
   user: { id: string; email: string };
   organization: { id: string; name: string; slug: string };
   membership: { id: string; role: SessionRecord['role'] };
+  access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean };
 };
 
 export const sessionCookieName = 'builder_session';
@@ -108,6 +119,30 @@ export class IdentityService {
     `;
   }
 
+  public async changePassword(token: string | undefined, input: unknown): Promise<SessionIdentity> {
+    if (!token) {
+      throw new UnauthorizedException('Sign in before changing your password.');
+    }
+    const data = changePasswordSchema.parse(input);
+    const tokenHash = this.tokenHash(token);
+    const subjects = await this.prisma.$queryRaw<PasswordChangeSubject[]>`
+      SELECT * FROM app.password_change_subject(${tokenHash}::char(64))
+    `;
+    const subject = subjects[0];
+    if (!subject || !subject.identity_active || !(await this.passwords.verify(data.currentPassword, subject.password_hash))) {
+      throw new UnauthorizedException('The current password is invalid.');
+    }
+    const passwordHash = await this.passwords.hash(data.newPassword);
+    const changed = await this.prisma.$queryRaw<SessionRecord[]>`
+      SELECT * FROM app.change_own_password(${tokenHash}::char(64), ${passwordHash})
+    `;
+    const record = changed[0];
+    if (!record) {
+      throw new UnauthorizedException('Your session is no longer valid. Sign in again.');
+    }
+    return this.toIdentity(record);
+  }
+
   private async createSession(record: SessionRecord): Promise<{ token: string; identity: SessionIdentity }> {
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + sessionLifetimeSeconds * 1000);
@@ -134,7 +169,8 @@ export class IdentityService {
     return {
       user: { id: record.identity_user_id, email: record.email },
       organization: { id: record.organization_id, name: record.organization_name, slug: record.organization_slug },
-      membership: { id: record.membership_id, role: record.role }
+      membership: { id: record.membership_id, role: record.role },
+      access: { isPlatformAdmin: record.is_platform_admin, requiresPasswordChange: record.must_change_password }
     };
   }
 }

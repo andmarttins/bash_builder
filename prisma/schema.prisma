@@ -51,6 +51,8 @@ model IdentityUser {
   email        String       @unique @db.Citext
   passwordHash String?      @map("password_hash") @db.VarChar(255)
   active       Boolean      @default(true)
+  isPlatformAdmin Boolean  @default(false) @map("is_platform_admin")
+  mustChangePassword Boolean @default(false) @map("must_change_password")
   createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships  Membership[]

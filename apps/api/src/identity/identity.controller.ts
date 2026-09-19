@@ -34,6 +34,14 @@ export class IdentityController {
     return { identity: session.identity };
   }
 
+  @Post('change-password')
+  public async changePassword(
+    @Body() input: unknown,
+    @Req() request: FastifyRequest
+  ): Promise<{ identity: SessionIdentity }> {
+    return { identity: await this.identity.changePassword(request.cookies[sessionCookieName], input) };
+  }
+
   @Get('session')
   public async session(@Req() request: FastifyRequest): Promise<{ identity: SessionIdentity | null }> {
     return { identity: await this.identity.session(request.cookies[sessionCookieName]) };
