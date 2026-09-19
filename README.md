@@ -27,7 +27,7 @@ Validações: `npm run lint`, `npm run typecheck`, `npm test` e `npm run build`.
 3. Use somente os hostnames internos dos serviços separados nas URLs PostgreSQL e Redis. `BOOTSTRAP_DATABASE_URL` fica disponível apenas para o job `db-bootstrap`; nunca para API, worker ou `migrate`.
 4. Crie domínio HTTPS para `web` (porta interna `80`). A API fica interna; exponha-a apenas se houver integração externa, com domínio próprio e `APP_ORIGIN` exata.
 5. No primeiro deploy, `db-bootstrap` cria os papéis limitados, `migrate` aplica o schema e então API, worker, web e Redpanda iniciam. Verifique a conclusão dos dois jobs.
-5. Depois de validar health checks, crie o primeiro tenant pela futura interface administrativa. A base não inclui seed de conta administrativa para evitar credenciais padrão.
+5. Antes de subir, gere e cadastre `BOOTSTRAP_TOKEN` com pelo menos 32 caracteres no segredo do Compose. Depois de validar health checks, abra o domínio HTTPS. Enquanto não houver usuários, a tela **Primeira configuração** pede esse código e cria de forma atômica a primeira organização e seu administrador OWNER; não existe seed nem credencial padrão. Depois disso, a mesma tela passa a exibir o login. Mantenha o segredo protegido e faça sua rotação em procedimento controlado após o primeiro acesso.
 
 O volume `redpanda_data` é persistente. Configure no serviço PostgreSQL separado backup/PITR, retenção e teste de restauração antes de usar dados reais. Produção também requer rotação de segredos e monitoramento de health/lag do worker.
 
@@ -37,4 +37,4 @@ O volume `redpanda_data` é persistente. Configure no serviço PostgreSQL separa
 - Dados tenant-owned são protegidos por RLS e o acesso de aplicação deve ocorrer em `withTenantTransaction`, que usa `SET LOCAL app.tenant_id`.
 - PostgreSQL e Redis são serviços independentes internos do Dokploy. A API verifica ambos em `/ready`; Redis fica preparado para cache, rate limit distribuído e jobs posteriores.
 - O broker é interno no Compose. Nenhuma porta de banco, Redis ou Kafka é publicada no host.
-- Esta base ainda não contém autenticação, UI administrativa ou formulários: esses módulos serão adicionados sobre os contratos de tenancy e auditoria já versionados.
+- O primeiro acesso inclui bootstrap único de administrador, login, logout e sessão opaca revogável. Módulos administrativos e formulários de negócio continuam sendo entregas futuras.

@@ -1,13 +1,15 @@
 import 'reflect-metadata';
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import type { FastifyRequest } from 'fastify';
 import { AppModule } from './app.module.js';
 import { getApiRuntimeConfig } from './platform/config/runtime-config.js';
+import { isTrustedMutationOrigin } from './platform/http/origin-policy.js';
 
 const logger = new Logger('Bootstrap');
 
@@ -33,6 +35,11 @@ async function bootstrap(): Promise<void> {
   await app.register(cors, {
     origin: origins.length === 0 ? false : origins,
     credentials: true
+  });
+  app.getHttpAdapter().getInstance().addHook('onRequest', async (request: FastifyRequest) => {
+    if (!isTrustedMutationOrigin(request.method, request.url, request.headers.origin, config.APP_ORIGIN)) {
+      throw new ForbiddenException('Untrusted request origin.');
+    }
   });
   await app.register(rateLimit, {
     max: 120,

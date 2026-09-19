@@ -37,17 +37,19 @@ Cadastre os valores de `.env.example` na interface Environment do serviço Compo
 - `MIGRATOR_DATABASE_URL`: URL interna de `app_migrator`. Ela é usada somente por `migrate` e possui `CREATE` de schema para aplicar migrations.
 - `DATABASE_URL`: URL interna de `app_runtime`. Ela é usada apenas por API e worker, sem propriedade das tabelas e sem `BYPASSRLS`.
 - `REDIS_URL`: URL interna **autenticada** (`redis://` ou `rediss://`) do `builder-redis`, usada pela API. Nunca aponte para um endpoint público. A configuração da API rejeita URL sem senha ou com protocolo diferente.
+- `BOOTSTRAP_TOKEN`: segredo aleatório de ao menos 32 caracteres, obrigatório em produção. Ele é enviado uma única vez, no formulário de primeira configuração, e impede que o primeiro visitante público assuma a conta OWNER. Cadastre-o como secret; não use URL, senha de banco ou token reaproveitado.
 
-O segredo de bootstrap não entra em `migrate`, API ou worker. Não inverta as credenciais de migrator e runtime: executar aplicação com a credencial migrator tornaria RLS inefetivo. Mantenha o segredo de bootstrap fora de runbooks de aplicação e faça sua rotação em procedimento controlado.
+O segredo de bootstrap entra somente na API e não entra em `migrate` ou worker. Não inverta as credenciais de migrator e runtime: executar aplicação com a credencial migrator tornaria RLS inefetivo. Mantenha o segredo de bootstrap fora de runbooks de aplicação e faça sua rotação em procedimento controlado.
 
 ## Ordem do primeiro deploy
 
-1. Crie os dois serviços de dados, confirme em Connection que estão em `dokploy-network`, copie os Internal Connection URLs e defina `APP_ORIGIN` como o domínio HTTPS final do web.
+1. Crie os dois serviços de dados, confirme em Connection que estão em `dokploy-network`, copie os Internal Connection URLs, defina `APP_ORIGIN` como o domínio HTTPS final do web e gere `BOOTSTRAP_TOKEN` no cofre de senhas.
 2. Preencha todas as variáveis no Compose, configure o domínio do `web` e use Preview Compose para confirmar: dados + jobs + API/worker em `dokploy-network`; web, API, worker e Redpanda em `platform-internal`.
 3. Confirme que `db-bootstrap` terminou com sucesso. Ele é idempotente e cria os papéis `app_migrator` e `app_runtime` no PostgreSQL separado.
 4. Confirme que `migrate` terminou com sucesso. Ele aplica migrations uma única vez e é pré-requisito de API e worker.
 5. Teste no próprio serviço Redis que a conexão autenticada funciona e que uma conexão sem senha recebe `NOAUTH`. Confira `https://SEU_DOMINIO/health` (liveness do web), `https://SEU_DOMINIO/api/health` (liveness da API) e `https://SEU_DOMINIO/api/ready` (readiness de PostgreSQL e Redis). O worker só fica saudável depois de conectar ao banco e broker.
-6. Confirme backups, volumes, alertas e logs antes de cadastrar dados reais.
+6. Abra o domínio em uma janela privada. Sem usuário cadastrado, a página deve apresentar **Primeira configuração**; informe `BOOTSTRAP_TOKEN`, crie o primeiro administrador e confirme que ela entra no painel. Em seguida, saia e entre novamente para validar a sessão. Não use credenciais reais de produção em capturas de tela ou logs. Depois do sucesso, mantenha o segredo protegido e faça sua rotação por procedimento controlado.
+7. Confirme backups, volumes, alertas e logs antes de cadastrar dados reais.
 
 ## Releases posteriores
 
@@ -56,5 +58,5 @@ Cada release executa `db-bootstrap` (idempotente) e `migrate` antes da API. Migr
 ## Limites conhecidos desta fundação
 
 - Redpanda é o broker Kafka-compatível para a primeira instalação. Para produção de maior criticidade, trocar por Kafka gerenciado exige TLS/SASL, ACL, retenção, re-drive de DLQ e observabilidade de lag antes do corte.
-- Redis está conectado e compõe a readiness da API. Cache de domínio e rate limit distribuído serão ativados com os módulos que os consumirem.
+- Redis está conectado e compõe a readiness da API. O login usa contadores distribuídos por IP e e-mail; cache de domínio permanece futuro.
 - O worker consome o tópico `builder.domain-events.v1`, mas o dispatcher/outbox será entregue junto ao primeiro módulo que emita efeitos assíncronos.
