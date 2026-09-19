@@ -15,6 +15,12 @@ describe('getApiRuntimeConfig', () => {
     expect(config.API_PORT).toBe(3000);
   });
 
+  it('accepts an explicit, HTTPS-only list of public origins', () => {
+    expect(getApiRuntimeConfig({
+      NODE_ENV: 'production', API_PORT: '3000', APP_ORIGIN: 'https://app.example.com, https://www.app.example.com', DATABASE_URL: 'postgresql://a:b@db:5432/app', REDIS_URL: 'redis://:secret@redis:6379', BOOTSTRAP_TOKEN: 'a'.repeat(32)
+    }).APP_ORIGIN).toContain('www.app.example.com');
+  });
+
   it('requires an authenticated Redis URL with a supported protocol', () => {
     expect(() => getApiRuntimeConfig({
       NODE_ENV: 'production', API_PORT: '3000', APP_ORIGIN: 'https://app.example.com', DATABASE_URL: 'postgresql://a:b@db:5432/app', REDIS_URL: 'http://redis:6379', BOOTSTRAP_TOKEN: 'a'.repeat(32)

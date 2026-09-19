@@ -8,17 +8,10 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyRequest } from 'fastify';
 import { AppModule } from './app.module.js';
-import { getApiRuntimeConfig } from './platform/config/runtime-config.js';
+import { getApiRuntimeConfig, parseAppOrigins } from './platform/config/runtime-config.js';
 import { isTrustedMutationOrigin } from './platform/http/origin-policy.js';
 
 const logger = new Logger('Bootstrap');
-
-function originsFromEnvironment(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter((origin) => origin.length > 0);
-}
 
 async function bootstrap(): Promise<void> {
   const config = getApiRuntimeConfig();
@@ -28,7 +21,7 @@ async function bootstrap(): Promise<void> {
     { bufferLogs: true }
   );
 
-  const origins = originsFromEnvironment(config.APP_ORIGIN);
+  const origins = parseAppOrigins(config.APP_ORIGIN);
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cookie);
@@ -37,7 +30,7 @@ async function bootstrap(): Promise<void> {
     credentials: true
   });
   app.getHttpAdapter().getInstance().addHook('onRequest', async (request: FastifyRequest) => {
-    if (!isTrustedMutationOrigin(request.method, request.url, request.headers.origin, config.APP_ORIGIN)) {
+    if (!isTrustedMutationOrigin(request.method, request.url, request.headers.origin, origins)) {
       throw new ForbiddenException('Untrusted request origin.');
     }
   });

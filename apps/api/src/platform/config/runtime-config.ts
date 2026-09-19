@@ -1,9 +1,23 @@
 import { z } from 'zod';
 
+export function parseAppOrigins(value: string): string[] {
+  const origins = [...new Set(value.split(',').map((origin) => origin.trim()).filter(Boolean))];
+  if (origins.length === 0) {
+    throw new Error('APP_ORIGIN must contain at least one origin.');
+  }
+  return origins.map((origin) => {
+    const url = new URL(origin);
+    if (url.origin !== origin || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error('APP_ORIGIN entries must be origins without path, query, or fragment.');
+    }
+    return url.origin;
+  });
+}
+
 const apiEnvironmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-  APP_ORIGIN: z.string().url(),
+  APP_ORIGIN: z.string().min(1),
   DATABASE_URL: z.string().url(),
   BOOTSTRAP_TOKEN: z.string().min(32).optional(),
   REDIS_URL: z.string().url().superRefine((value, context) => {
@@ -16,15 +30,17 @@ const apiEnvironmentSchema = z.object({
     }
   })
 }).superRefine((value, context) => {
-  const origin = new URL(value.APP_ORIGIN);
-  if (value.NODE_ENV === 'production' && origin.protocol !== 'https:') {
+  let origins: string[];
+  try { origins = parseAppOrigins(value.APP_ORIGIN); }
+  catch (error) {
+    context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'APP_ORIGIN is invalid.', path: ['APP_ORIGIN'] });
+    return;
+  }
+  if (value.NODE_ENV === 'production' && origins.some((origin) => new URL(origin).protocol !== 'https:')) {
     context.addIssue({ code: 'custom', message: 'APP_ORIGIN must use HTTPS in production.', path: ['APP_ORIGIN'] });
   }
   if (value.NODE_ENV === 'production' && !value.BOOTSTRAP_TOKEN) {
     context.addIssue({ code: 'custom', message: 'BOOTSTRAP_TOKEN is required in production.', path: ['BOOTSTRAP_TOKEN'] });
-  }
-  if (origin.pathname !== '/' || origin.search || origin.hash) {
-    context.addIssue({ code: 'custom', message: 'APP_ORIGIN must be an origin without path, query, or fragment.', path: ['APP_ORIGIN'] });
   }
 });
 
