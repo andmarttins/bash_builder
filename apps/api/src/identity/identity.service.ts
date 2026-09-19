@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { PrismaService } from '../platform/database/prisma.service.js';
@@ -19,9 +19,17 @@ const changePasswordSchema = z.object({
   currentPassword: passwordSchema,
   newPassword: passwordSchema
 }).refine((data) => data.currentPassword !== data.newPassword, {
-  message: 'Choose a password different from the temporary password.',
+  message: 'Escolha uma senha diferente da temporária.',
   path: ['newPassword']
 });
+
+function validated<T>(schema: z.ZodType<T>, input: unknown): T {
+  const result = schema.safeParse(input);
+  if (!result.success) {
+    throw new BadRequestException(result.error.issues[0]?.message ?? 'Dados de autenticação inválidos.');
+  }
+  return result.data;
+}
 
 type SessionRecord = {
   identity_user_id: string;
@@ -65,7 +73,7 @@ export class IdentityService {
   }
 
   public async bootstrap(input: unknown, ip: string, bootstrapToken: string | undefined): Promise<{ token: string; identity: SessionIdentity }> {
-    const data = bootstrapSchema.parse(input);
+    const data = validated(bootstrapSchema, input);
     this.bootstrapAuthorization.assertAuthorized(bootstrapToken);
     if (!(await this.bootstrapStatus()).bootstrapRequired) {
       throw new ConflictException('The first administrator has already been created.');
@@ -86,7 +94,7 @@ export class IdentityService {
   }
 
   public async login(input: unknown, ip: string): Promise<{ token: string; identity: SessionIdentity }> {
-    const data = loginSchema.parse(input);
+    const data = validated(loginSchema, input);
     await this.attempts.consumeLoginAttempt(ip, data.email);
     const results = await this.prisma.$queryRaw<LoginRecord[]>`
       SELECT * FROM app.identity_for_login(${data.email}::citext)
@@ -123,7 +131,7 @@ export class IdentityService {
     if (!token) {
       throw new UnauthorizedException('Sign in before changing your password.');
     }
-    const data = changePasswordSchema.parse(input);
+    const data = validated(changePasswordSchema, input);
     const tokenHash = this.tokenHash(token);
     const subjects = await this.prisma.$queryRaw<PasswordChangeSubject[]>`
       SELECT * FROM app.password_change_subject(${tokenHash}::char(64))

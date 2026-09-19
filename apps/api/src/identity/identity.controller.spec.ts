@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import cookie from '@fastify/cookie';
@@ -79,5 +79,14 @@ describe('IdentityController HTTP flow', () => {
     identity.login.mockRejectedValueOnce(new UnauthorizedException('Invalid email or password.'));
     const rejected = await app.inject({ method: 'POST', url: '/v1/auth/login', payload: { email: 'owner@example.com', password: 'incorrect password' } });
     expect(rejected.statusCode).toBe(401);
+
+    identity.changePassword.mockRejectedValueOnce(new BadRequestException('Escolha uma senha diferente da temporária.'));
+    const invalidReplacement = await app.inject({
+      method: 'POST', url: '/v1/auth/change-password',
+      cookies: { [sessionCookieName]: 'login-session' },
+      payload: { currentPassword: 'temporary password', newPassword: 'temporary password' }
+    });
+    expect(invalidReplacement.statusCode).toBe(400);
+    expect(invalidReplacement.json().message).toBe('Escolha uma senha diferente da temporária.');
   });
 });
