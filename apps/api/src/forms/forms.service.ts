@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { PublicFormAccessService, type PublicFormTransaction } from '../platform/public-access/public-form-access.service.js';
 import { TenantTransactionService } from '../platform/tenant/tenant-transaction.service.js';
-import { FormValidationService, formFieldsSchema, formStatuses, formSubmissionStatuses, type FormFieldInput, type StoredField } from './form-validation.service.js';
+import { FormValidationService, formFieldTypes, formFieldsSchema, formStatuses, formSubmissionStatuses, type FormFieldInput, type StoredField } from './form-validation.service.js';
 import { SubmissionCursorService } from './submission-cursor.service.js';
 
 const formIdSchema = z.uuid();
@@ -119,7 +119,7 @@ export class FormsService {
     const { status, expectedVersion } = this.parse(statusSchema, input);
     if (status === 'PUBLISHED') throw new BadRequestException('Use a publicação para gerar um novo link público.');
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
-      const existing = await tx.form.findFirst({ where: { id }, select: { id: true, fields: { select: { id: true } } } });
+      const existing = await tx.form.findFirst({ where: { id }, select: { id: true, title: true, description: true, version: true, fields: { select: { key: true, label: true, type: true, required: true, options: true, position: true }, orderBy: { position: 'asc' } } } });
       if (!existing) throw new NotFoundException('Formulário não encontrado.');
       await this.claimVersion(tx, id, expectedVersion, { status });
       const form = await this.getRecord(tx, id);
@@ -131,10 +131,11 @@ export class FormsService {
   public async publish(identity: SessionIdentity, formId: string, input: unknown): Promise<FormRecord> {
     const id = this.id(formId); const data = this.parse(publicationSchema, input);
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
-      const existing = await tx.form.findFirst({ where: { id }, select: { id: true, fields: { select: { id: true } } } });
+      const existing = await tx.form.findFirst({ where: { id }, select: { id: true, title: true, description: true, version: true, fields: { select: { key: true, label: true, type: true, required: true, options: true, position: true }, orderBy: { position: 'asc' } } } });
       if (!existing) throw new NotFoundException('Formulário não encontrado.');
       if (existing.fields.length === 0) throw new BadRequestException('Adicione ao menos um campo antes de publicar.');
-      await this.claimVersion(tx, id, data.expectedVersion, { status: 'PUBLISHED', publicId: crypto.randomUUID(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null });
+      const snapshot = { title: existing.title, description: existing.description, version: existing.version + 1, fields: existing.fields };
+      await this.claimVersion(tx, id, data.expectedVersion, { status: 'PUBLISHED', publicId: crypto.randomUUID(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null, publicSnapshot: snapshot as Prisma.InputJsonValue });
       const form = await this.getRecord(tx, id);
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form.published', resourceType: 'form', resourceId: id, metadata: { version: form.version, expiresAt: data.expiresAt?.toISOString() ?? null } } });
       return form;
@@ -197,22 +198,23 @@ export class FormsService {
     return this.withPublicForm(publicId, async (tx) => {
       const form = await tx.form.findFirst({
         where: { publicId, status: 'PUBLISHED' },
-        select: { id: true, publicId: true, title: true, description: true, status: true, version: true, fields: { select: { key: true, label: true, type: true, required: true, options: true, position: true }, orderBy: { position: 'asc' } } }
+        select: { id: true, publicId: true, status: true, publicSnapshot: true }
       });
       if (!form) throw new NotFoundException('Formulário público não encontrado.');
-      return form as FormRecord;
+      return this.publicSnapshotRecord(form.id, form.publicId, form.status, form.publicSnapshot);
     });
   }
 
   public async submitPublic(publicIdInput: string, input: unknown): Promise<{ id: string; submittedAt: string }> {
     const publicId = this.publicId(publicIdInput);
     return this.withPublicForm(publicId, async (tx) => {
-      const form = await tx.form.findFirst({ where: { publicId, status: 'PUBLISHED' }, select: { id: true, organizationId: true, title: true, version: true, fields: { select: { key: true, label: true, type: true, required: true, options: true } } } });
+      const form = await tx.form.findFirst({ where: { publicId, status: 'PUBLISHED' }, select: { id: true, organizationId: true, publicSnapshot: true } });
       if (!form) throw new NotFoundException('Formulário público não encontrado.');
-      const fields: StoredField[] = form.fields.map((field) => ({ ...field, options: this.stringOptions(field.options) }));
+      const snapshot = this.publicSnapshot(form.publicSnapshot);
+      const fields: StoredField[] = snapshot.fields.map((field) => ({ ...field, options: this.stringOptions(field.options) }));
       const answers = this.validation.validateAnswers(fields, input);
-      const formSnapshot = { title: form.title, version: form.version, fields };
-      const submitted = await tx.formSubmission.create({ data: { organizationId: form.organizationId, formId: form.id, formVersion: form.version, formSnapshot: formSnapshot as Prisma.InputJsonValue, answers: answers as Prisma.InputJsonValue }, select: { id: true, submittedAt: true } });
+      const formSnapshot = { title: snapshot.title, version: snapshot.version, fields };
+      const submitted = await tx.formSubmission.create({ data: { organizationId: form.organizationId, formId: form.id, formVersion: snapshot.version, formSnapshot: formSnapshot as Prisma.InputJsonValue, answers: answers as Prisma.InputJsonValue }, select: { id: true, submittedAt: true } });
       return { id: submitted.id, submittedAt: submitted.submittedAt.toISOString() };
     });
   }
@@ -243,6 +245,17 @@ export class FormsService {
 
   private stringOptions(value: unknown): string[] {
     return Array.isArray(value) && value.every((option) => typeof option === 'string') ? value : [];
+  }
+
+  private publicSnapshot(value: unknown): { title: string; description: string | null; version: number; fields: Array<FormFieldInput & { position: number }> } {
+    const parsed = z.object({ title: z.string(), description: z.string().nullable(), version: z.number().int().positive(), fields: z.array(z.object({ key: z.string(), label: z.string(), type: z.enum(formFieldTypes), required: z.boolean(), options: z.array(z.string()), position: z.number().int().nonnegative() })) }).safeParse(value);
+    if (!parsed.success) throw new NotFoundException('Formulário público não encontrado.');
+    return parsed.data;
+  }
+
+  private publicSnapshotRecord(id: string, publicId: string, status: FormStatus, value: unknown): FormRecord {
+    const snapshot = this.publicSnapshot(value);
+    return { id, publicId, status, ...snapshot };
   }
 
   private isSubmissionTransitionAllowed(current: FormSubmissionStatus, next: FormSubmissionStatus): boolean {

@@ -26,7 +26,7 @@ describe('FormsService', () => {
 
   it('captures the published form version and field definition with every public response', async () => {
     const tx = {
-      form: { findFirst: vi.fn().mockResolvedValue({ id: formId, organizationId: identity.organization.id, title: 'Inspeção', version: 7, fields: [{ key: 'title', label: 'Título', type: 'SHORT_TEXT', required: true, options: [] }] }) },
+      form: { findFirst: vi.fn().mockResolvedValue({ id: formId, organizationId: identity.organization.id, publicSnapshot: { title: 'Inspeção', description: null, version: 7, fields: [{ key: 'title', label: 'Título', type: 'SHORT_TEXT', required: true, options: [], position: 0 }] } }) },
       formSubmission: { create: vi.fn().mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', submittedAt: new Date('2026-09-20T00:00:00.000Z') }) }
     };
     const publicForms = { withPublishedForm: vi.fn(async (_publicId, work) => work(tx)) };
