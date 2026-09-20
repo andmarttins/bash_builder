@@ -25,6 +25,7 @@ export const capabilities = [
   'workspace.view', 'organization.manage',
   'forms.view', 'forms.manage', 'forms.submissions.view', 'forms.submissions.manage',
   'events.view', 'events.manage', 'changes.view', 'changes.manage', 'changes.approve',
+  'notifications.view',
   'bash.view', 'bash.manage', 'hht.view', 'hht.manage',
   'dashboards.view', 'dashboards.manage', 'tv.view', 'tv.manage',
   'integrations.view', 'integrations.manage', 'operations.view', 'operations.manage'
@@ -35,8 +36,8 @@ export type Capability = z.infer<typeof capabilitySchema>;
 
 const allCapabilities = [...capabilities];
 const administratorCapabilities = allCapabilities.filter((capability) => capability !== 'organization.manage');
-const memberCapabilities: Capability[] = ['workspace.view', 'forms.view', 'forms.submissions.view', 'events.view', 'changes.view', 'changes.approve', 'bash.view', 'hht.view', 'dashboards.view', 'tv.view'];
-const viewerCapabilities: Capability[] = ['workspace.view', 'forms.view', 'events.view', 'changes.view', 'bash.view', 'hht.view', 'dashboards.view', 'tv.view'];
+const memberCapabilities: Capability[] = ['workspace.view', 'forms.view', 'forms.submissions.view', 'events.view', 'changes.view', 'changes.approve', 'notifications.view', 'bash.view', 'hht.view', 'dashboards.view', 'tv.view'];
+const viewerCapabilities: Capability[] = ['workspace.view', 'forms.view', 'events.view', 'changes.view', 'notifications.view', 'bash.view', 'hht.view', 'dashboards.view', 'tv.view'];
 
 export const roleCapabilities: Record<MembershipRole, readonly Capability[]> = {
   OWNER: allCapabilities,

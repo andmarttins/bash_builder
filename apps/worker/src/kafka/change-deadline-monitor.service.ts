@@ -21,13 +21,15 @@ export class ChangeDeadlineMonitorService implements OnModuleInit, OnModuleDestr
 
   public async runOnce(lookaheadHours: number): Promise<number> {
     const due = await this.database.query<DueChange>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, lookaheadHours]);
-    let projected = 0;
+    let delivered = 0;
     for (const item of due) {
       const event: OutboxEvent = { eventId: item.event_id, tenantId: item.organization_id, aggregateId: item.aggregate_id, eventType: item.event_type, schemaVersion: 1, payload: item.payload, occurredAt: item.occurred_at.toISOString() };
-      if (await this.database.recordDomainProjection(event, 'change-deadline-monitor-v1')) projected += 1;
+      await this.database.recordDomainProjection(event, 'change-deadline-monitor-v1');
+      delivered += await this.database.deliverChangeDeadlineNotifications(event);
+      await this.database.recordDomainProjection(event, 'change-deadline-delivery-v1');
     }
-    if (projected > 0) this.logger.log(`Projected ${projected} change deadline notification(s).`);
-    return projected;
+    if (delivered > 0) this.logger.log(`Delivered ${delivered} in-app change deadline notification(s).`);
+    return delivered;
   }
 
   private async runScheduled(lookaheadHours: number): Promise<void> {

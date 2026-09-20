@@ -1,7 +1,7 @@
-import { Building2, ClipboardList, FileText, LayoutDashboard, LogOut, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
+import { Bell, Building2, ClipboardList, FileText, LayoutDashboard, LogOut, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-type DashboardView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization' | 'profile';
+type DashboardView = 'home' | 'forms' | 'notifications' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization' | 'profile';
 
 type DashboardShellProps = {
   children: ReactNode;
@@ -11,6 +11,7 @@ type DashboardShellProps = {
   onNavigate: (view: DashboardView) => void;
   onToggle: () => void;
   pending: boolean;
+  unreadNotifications: number;
   view: DashboardView;
 };
 
@@ -21,7 +22,7 @@ const menuGroups: Array<{ label: string; items: Array<{ view: DashboardView; lab
   { label: 'Administração', items: [{ view: 'integrations', label: 'Integrações', icon: Settings2 }, { view: 'classifications', label: 'Listas', icon: ClipboardList }, { view: 'files', label: 'Arquivos', icon: FileText }, { view: 'organization', label: 'Organização', icon: UsersRound }] }
 ];
 
-export function DashboardShell({ children, collapsed, identity, onLogout, onNavigate, onToggle, pending, view }: DashboardShellProps): React.JSX.Element {
+export function DashboardShell({ children, collapsed, identity, onLogout, onNavigate, onToggle, pending, unreadNotifications, view }: DashboardShellProps): React.JSX.Element {
   const initials = identity.user.email.slice(0, 2).toUpperCase();
   return <main className={`dashboard-shell${collapsed ? ' sidebar-collapsed' : ''}`}>
     <aside className="dashboard-sidebar" aria-label="Navegação principal">
@@ -36,6 +37,6 @@ export function DashboardShell({ children, collapsed, identity, onLogout, onNavi
         <button className="account-logout" type="button" onClick={onLogout} disabled={pending}><LogOut aria-hidden="true" /><span>Sair</span></button>
       </div>
     </aside>
-    <section className="dashboard-main"><header className="dashboard-topbar"><div><p>{identity.organization.slug}</p><strong>{identity.organization.name}</strong></div><button className="mobile-menu-toggle" type="button" aria-label="Alternar menu" onClick={onToggle}><Menu aria-hidden="true" /></button></header><section className="dashboard-content">{children}</section></section>
+    <section className="dashboard-main"><header className="dashboard-topbar"><div><p>{identity.organization.slug}</p><strong>{identity.organization.name}</strong></div><div className="topbar-actions"><button className="sidebar-toggle" type="button" aria-label={`Notificações${unreadNotifications ? `: ${unreadNotifications} não lidas` : ''}`} onClick={() => onNavigate('notifications')}><Bell aria-hidden="true" />{unreadNotifications > 0 && <span className="notification-count">{unreadNotifications > 99 ? '99+' : unreadNotifications}</span>}</button><button className="mobile-menu-toggle" type="button" aria-label="Alternar menu" onClick={onToggle}><Menu aria-hidden="true" /></button></div></header><section className="dashboard-content">{children}</section></section>
   </main>;
 }

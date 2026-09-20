@@ -49,6 +49,15 @@ export class WorkerDatabaseHealthService implements OnModuleInit, OnModuleDestro
     return result.rows[0]?.recorded === true;
   }
 
+  public async deliverChangeDeadlineNotifications(event: OutboxEvent): Promise<number> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<{ delivered: number }>(
+      'SELECT app.deliver_change_deadline_notifications($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb) AS delivered',
+      [event.eventId, event.tenantId, event.aggregateId, event.eventType, JSON.stringify(event.payload)]
+    );
+    return result.rows[0]?.delivered ?? 0;
+  }
+
   public async query<T extends Record<string, unknown>>(sql: string, values: unknown[] = []): Promise<T[]> {
     if (!this.client) throw new Error('Worker database client is not ready.');
     return (await this.client.query<T>(sql, values)).rows;

@@ -1,11 +1,11 @@
-import { Building2, CheckCircle2, ClipboardList, FileText, LayoutDashboard, LogOut, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
+import { Bell, Building2, CheckCircle2, ClipboardList, FileText, LayoutDashboard, LogOut, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { resolveSubmissionCursorPage } from './submission-pagination.js';
 import { DashboardShell } from './dashboard-shell.js';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
-type WorkspaceView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization' | 'profile';
+type WorkspaceView = 'home' | 'forms' | 'notifications' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization' | 'profile';
 type Organization = { id: string; name: string; slug: string; membership: { id: string; role: string } };
 type Member = { id: string; userId: string; email: string; role: string; status: string; createdAt: string };
 type Invitation = { id: string; email: string; role: string; expiresAt: string; createdAt: string };
@@ -15,6 +15,7 @@ type FormSubmission = { id: string; status: 'RECEIVED' | 'IN_REVIEW' | 'RESOLVED
 type SubmissionPagination = { pageSize: number; total: number; nextCursor: string | null };
 type SubmissionPager = SubmissionPagination & { page: number };
 type PublicForm = { id: string; publicId: string; title: string; description: string | null; fields: Array<{ key: string; label: string; type: 'SHORT_TEXT' | 'LONG_TEXT' | 'NUMBER' | 'DATE' | 'SELECT' | 'MULTI_SELECT' | 'CHECKBOX'; required: boolean; options: string[]; position: number }> };
+type UserNotification = { id: string; type: string; title: string; body: string; target: WorkspaceView | null; resourceId: string | null; readAt: string | null; createdAt: string };
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, credentials: 'include', headers: { 'content-type': 'application/json', ...options?.headers } });
@@ -43,6 +44,8 @@ export function App(): React.JSX.Element {
   const [submissionPagination, setSubmissionPagination] = useState<SubmissionPager>({ page: 1, pageSize: 25, total: 0, nextCursor: null });
   const [submissionCursorHistory, setSubmissionCursorHistory] = useState<Array<string | null>>([]);
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState<FormSubmission['status'] | ''>('');
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   useEffect(() => { void (async () => {
     if (publicFormId) return;
@@ -75,6 +78,35 @@ export function App(): React.JSX.Element {
     try { setForms((await api<{ forms: FormSummary[] }>('/v1/forms')).forms); }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar os formulários.'); }
   })(); }, [identity, mode, workspaceView]);
+
+  const loadNotifications = useCallback(async () => {
+    const response = await api<{ items: UserNotification[]; unread: number }>('/v1/notifications');
+    setNotifications(response.items); setUnreadNotifications(response.unread);
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'signed-in' || !identity) { setNotifications([]); setUnreadNotifications(0); return; }
+    void loadNotifications().catch(() => undefined);
+    const timer = window.setInterval(() => { void loadNotifications().catch(() => undefined); }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [identity, loadNotifications, mode]);
+
+  async function openNotification(notification: UserNotification): Promise<void> {
+    setPending(true); setError(null);
+    try {
+      if (!notification.readAt) await api(`/v1/notifications/${notification.id}/read`, { method: 'PATCH', body: '{}' });
+      await loadNotifications();
+      if (notification.target) setWorkspaceView(notification.target);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a notificação.'); }
+    finally { setPending(false); }
+  }
+
+  async function markAllNotificationsRead(): Promise<void> {
+    setPending(true); setError(null);
+    try { await api('/v1/notifications/read-all', { method: 'POST', body: '{}' }); await loadNotifications(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar as notificações.'); }
+    finally { setPending(false); }
+  }
 
   async function submitBootstrap(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); const values = new FormData(event.currentTarget);
@@ -274,14 +306,14 @@ export function App(): React.JSX.Element {
   if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
 
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
-  if (mode === 'signed-in' && identity) return <DashboardShell collapsed={sidebarCollapsed} identity={identity} onLogout={() => void logout()} onNavigate={setWorkspaceView} onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)} pending={pending} view={workspaceView}><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
+  if (mode === 'signed-in' && identity) return <DashboardShell collapsed={sidebarCollapsed} identity={identity} onLogout={() => void logout()} onNavigate={setWorkspaceView} onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)} pending={pending} unreadNotifications={unreadNotifications} view={workspaceView}><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
     <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div>
-    <nav className="workspace-nav" aria-label="Navegação do workspace">{([['home', 'Visão geral'], ['forms', 'Formulários'], ['events', 'Eventos'], ['changes', 'Mudanças'], ['bash', 'BASH'], ['hht', 'HHT'], ['dashboards', 'Painéis'], ['tv', 'TV'], ['integrations', 'Integrações'], ['classifications', 'Listas'], ['files', 'Arquivos'], ['organization', 'Organização']] as Array<[WorkspaceView, string]>).map(([view, label]) => <button key={view} className="workspace-nav-item" aria-current={workspaceView === view ? 'page' : undefined} type="button" onClick={() => setWorkspaceView(view)}>{view === 'home' ? <LayoutDashboard aria-hidden="true" /> : view === 'forms' || view === 'files' ? <FileText aria-hidden="true" /> : <Settings2 aria-hidden="true" />} {label}</button>)}</nav>
+    <nav className="workspace-nav" aria-label="Navegação do workspace">{([['home', 'Visão geral'], ['notifications', `Notificações${unreadNotifications ? ` (${unreadNotifications})` : ''}`], ['forms', 'Formulários'], ['events', 'Eventos'], ['changes', 'Mudanças'], ['bash', 'BASH'], ['hht', 'HHT'], ['dashboards', 'Painéis'], ['tv', 'TV'], ['integrations', 'Integrações'], ['classifications', 'Listas'], ['files', 'Arquivos'], ['organization', 'Organização']] as Array<[WorkspaceView, string]>).map(([view, label]) => <button key={view} className="workspace-nav-item" aria-current={workspaceView === view ? 'page' : undefined} type="button" onClick={() => setWorkspaceView(view)}>{view === 'home' ? <LayoutDashboard aria-hidden="true" /> : view === 'notifications' ? <Bell aria-hidden="true" /> : view === 'forms' || view === 'files' ? <FileText aria-hidden="true" /> : <Settings2 aria-hidden="true" />} {label}</button>)}</nav>
     {workspaceView === 'home' ? <>
       <p className="eyebrow">Workspace</p><h1 id="dashboard-title">Visão geral da empresa</h1><p className="description">Olá, {identity.organization.name}. Acompanhe a organização ativa e avance pela configuração dos módulos empresariais.</p>
       <section className="overview-grid" aria-label="Resumo da empresa"><article className="overview-card"><Building2 aria-hidden="true" /><span>Organização ativa</span><strong>{identity.organization.name}</strong><small>{identity.organization.slug}</small></article><article className="overview-card"><UsersRound aria-hidden="true" /><span>Seu acesso</span><strong>{identity.membership.role}</strong><small>{identity.access.isPlatformAdmin ? 'Administrador da plataforma' : 'Membro da organização'}</small></article><article className="overview-card"><ClipboardList aria-hidden="true" /><span>Próxima etapa</span><strong>Configurar módulos</strong><small>Formulários já estão disponíveis; os demais entram por entregas isoladas.</small></article></section>
       <section className="admin-section" aria-labelledby="start-title"><h2 id="start-title">Comece por aqui</h2><p className="section-note">Crie e publique formulários, ou gerencie membros, convites e outras organizações.</p><button className="primary-button compact" type="button" onClick={() => setWorkspaceView('forms')}><FileText aria-hidden="true" /> Abrir formulários</button></section>
-    </> : workspaceView === 'profile' ? <ProfilePage identity={identity} notice={profileNotice} pending={pending} onChangePassword={changeOwnPassword} /> : workspaceView === 'forms' ? <>
+    </> : workspaceView === 'notifications' ? <section className="admin-section" aria-labelledby="notifications-title"><div className="section-heading"><div><p className="eyebrow">Central de avisos</p><h2 id="notifications-title">Notificações</h2></div>{unreadNotifications > 0 && <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void markAllNotificationsRead()}>Marcar todas como lidas</button>}</div>{notifications.length === 0 ? <p className="section-note">Você não possui notificações.</p> : <div className="form-list">{notifications.map((notification) => <button className="form-row notification-row" data-unread={!notification.readAt || undefined} key={notification.id} type="button" disabled={pending} onClick={() => void openNotification(notification)}><Bell aria-hidden="true" /><span><strong>{notification.title}</strong><small>{notification.body} · {new Date(notification.createdAt).toLocaleString('pt-BR')}</small></span></button>)}</div>}</section> : workspaceView === 'profile' ? <ProfilePage identity={identity} notice={profileNotice} pending={pending} onChangePassword={changeOwnPassword} /> : workspaceView === 'forms' ? <>
       <p className="eyebrow">Módulo empresarial</p><h1 id="dashboard-title">Formulários</h1><p className="description">Crie formulários isolados por empresa. Cada criação recebe um campo inicial obrigatório, que pode ser configurado pela API nesta primeira entrega.</p>
       {error && <p className="form-error" role="alert">{error}</p>}
       {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <form className="inline-form admin-section" onSubmit={createForm}><label>Título<input name="title" required minLength={2} maxLength={160} placeholder="Inspeção de segurança" /></label><label>Descrição<input name="description" maxLength={10000} placeholder="Opcional" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar formulário</button></form>}
@@ -373,7 +405,7 @@ function PublicFormPage({ publicId }: { publicId: string }): React.JSX.Element {
   return <main className="shell"><section className="panel" aria-labelledby="public-form-title"><div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div><p className="eyebrow">Formulário</p><h1 id="public-form-title">{form.title}</h1>{form.description && <p className="description">{form.description}</p>}{error && <p className="form-error" role="alert">{error}</p>}<form className="auth-form" onSubmit={submit}>{form.fields.map((field) => <label key={field.key}>{field.label}{field.type === 'LONG_TEXT' ? <textarea name={field.key} required={field.required} maxLength={10000} /> : field.type === 'SELECT' ? <select name={field.key} required={field.required} defaultValue=""><option value="" disabled>Selecione</option>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'MULTI_SELECT' ? <select name={field.key} required={field.required} multiple>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'CHECKBOX' ? <input name={field.key} type="checkbox" required={field.required} /> : <input name={field.key} type={field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text'} required={field.required} />}</label>)}<button className="primary-button" type="submit" disabled={pending}>{pending ? 'Enviando…' : 'Enviar resposta'}</button></form></section></main>;
 }
 
-type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'tv' | 'organization' | 'profile'>;
+type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'notifications' | 'tv' | 'organization' | 'profile'>;
 
 const operationalPages: Record<OperationalView, { title: string; description: string; endpoint: string; property: string; createPath: string; manageLabel: string }> = {
   events: { title: 'Eventos de segurança', description: 'Registre, classifique e acompanhe eventos e suas ações corretivas.', endpoint: '/v1/events', property: 'events', createPath: '/v1/events', manageLabel: 'Novo evento' },

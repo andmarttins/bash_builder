@@ -38,6 +38,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     );
     expect(requiredExtensions.rows).toEqual([{ extname: 'citext' }, { extname: 'pgcrypto' }]);
     await bootstrap.query('DELETE FROM "auth_sessions"');
+    await bootstrap.query('DELETE FROM "user_notifications"');
     await bootstrap.query('DELETE FROM "audit_logs"');
     await bootstrap.query('DELETE FROM "organization_invitations"');
     await bootstrap.query('DELETE FROM "safety_event_actions"');
@@ -199,13 +200,13 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
-    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections'];
+    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
       "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1::text[]) ORDER BY tablename",
       [tableNames]
     );
     expect(policies.rows).toHaveLength(tableNames.length);
-    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => `${name}_tenant_isolation`).sort());
+    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : `${name}_tenant_isolation`).sort());
     const rls = await bootstrap.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>(
       "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY relname",
       [tableNames]
@@ -280,15 +281,18 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect(tenantBNotification).toEqual(expect.objectContaining({ aggregate_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a96', event_type: 'change.deadline_reminder' }));
     const eventTypeKinds = (await worker.query<{ event_type_kind: string }>('SELECT DISTINCT pg_typeof(event_type)::text AS event_type_kind FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
     expect(eventTypeKinds).toEqual([{ event_type_kind: 'character varying' }]);
-    await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantANotification!.event_id, tenantANotification!.organization_id, 'change-deadline-monitor-v1', tenantANotification!.event_type, tenantANotification!.aggregate_id, JSON.stringify(tenantANotification!.payload), tenantANotification!.occurred_at]);
-    await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantBNotification!.event_id, tenantBNotification!.organization_id, 'change-deadline-monitor-v1', tenantBNotification!.event_type, tenantBNotification!.aggregate_id, JSON.stringify(tenantBNotification!.payload), tenantBNotification!.occurred_at]);
+    const deliveryQuery = 'SELECT app.deliver_change_deadline_notifications($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb) AS delivered';
+    expect((await worker.query<{ delivered: number }>(deliveryQuery, [tenantANotification!.event_id, tenantANotification!.organization_id, tenantANotification!.aggregate_id, tenantANotification!.event_type, JSON.stringify(tenantANotification!.payload)])).rows).toEqual([{ delivered: 1 }]);
+    expect((await worker.query<{ delivered: number }>(deliveryQuery, [tenantANotification!.event_id, tenantANotification!.organization_id, tenantANotification!.aggregate_id, tenantANotification!.event_type, JSON.stringify(tenantANotification!.payload)])).rows).toEqual([{ delivered: 0 }]);
+    await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantANotification!.event_id, tenantANotification!.organization_id, 'change-deadline-delivery-v1', tenantANotification!.event_type, tenantANotification!.aggregate_id, JSON.stringify(tenantANotification!.payload), tenantANotification!.occurred_at]);
+    await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantBNotification!.event_id, tenantBNotification!.organization_id, 'change-deadline-delivery-v1', tenantBNotification!.event_type, tenantBNotification!.aggregate_id, JSON.stringify(tenantBNotification!.payload), tenantBNotification!.occurred_at]);
     const afterProjection = (await worker.query<{ event_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
     expect(afterProjection.some((notification) => notification.event_id === tenantANotification!.event_id)).toBe(false);
     await bootstrap.query("INSERT INTO \"change_requests\" (organization_id, public_code, title, due_at, updated_at) SELECT $1, 'BATCH-' || sequence, 'Batch due change', NOW() + INTERVAL '1 hour', NOW() FROM generate_series(1, 26) AS sequence", [tenantA]);
     const firstBatch = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown>; occurred_at: Date }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
     expect(firstBatch).toHaveLength(25);
     expect(firstBatch.every((notification) => String(notification.payload.publicCode).startsWith('BATCH-'))).toBe(true);
-    for (const notification of firstBatch) await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [notification.event_id, notification.organization_id, 'change-deadline-monitor-v1', notification.event_type, notification.aggregate_id, JSON.stringify(notification.payload), notification.occurred_at]);
+    for (const notification of firstBatch) await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [notification.event_id, notification.organization_id, 'change-deadline-delivery-v1', notification.event_type, notification.aggregate_id, JSON.stringify(notification.payload), notification.occurred_at]);
     const secondBatch = (await worker.query<{ event_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
     expect(secondBatch.length).toBeGreaterThan(0);
     expect(secondBatch.some((notification) => firstBatch.some((first) => first.event_id === notification.event_id))).toBe(false);
@@ -299,7 +303,20 @@ describeIntegration('PostgreSQL row-level security', () => {
     const nextDay = (await worker.query<{ event_id: string; aggregate_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2, $3::timestamptz)', [100, 48, new Date(baseline.getTime() + 24 * 60 * 60 * 1_000)])).rows.find((notification) => notification.aggregate_id === dayFixture.id)!;
     expect(sameDay.event_id).toBe(sameDayAgain.event_id);
     expect(nextDay.event_id).not.toBe(sameDay.event_id);
+    await bootstrap.query('INSERT INTO "user_notifications" (organization_id, identity_user_id, event_id, type, title, body) VALUES ($1, $2, $3, $4, $5, $6)', [tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a91', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380b10', 'change.deadline_reminder', 'Tenant B only', 'Must remain hidden from tenant A']);
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      await runtime.query("SELECT set_config('app.actor_id', $1, true)", ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a91']);
+      expect((await runtime.query('SELECT event_id FROM "user_notifications"')).rows).toEqual([{ event_id: tenantANotification!.event_id }]);
+      expect((await runtime.query('UPDATE "user_notifications" SET read_at = NOW() WHERE event_id = $1 RETURNING event_id', [tenantANotification!.event_id])).rows).toEqual([{ event_id: tenantANotification!.event_id }]);
+      await runtime.query("SELECT set_config('app.actor_id', $1, true)", ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a92']);
+      expect((await runtime.query('SELECT event_id FROM "user_notifications"')).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "user_notifications" SET read_at = NOW() WHERE event_id = $1 RETURNING event_id', [tenantANotification!.event_id])).rows).toEqual([]);
+      await expect(runtime.query('UPDATE "user_notifications" SET title = \'tampered\' WHERE event_id = $1', [tenantANotification!.event_id])).rejects.toThrow(/permission denied/i);
+    } finally { await runtime.query('ROLLBACK'); }
     await expect(runtime.query('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rejects.toThrow(/permission denied/i);
+    await expect(runtime.query(deliveryQuery, [tenantANotification!.event_id, tenantANotification!.organization_id, tenantANotification!.aggregate_id, tenantANotification!.event_type, JSON.stringify(tenantANotification!.payload)])).rejects.toThrow(/permission denied/i);
     await expect(worker.query('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [0, 24])).rejects.toThrow(/invalid change deadline limits/i);
   });
 
@@ -328,6 +345,9 @@ describeIntegration('PostgreSQL row-level security', () => {
     await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
     const deadlinePermissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.list_change_deadline_notifications(integer,integer,timestamp with time zone)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.list_change_deadline_notifications(integer,integer,timestamp with time zone)', 'EXECUTE') AS runtime");
     expect(deadlinePermissions.rows).toEqual([{ worker: true, runtime: false }]);
+    const notificationDeliveryPermissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.deliver_change_deadline_notifications(uuid,uuid,uuid,character varying,jsonb)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.deliver_change_deadline_notifications(uuid,uuid,uuid,character varying,jsonb)', 'EXECUTE') AS runtime");
+    expect(notificationDeliveryPermissions.rows).toEqual([{ worker: true, runtime: false }]);
+    await expect(worker.query('SELECT id FROM "user_notifications"')).rejects.toThrow(/permission denied/i);
     await expect(worker.query('SELECT id FROM "change_requests"')).rejects.toThrow(/permission denied/i);
   });
 

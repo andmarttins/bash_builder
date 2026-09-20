@@ -17,6 +17,8 @@ import { FormsController, PublicFormsController } from './forms/forms.controller
 import { FormsService } from './forms/forms.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
+import { NotificationsController } from './notifications/notifications.controller.js';
+import { NotificationsService } from './notifications/notifications.service.js';
 
 const identity = {
   user: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'owner@example.com' },
@@ -104,6 +106,9 @@ const internalRoutes: RouteContract[] = [
   ,{ method: 'GET', url: '/v1/files/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/download', expectedStatus: 200 }
   ,{ method: 'GET', url: '/v1/operations/outbox/dead-letter', expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/operations/outbox/dead-letter/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/redrive', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/notifications', expectedStatus: 200 }
+  ,{ method: 'PATCH', url: '/v1/notifications/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/read', payload: {}, expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/notifications/read-all', payload: {}, expectedStatus: 201 }
 ];
 
 describe('internal API surface contract', () => {
@@ -141,13 +146,15 @@ describe('internal API surface contract', () => {
       listHht: vi.fn().mockResolvedValue({ companies: [], reports: [], windows: [] }), createHhtCompany: vi.fn().mockResolvedValue({}), upsertHhtReport: vi.fn().mockResolvedValue({}), setHhtReportStatus: vi.fn().mockResolvedValue({}), upsertHhtWindow: vi.fn().mockResolvedValue({}),
       listDashboards: vi.fn().mockResolvedValue([]), createDashboard: vi.fn().mockResolvedValue({}), updateDashboard: vi.fn().mockResolvedValue({}), publishDashboard: vi.fn().mockResolvedValue({}), listTv: vi.fn().mockResolvedValue({ displays: [], playlists: [] }), createTvDisplay: vi.fn().mockResolvedValue({}), createTvPlaylist: vi.fn().mockResolvedValue({}), listIntegrations: vi.fn().mockResolvedValue([]), createIntegration: vi.fn().mockResolvedValue({}), updateIntegration: vi.fn().mockResolvedValue({}), listFiles: vi.fn().mockResolvedValue([]), createFileIntent: vi.fn().mockResolvedValue({}), completeFileUpload: vi.fn().mockResolvedValue({}), uploadFileContent: vi.fn().mockResolvedValue({}), openFileDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), listDeadLetters: vi.fn().mockResolvedValue([]), redriveDeadLetter: vi.fn().mockResolvedValue({})
     };
+    const notifications = { list: vi.fn().mockResolvedValue({ items: [], unread: 0 }), markRead: vi.fn().mockResolvedValue({ read: true }), markAllRead: vi.fn().mockResolvedValue({ updated: 0 }) };
     const module = await Test.createTestingModule({
-      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController],
+      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, NotificationsController],
       providers: [
         { provide: IdentityService, useValue: identityService },
         { provide: OrganizationAccessService, useValue: organizations },
         { provide: FormsService, useValue: forms },
         { provide: OperationsService, useValue: operations },
+        { provide: NotificationsService, useValue: notifications },
         { provide: PrismaService, useValue: { $queryRaw: vi.fn().mockResolvedValue([{ ok: 1 }]) } },
         { provide: RedisService, useValue: { ping: vi.fn().mockResolvedValue('PONG') } },
         { provide: SessionContextGuard, useValue: { canActivate: () => true } },

@@ -115,6 +115,12 @@ select { width: 100%; border: 1px solid #475569; border-radius: .65rem; padding:
 .dashboard-topbar div { display: grid; gap: .15rem; }
 .dashboard-topbar p { margin: 0; color: #64748b; font-size: .72rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
 .dashboard-topbar strong { color: #e2e8f0; font-size: .95rem; }
+.topbar-actions { display: flex !important; align-items: center; gap: .55rem; }
+.topbar-actions .sidebar-toggle { position: relative; display: grid; }
+.notification-count { position: absolute; top: -.4rem; right: -.45rem; min-width: 1.1rem; padding: .05rem .25rem; border-radius: 999px; background: #ef4444; color: #fff; font-size: .65rem; font-weight: 800; line-height: 1.1rem; }
+.notification-row { width: 100%; color: inherit; cursor: pointer; text-align: left; grid-template-columns: auto minmax(0, 1fr); }
+.notification-row:hover:not(:disabled) { border-color: #38bdf8; background: #12203a; }
+.notification-row[data-unread] { border-left: 3px solid #38bdf8; background: #0c1c33; }
 .mobile-menu-toggle { display: none; }
 .dashboard-content { width: min(100%, 90rem); margin: 0 auto; padding: clamp(1.25rem, 4vw, 3.25rem); }
 .dashboard-content .dashboard-wide { width: 100%; max-width: none; min-height: calc(100vh - 10rem); padding: clamp(1.25rem, 3vw, 2.25rem); border-radius: 1.1rem; background: rgb(15 23 42 / .84); }

@@ -20,8 +20,8 @@ export class TenantTransactionService {
     const tenant = tenantContextSchema.parse(context);
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenant.tenantId}, true)`;
+      await tx.$executeRaw`SELECT set_config('app.actor_id', ${tenant.actorId ?? ''}, true)`;
       return work(tx);
     });
   }
 }
-

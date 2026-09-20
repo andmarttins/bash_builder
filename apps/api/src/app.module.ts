@@ -24,9 +24,11 @@ import { PublicFormAccessService } from './platform/public-access/public-form-ac
 import { ObjectStorageService } from './platform/storage/object-storage.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
+import { NotificationsController } from './notifications/notifications.controller.js';
+import { NotificationsService } from './notifications/notifications.service.js';
 
 @Module({
-  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController],
+  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, NotificationsController],
   providers: [
     PrismaService,
     RedisService,
@@ -45,7 +47,8 @@ import { OperationsService } from './operations/operations.service.js';
     FormsService,
     PublicFormAccessService,
     ObjectStorageService,
-    OperationsService
+    OperationsService,
+    NotificationsService
   ]
 })
 export class AppModule {}

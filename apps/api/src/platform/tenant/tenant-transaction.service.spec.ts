@@ -15,7 +15,6 @@ describe('TenantTransactionService', () => {
 
     expect(result).toBe('done');
     expect(prisma.$transaction).toHaveBeenCalledOnce();
-    expect(tx.$executeRaw).toHaveBeenCalledOnce();
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
   });
 });
-
