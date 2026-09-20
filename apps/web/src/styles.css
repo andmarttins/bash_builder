@@ -53,6 +53,12 @@ button:disabled { cursor: wait; opacity: .65; }
 .nested-list { display: grid; gap: .35rem; margin: .5rem 0 0; padding-left: 1.15rem; color: #cbd5e1; font-size: .82rem; }
 .nested-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
 .compact-form { margin-top: .75rem; }
+.board { display: grid; grid-template-columns: repeat(5, minmax(14rem, 1fr)); gap: .75rem; overflow-x: auto; padding-bottom: .35rem; }
+.board-column { display: grid; align-content: start; gap: .55rem; min-height: 12rem; padding: .75rem; border: 1px solid #334155; border-radius: .75rem; background: #020617; }
+.board-column h3 { margin: 0; color: #7dd3fc; font-size: .8rem; letter-spacing: .06em; }
+.board-card { display: grid; gap: .45rem; padding: .7rem; border: 1px solid #475569; border-radius: .65rem; background: #0f172a; }
+.board-card strong { color: #e2e8f0; overflow-wrap: anywhere; }
+.board-card small { color: #94a3b8; font-size: .76rem; }
 .admin-section { display: grid; gap: .85rem; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155; }
 .admin-section h2 { margin: 0; color: #e2e8f0; font-size: 1.05rem; }
 .inline-form { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; }
