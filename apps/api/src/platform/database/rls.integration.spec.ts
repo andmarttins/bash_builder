@@ -135,6 +135,17 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('expires a public form at the database boundary', async () => {
+    const formId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a67';
+    const publicId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a68';
+    await bootstrap.query("INSERT INTO \"forms\" (id, organization_id, public_id, title, status, public_expires_at, updated_at) VALUES ($1, $2, $3, 'Expired', 'PUBLISHED', NOW() - INTERVAL '1 second', NOW())", [formId, tenantA, publicId]);
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.public_form_id', $1, true)", [publicId]);
+      expect((await runtime.query('SELECT id FROM "forms" WHERE id = $1', [formId])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+  });
+
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
     const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(

@@ -94,10 +94,10 @@ export class FormsService {
     const id = this.id(formId);
     const { status, expectedVersion } = this.parse(statusSchema, input);
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      if (status === 'PUBLISHED') throw new BadRequestException('Use a publicação para gerar um novo link público.');
       const existing = await tx.form.findFirst({ where: { id }, select: { id: true, fields: { select: { id: true } } } });
       if (!existing) throw new NotFoundException('Formulário não encontrado.');
-      if (status === 'PUBLISHED' && existing.fields.length === 0) throw new BadRequestException('Adicione ao menos um campo antes de publicar.');
-      await this.claimVersion(tx, id, expectedVersion, { status, ...(status === 'PUBLISHED' ? { publicRevokedAt: null } : {}) });
+      await this.claimVersion(tx, id, expectedVersion, { status });
       const form = await this.getRecord(tx, id);
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: `form.${status.toLowerCase()}`, resourceType: 'form', resourceId: id, metadata: { version: form.version } } });
       return form as FormRecord;
