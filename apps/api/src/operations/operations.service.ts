@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
@@ -40,7 +40,10 @@ const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), e
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
 const dashboardSchema = z.object({ title: text(2, 160), description: optionalText(10_000), widgets: z.array(z.object({ type: text(2, 80), title: text(2, 160), config: z.record(z.string(), z.unknown()).default({}) })).max(24).default([]) });
 const dashboardUpdateSchema = dashboardSchema.partial().extend({ expectedVersion }).refine((input) => input.title !== undefined || input.description !== undefined || input.widgets !== undefined, 'Informe alguma alteração.');
-const dashboardPublishSchema = z.object({ published: z.boolean(), expectedVersion });
+const dashboardPublishSchema = z.object({ published: z.boolean(), expectedVersion, expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
+  if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
+  if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
+});
 const tvDisplaySchema = z.object({ name: text(2, 160), dashboardId: uuid, refreshSeconds: z.number().int().min(5).max(3600).optional() });
 const tvPlaylistSchema = z.object({ name: text(2, 160), intervalSeconds: z.number().int().min(5).max(3600).optional(), displayIds: z.array(uuid).min(1).max(30) });
 const integrationSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}) });
@@ -49,6 +52,7 @@ const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png', 'applica
 const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.enum(allowedFileTypes), byteSize: z.number().int().positive().max(10 * 1024 * 1024), checksum: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Informe o SHA-256 hexadecimal do arquivo.') });
 
 type HhtRate = { trifr: number; ltifr: number; ltisr: number };
+const dashboardSummarySelect = { id: true, title: true, description: true, widgets: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true } satisfies Prisma.DashboardSelect;
 
 export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; lti: number }): HhtRate {
   if (input.hhtWorked <= 0) return { trifr: 0, ltifr: 0, ltisr: 0 };
@@ -405,25 +409,27 @@ export class OperationsService {
     });
   }
 
-  public listDashboards(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.dashboard.findMany({ orderBy: { updatedAt: 'desc' } })); }
+  public listDashboards(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.dashboard.findMany({ select: dashboardSummarySelect, orderBy: { updatedAt: 'desc' } })); }
 
   public createDashboard(identity: SessionIdentity, input: unknown) {
     const data = this.parse(dashboardSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const dashboard = await tx.dashboard.create({ data: { organizationId: identity.organization.id, title: data.title, description: data.description, widgets: data.widgets as Prisma.InputJsonValue } });
-      await this.record(tx, identity, 'dashboard.created', 'dashboard', dashboard.id, {});
-      return dashboard;
+      const created = await tx.dashboard.create({ data: { organizationId: identity.organization.id, title: data.title, description: data.description, widgets: data.widgets as Prisma.InputJsonValue }, select: dashboardSummarySelect });
+      await this.record(tx, identity, 'dashboard.created', 'dashboard', created.id, {});
+      return created;
     });
   }
 
   public updateDashboard(identity: SessionIdentity, dashboardIdInput: string, input: unknown) {
     const dashboardId = this.id(dashboardIdInput); const data = this.parse(dashboardUpdateSchema, input);
     return this.withTenant(identity, async (tx) => {
-      if (!await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true } })) throw new NotFoundException('Painel não encontrado.');
+      const existing = await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true, published: true } });
+      if (!existing) throw new NotFoundException('Painel não encontrado.');
       const { expectedVersion: version, ...change } = data;
+      if (existing.published && change.widgets !== undefined) this.assertPublicDashboardWidgets(change.widgets);
       const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version }, data: { ...this.dashboardData(change), version: { increment: 1 } } });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
-      const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId } });
+      const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId }, select: dashboardSummarySelect });
       await this.record(tx, identity, 'dashboard.updated', 'dashboard', dashboardId, { version: dashboard.version });
       return dashboard;
     });
@@ -432,12 +438,18 @@ export class OperationsService {
   public publishDashboard(identity: SessionIdentity, dashboardIdInput: string, input: unknown) {
     const dashboardId = this.id(dashboardIdInput); const data = this.parse(dashboardPublishSchema, input);
     return this.withTenant(identity, async (tx) => {
-      if (!await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true } })) throw new NotFoundException('Painel não encontrado.');
-      const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version: data.expectedVersion }, data: { published: data.published, version: { increment: 1 } } });
+      const existing = await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true, widgets: true } });
+      if (!existing) throw new NotFoundException('Painel não encontrado.');
+      if (data.published) this.assertPublicDashboardWidgets(existing.widgets);
+      const token = data.published ? randomBytes(32).toString('base64url') : null;
+      const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version: data.expectedVersion }, data: data.published
+        ? { published: true, publicTokenHash: this.publicationTokenHash(token!), publicPublishedAt: new Date(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null, version: { increment: 1 } }
+        : { published: false, publicTokenHash: null, publicRevokedAt: new Date(), version: { increment: 1 } }
+      });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
-      const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId } });
-      await this.record(tx, identity, data.published ? 'dashboard.published' : 'dashboard.unpublished', 'dashboard', dashboardId, { version: dashboard.version });
-      return dashboard;
+      const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId }, select: dashboardSummarySelect });
+      await this.record(tx, identity, data.published ? 'dashboard.publication_created' : 'dashboard.publication_revoked', 'dashboard', dashboardId, { version: dashboard.version, expiresAt: data.published ? (data.expiresAt?.toISOString() ?? null) : undefined });
+      return { dashboard, publication: token ? { token, expiresAt: data.expiresAt ?? null } : null };
     });
   }
 
@@ -581,6 +593,19 @@ export class OperationsService {
 
   private dashboardData(data: { title?: string; description?: string | null; widgets?: Array<{ type: string; title: string; config: Record<string, unknown> }> }): { title?: string; description?: string | null; widgets?: Prisma.InputJsonValue } {
     return { ...(data.title === undefined ? {} : { title: data.title }), ...(data.description === undefined ? {} : { description: data.description }), ...(data.widgets === undefined ? {} : { widgets: data.widgets as Prisma.InputJsonValue }) };
+  }
+
+  private publicationTokenHash(token: string): string { return createHash('sha256').update(token).digest('hex'); }
+  private assertPublicDashboardWidgets(value: unknown): void {
+    if (!Array.isArray(value)) throw new BadRequestException('Os widgets do painel são inválidos para publicação.');
+    for (const widget of value) {
+      if (!widget || typeof widget !== 'object') throw new BadRequestException('O painel público aceita apenas widgets estáticos autorizados.');
+      const candidate = widget as { type?: unknown; config?: unknown };
+      if (candidate.type === 'TEXT' && candidate.config && typeof candidate.config === 'object' && !Array.isArray(candidate.config) && typeof (candidate.config as Record<string, unknown>).content === 'string' && ((candidate.config as Record<string, unknown>).content as string).length <= 2_000) continue;
+      if (candidate.type === 'METRIC' && candidate.config && typeof candidate.config === 'object' && !Array.isArray(candidate.config) && ['string', 'number'].includes(typeof (candidate.config as Record<string, unknown>).value) && String((candidate.config as Record<string, unknown>).value).length <= 160) continue;
+      if (candidate.type === 'NOTICE' && candidate.config && typeof candidate.config === 'object' && !Array.isArray(candidate.config) && typeof (candidate.config as Record<string, unknown>).message === 'string' && ((candidate.config as Record<string, unknown>).message as string).length <= 1_000) continue;
+      throw new BadRequestException('O painel público aceita somente widgets TEXT, METRIC ou NOTICE com conteúdo estático.');
+    }
   }
 
   private safeFilename(value: string): string {

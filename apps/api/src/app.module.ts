@@ -21,14 +21,16 @@ import { CURSOR_SIGNING_SECRET } from './forms/submission-cursor.service.js';
 import { getApiRuntimeConfig } from './platform/config/runtime-config.js';
 import { FormValidationService } from './forms/form-validation.service.js';
 import { PublicFormAccessService } from './platform/public-access/public-form-access.service.js';
+import { PublicDashboardAccessService } from './platform/public-access/public-dashboard-access.service.js';
 import { ObjectStorageService } from './platform/storage/object-storage.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
+import { PublicDashboardsController } from './operations/public-dashboards.controller.js';
 import { NotificationsController } from './notifications/notifications.controller.js';
 import { NotificationsService } from './notifications/notifications.service.js';
 
 @Module({
-  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, NotificationsController],
+  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, NotificationsController],
   providers: [
     PrismaService,
     RedisService,
@@ -46,6 +48,7 @@ import { NotificationsService } from './notifications/notifications.service.js';
     SubmissionCursorService,
     FormsService,
     PublicFormAccessService,
+    PublicDashboardAccessService,
     ObjectStorageService,
     OperationsService,
     NotificationsService

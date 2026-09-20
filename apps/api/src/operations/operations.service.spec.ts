@@ -249,4 +249,51 @@ describe('calculateHhtRates', () => {
     await expect(new OperationsService(tenants as never, storage as never).uploadFileContent(identity, eventId, Buffer.from('bad'))).rejects.toBeInstanceOf(BadRequestException);
     expect(storage.putObject).not.toHaveBeenCalled();
   });
+
+  it('creates a one-time dashboard publication token, records its lifecycle, and never puts the token in the event payload', async () => {
+    const dashboard = { id: eventId, title: 'Status', widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Tudo normal' } }], version: 2, published: true };
+    const tx = {
+      dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, widgets: dashboard.widgets }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const result = await new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1 });
+
+    expect(result.publication?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(tx.dashboard.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ published: true, publicTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), publicRevokedAt: null }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'dashboard.publication_created', metadata: expect.not.objectContaining({ token: expect.anything() }) }) }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'dashboard.publication_created' }) }));
+  });
+
+  it('never selects publication token hashes for the internal dashboard listing', async () => {
+    const tx = { dashboard: { findMany: vi.fn().mockResolvedValue([]) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).listDashboards(identity)).resolves.toEqual([]);
+    expect(tx.dashboard.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.not.objectContaining({ publicTokenHash: expect.anything() }) }));
+  });
+
+  it('refuses to make dynamic or arbitrary widget configuration public', async () => {
+    const tx = { dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, widgets: [{ type: 'SQL', title: 'Unsafe', config: { query: 'select * from identity_users' } }] }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('does not allow an already public dashboard to acquire an unapproved widget through its update endpoint', async () => {
+    const tx = { dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, published: true }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 2, widgets: [{ type: 'SQL', title: 'Unsafe', config: { query: 'select * from identity_users' } }] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects an already expired publication before opening a tenant transaction', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    expect(() => new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1, expiresAt: new Date(Date.now() - 1_000).toISOString() })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('uses optimistic concurrency when revoking a dashboard publication', async () => {
+    const tx = { dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, widgets: [] }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: false, expectedVersion: 4 })).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.dashboard.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 4 }, data: expect.objectContaining({ published: false, publicTokenHash: null }) }));
+  });
 });

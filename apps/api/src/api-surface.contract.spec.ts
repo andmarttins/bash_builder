@@ -17,6 +17,8 @@ import { FormsController, PublicFormsController } from './forms/forms.controller
 import { FormsService } from './forms/forms.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
+import { PublicDashboardsController } from './operations/public-dashboards.controller.js';
+import { PublicDashboardAccessService } from './platform/public-access/public-dashboard-access.service.js';
 import { NotificationsController } from './notifications/notifications.controller.js';
 import { NotificationsService } from './notifications/notifications.service.js';
 
@@ -93,6 +95,7 @@ const internalRoutes: RouteContract[] = [
   ,{ method: 'POST', url: '/v1/dashboards', payload: {}, expectedStatus: 201 }
   ,{ method: 'PATCH', url: '/v1/dashboards/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/dashboards/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publish', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/public/dashboards/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', expectedStatus: 404 }
   ,{ method: 'GET', url: '/v1/tv', expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/tv/displays', payload: {}, expectedStatus: 201 }
   ,{ method: 'POST', url: '/v1/tv/playlists', payload: {}, expectedStatus: 201 }
@@ -147,13 +150,15 @@ describe('internal API surface contract', () => {
       listDashboards: vi.fn().mockResolvedValue([]), createDashboard: vi.fn().mockResolvedValue({}), updateDashboard: vi.fn().mockResolvedValue({}), publishDashboard: vi.fn().mockResolvedValue({}), listTv: vi.fn().mockResolvedValue({ displays: [], playlists: [] }), createTvDisplay: vi.fn().mockResolvedValue({}), createTvPlaylist: vi.fn().mockResolvedValue({}), listIntegrations: vi.fn().mockResolvedValue([]), createIntegration: vi.fn().mockResolvedValue({}), updateIntegration: vi.fn().mockResolvedValue({}), listFiles: vi.fn().mockResolvedValue([]), createFileIntent: vi.fn().mockResolvedValue({}), completeFileUpload: vi.fn().mockResolvedValue({}), uploadFileContent: vi.fn().mockResolvedValue({}), openFileDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), listDeadLetters: vi.fn().mockResolvedValue([]), redriveDeadLetter: vi.fn().mockResolvedValue({})
     };
     const notifications = { list: vi.fn().mockResolvedValue({ items: [], unread: 0 }), markRead: vi.fn().mockResolvedValue({ read: true }), markAllRead: vi.fn().mockResolvedValue({ updated: 0 }) };
+    const publicDashboards = { withPublishedDashboard: vi.fn(async (_token: string, work: (tx: { dashboard: { findFirst: () => Promise<null> } }, tokenHash: string) => Promise<unknown>) => work({ dashboard: { findFirst: async () => null } }, 'a'.repeat(64))) };
     const module = await Test.createTestingModule({
-      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, NotificationsController],
+      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, NotificationsController],
       providers: [
         { provide: IdentityService, useValue: identityService },
         { provide: OrganizationAccessService, useValue: organizations },
         { provide: FormsService, useValue: forms },
         { provide: OperationsService, useValue: operations },
+        { provide: PublicDashboardAccessService, useValue: publicDashboards },
         { provide: NotificationsService, useValue: notifications },
         { provide: PrismaService, useValue: { $queryRaw: vi.fn().mockResolvedValue([{ ok: 1 }]) } },
         { provide: RedisService, useValue: { ping: vi.fn().mockResolvedValue('PONG') } },
@@ -179,6 +184,6 @@ describe('internal API surface contract', () => {
       })
     });
     expect(response.statusCode).toBe(route.expectedStatus);
-    expect(response.statusCode).not.toBe(404);
+    if (route.expectedStatus !== 404) expect(response.statusCode).not.toBe(404);
   });
 });

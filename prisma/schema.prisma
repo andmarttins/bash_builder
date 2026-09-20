@@ -661,6 +661,10 @@ model Dashboard {
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @map("organization_id") @db.Uuid
   publicId       String       @unique @default(uuid()) @map("public_id") @db.Uuid
+  publicTokenHash String?     @unique @map("public_token_hash") @db.Char(64)
+  publicPublishedAt DateTime? @map("public_published_at") @db.Timestamptz(6)
+  publicExpiresAt DateTime?   @map("public_expires_at") @db.Timestamptz(6)
+  publicRevokedAt DateTime?   @map("public_revoked_at") @db.Timestamptz(6)
   title          String       @db.VarChar(160)
   description    String?      @db.Text
   widgets        Json         @default("[]")

@@ -2,6 +2,7 @@ import { Bell, Building2, CheckCircle2, ClipboardList, FileText, LayoutDashboard
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { resolveSubmissionCursorPage } from './submission-pagination.js';
 import { DashboardShell } from './dashboard-shell.js';
+import { DashboardsModulePage, PublicDashboardPage } from './dashboard-publication.js';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
@@ -26,6 +27,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
 export function App(): React.JSX.Element {
   const publicFormId = /^\/f\/([0-9a-f-]{36})$/i.exec(window.location.pathname)?.[1];
+  const publicDashboardToken = /^\/p\/([A-Za-z0-9_-]{43})$/.exec(window.location.pathname)?.[1];
   const [mode, setMode] = useState<AuthMode>('loading');
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +50,7 @@ export function App(): React.JSX.Element {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   useEffect(() => { void (async () => {
-    if (publicFormId) return;
+    if (publicFormId || publicDashboardToken) return;
     if (invitationToken) { setMode('invite'); return; }
     try {
       const [session, bootstrap] = await Promise.all([api<{ identity: Identity | null }>('/v1/auth/session'), api<{ bootstrapRequired: boolean }>('/v1/auth/bootstrap-status')]);
@@ -58,7 +60,7 @@ export function App(): React.JSX.Element {
         setMode(session.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in');
       } else setMode(bootstrap.bootstrapRequired ? 'bootstrap' : 'login');
     } catch { setError('Não foi possível conectar à plataforma. Atualize a página em alguns instantes.'); setMode('login'); }
-  })(); }, [invitationToken, publicFormId]);
+  })(); }, [invitationToken, publicDashboardToken, publicFormId]);
 
   useEffect(() => { void (async () => {
     if (mode !== 'signed-in' || !identity) return;
@@ -304,6 +306,7 @@ export function App(): React.JSX.Element {
   }
 
   if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
+  if (publicDashboardToken) return <PublicDashboardPage token={publicDashboardToken} />;
 
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
   if (mode === 'signed-in' && identity) return <DashboardShell collapsed={sidebarCollapsed} identity={identity} onLogout={() => void logout()} onNavigate={setWorkspaceView} onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)} pending={pending} unreadNotifications={unreadNotifications} view={workspaceView}><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
@@ -326,7 +329,7 @@ export function App(): React.JSX.Element {
       <section className="admin-section" aria-labelledby="organizations-title"><h2 id="organizations-title">Organizações</h2><form className="inline-form" onSubmit={switchOrganization}><label>Contexto ativo<select name="organizationId" defaultValue={identity.organization.id} disabled={pending}>{organizations.map((organization) => <option value={organization.id} key={organization.id}>{organization.name} · {organization.membership.role}</option>)}</select></label><button className="secondary-button compact" type="submit" disabled={pending || organizations.length < 2}>Trocar organização</button></form>
       {identity.access.isPlatformAdmin && <form className="inline-form" onSubmit={createOrganization}><label>Nova organização<input name="name" minLength={2} maxLength={160} required placeholder="Nome da organização" /></label><label>Identificador<input name="slug" minLength={3} maxLength={63} pattern="[a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]{3,}" required placeholder="empresa-exemplo" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar organização</button></form>}</section>
       {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <section className="admin-section" aria-labelledby="members-title"><h2 id="members-title">Membros</h2><p className="section-note">Alterações usam o contexto da organização ativa. A própria membership não pode ser alterada nesta tela.</p><form className="inline-form" onSubmit={createInvitation}><label>E-mail do novo membro<input name="email" type="email" required placeholder="pessoa@empresa.com" /></label><label>Papel<select name="role" defaultValue="MEMBER"><option value="OWNER" disabled={identity.membership.role !== 'OWNER'}>OWNER</option><option value="ADMIN" disabled={identity.membership.role !== 'OWNER'}>ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select></label><button className="primary-button compact" type="submit" disabled={pending}>Gerar convite</button></form>{invitationUrl && <p className="invitation-link">Convite válido por 7 dias: <code>{invitationUrl}</code></p>}{invitations.length > 0 && <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-row" key={invitation.id}><span>{invitation.email} · {invitation.role}</span><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void revokeInvitation(invitation.id)}>Revogar</button></div>)}</div>}<div className="member-list">{members.map((member) => <form className="member-row" key={member.id} onSubmit={(event) => void updateMember(event, member.id)}><span>{member.email}</span><select name="role" defaultValue={member.role} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="OWNER">OWNER</option><option value="ADMIN">ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select><select name="status" defaultValue={member.status} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="ACTIVE">Ativo</option><option value="SUSPENDED">Suspenso</option></select><button className="secondary-button compact" type="submit" disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}>Salvar</button></form>)}</div></section>}
-    </> : workspaceView === 'events' ? <EventsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'changes' ? <ChangesModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} canApprove={identity.membership.role !== 'VIEWER'} identity={identity} /> : workspaceView === 'bash' ? <BashModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'hht' ? <HhtModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'tv' ? <TvModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : <OperationalModulePage view={workspaceView} canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} />}
+    </> : workspaceView === 'events' ? <EventsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'changes' ? <ChangesModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} canApprove={identity.membership.role !== 'VIEWER'} identity={identity} /> : workspaceView === 'bash' ? <BashModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'hht' ? <HhtModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'dashboards' ? <DashboardsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'tv' ? <TvModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : <OperationalModulePage view={workspaceView} canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} />}
     <button className="secondary-button" type="button" onClick={() => void logout()} disabled={pending}><LogOut aria-hidden="true" /> Sair</button>
   </section></DashboardShell>;
 
@@ -405,14 +408,13 @@ function PublicFormPage({ publicId }: { publicId: string }): React.JSX.Element {
   return <main className="shell"><section className="panel" aria-labelledby="public-form-title"><div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div><p className="eyebrow">Formulário</p><h1 id="public-form-title">{form.title}</h1>{form.description && <p className="description">{form.description}</p>}{error && <p className="form-error" role="alert">{error}</p>}<form className="auth-form" onSubmit={submit}>{form.fields.map((field) => <label key={field.key}>{field.label}{field.type === 'LONG_TEXT' ? <textarea name={field.key} required={field.required} maxLength={10000} /> : field.type === 'SELECT' ? <select name={field.key} required={field.required} defaultValue=""><option value="" disabled>Selecione</option>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'MULTI_SELECT' ? <select name={field.key} required={field.required} multiple>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'CHECKBOX' ? <input name={field.key} type="checkbox" required={field.required} /> : <input name={field.key} type={field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text'} required={field.required} />}</label>)}<button className="primary-button" type="submit" disabled={pending}>{pending ? 'Enviando…' : 'Enviar resposta'}</button></form></section></main>;
 }
 
-type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'notifications' | 'tv' | 'organization' | 'profile'>;
+type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'notifications' | 'dashboards' | 'tv' | 'organization' | 'profile'>;
 
 const operationalPages: Record<OperationalView, { title: string; description: string; endpoint: string; property: string; createPath: string; manageLabel: string }> = {
   events: { title: 'Eventos de segurança', description: 'Registre, classifique e acompanhe eventos e suas ações corretivas.', endpoint: '/v1/events', property: 'events', createPath: '/v1/events', manageLabel: 'Novo evento' },
   changes: { title: 'Gestão de mudanças', description: 'Controle solicitações, riscos, aprovações e a implantação em etapas.', endpoint: '/v1/changes', property: 'changes', createPath: '/v1/changes', manageLabel: 'Nova mudança' },
   bash: { title: 'Quadro BASH', description: 'Organize cartões operacionais por estágio, prioridade e responsável.', endpoint: '/v1/bash/cards', property: 'cards', createPath: '/v1/bash/cards', manageLabel: 'Novo cartão' },
   hht: { title: 'HHT e taxas', description: 'Cadastre empresas, informe períodos e acompanhe indicadores normalizados.', endpoint: '/v1/hht', property: 'companies', createPath: '/v1/hht/companies', manageLabel: 'Nova empresa HHT' },
-  dashboards: { title: 'Painéis', description: 'Configure painéis versionados usando somente fontes autorizadas da organização.', endpoint: '/v1/dashboards', property: 'dashboards', createPath: '/v1/dashboards', manageLabel: 'Novo painel' },
   integrations: { title: 'Integrações', description: 'Cadastre conexões por organização; segredos continuam fora do banco transacional.', endpoint: '/v1/integrations', property: 'integrations', createPath: '/v1/integrations', manageLabel: 'Nova integração' },
   classifications: { title: 'Listas de classificação', description: 'Mantenha taxonomias empresariais usadas pelos módulos de operação.', endpoint: '/v1/classifications', property: 'items', createPath: '/v1/classifications', manageLabel: 'Novo item' },
   files: { title: 'Arquivos', description: 'Registre intenções de upload privadas. O envio só é liberado após configurar armazenamento de objetos.', endpoint: '/v1/files', property: 'files', createPath: '/v1/files/intents', manageLabel: 'Registrar arquivo' }
@@ -671,7 +673,6 @@ function operationalPayload(view: OperationalView, title: string): Record<string
   if (view === 'changes') return { publicCode: `MUD-${suffix}`, title };
   if (view === 'bash') return { title };
   if (view === 'hht') return { name: title, site: 'Principal' };
-  if (view === 'dashboards') return { title, widgets: [] };
   if (view === 'integrations') return { name: title, type: 'WEBHOOK', config: {} };
   if (view === 'classifications') return { category: 'event_type', label: title, value: slugValue(title) };
   return { originalName: title, contentType: 'application/octet-stream', byteSize: 0 };

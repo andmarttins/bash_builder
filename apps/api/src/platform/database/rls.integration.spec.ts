@@ -199,6 +199,32 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('exposes only an active dashboard publication selected by its token digest', async () => {
+    const published = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a49';
+    const revoked = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a50';
+    const expired = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a51';
+    const digest = 'a'.repeat(64);
+    await bootstrap.query('INSERT INTO "dashboards" (id, organization_id, title, published, public_token_hash, updated_at) VALUES ($1, $2, $3, TRUE, $4, NOW()), ($5, $2, $6, TRUE, $7, NOW()), ($8, $2, $9, TRUE, $10, NOW())', [published, tenantA, 'Published dashboard', digest, revoked, 'Revoked dashboard', 'b'.repeat(64), expired, 'Expired dashboard', 'c'.repeat(64)]);
+    await bootstrap.query('UPDATE "dashboards" SET public_revoked_at = NOW() WHERE id = $1', [revoked]);
+    await bootstrap.query('UPDATE "dashboards" SET public_expires_at = NOW() - INTERVAL \'1 second\' WHERE id = $1', [expired]);
+    await runtime.query('BEGIN');
+    try {
+      expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [published])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_dashboard_token_hash', $1, true)", [digest]);
+      expect((await runtime.query('SELECT id, title FROM "dashboards" ORDER BY id')).rows).toEqual([{ id: published, title: 'Published dashboard' }]);
+      await expect(runtime.query('UPDATE "dashboards" SET title = \'tampered\' WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      const replacementDigest = 'd'.repeat(64);
+      await bootstrap.query('UPDATE "dashboards" SET public_token_hash = $1 WHERE id = $2', [replacementDigest, published]);
+      expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [published])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_dashboard_token_hash', $1, true)", [replacementDigest]);
+      expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [published])).rows).toEqual([{ id: published }]);
+      await runtime.query("SELECT set_config('app.public_dashboard_token_hash', $1, true)", ['b'.repeat(64)]);
+      expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [revoked])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_dashboard_token_hash', $1, true)", ['c'.repeat(64)]);
+      expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [expired])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+  });
+
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
     const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
@@ -206,7 +232,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       [tableNames]
     );
     expect(policies.rows).toHaveLength(tableNames.length);
-    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : `${name}_tenant_isolation`).sort());
+    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : name === 'dashboards' ? 'dashboards_tenant_or_publication' : `${name}_tenant_isolation`).sort());
     const rls = await bootstrap.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>(
       "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY relname",
       [tableNames]

@@ -81,7 +81,7 @@ export class OperationsController {
   @Patch('dashboards/:dashboardId') @RequiredCapabilities('dashboards.manage')
   public updateDashboard(@Req() request: AuthenticatedRequest, @Param('dashboardId') dashboardId: string, @Body() input: unknown) { return this.operations.updateDashboard(request.identity, dashboardId, input).then((dashboard) => ({ dashboard })); }
   @Post('dashboards/:dashboardId/publish') @RequiredCapabilities('dashboards.manage')
-  public publishDashboard(@Req() request: AuthenticatedRequest, @Param('dashboardId') dashboardId: string, @Body() input: unknown) { return this.operations.publishDashboard(request.identity, dashboardId, input).then((dashboard) => ({ dashboard })); }
+  public publishDashboard(@Req() request: AuthenticatedRequest, @Param('dashboardId') dashboardId: string, @Body() input: unknown) { return this.operations.publishDashboard(request.identity, dashboardId, input); }
 
   @Get('tv') @RequiredCapabilities('tv.view')
   public tv(@Req() request: AuthenticatedRequest) { return this.operations.listTv(request.identity); }
