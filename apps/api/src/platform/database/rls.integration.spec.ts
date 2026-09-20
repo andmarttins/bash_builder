@@ -1,6 +1,13 @@
 import { execFileSync } from 'node:child_process';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { FormsService } from '../../forms/forms.service.js';
+import { FormValidationService } from '../../forms/form-validation.service.js';
+import { PublicFormAccessService } from '../public-access/public-form-access.service.js';
+import { TenantTransactionService } from '../tenant/tenant-transaction.service.js';
+import { SubmissionCursorService } from '../../forms/submission-cursor.service.js';
 
 const migratorUrl = process.env.TEST_DATABASE_URL;
 const runtimeUrl = process.env.TEST_RUNTIME_DATABASE_URL;
@@ -31,6 +38,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     );
     expect(requiredExtensions.rows).toEqual([{ extname: 'citext' }, { extname: 'pgcrypto' }]);
     await bootstrap.query('DELETE FROM "auth_sessions"');
+    await bootstrap.query('DELETE FROM "audit_logs"');
     await bootstrap.query('DELETE FROM "organization_invitations"');
     await bootstrap.query('DELETE FROM "safety_event_actions"');
     await bootstrap.query('DELETE FROM "safety_events"');
@@ -122,6 +130,46 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('SELECT id FROM "form_submissions"')).rows).toEqual([]);
     } finally {
       await runtime.query('ROLLBACK');
+    }
+  });
+
+  it('isolates form submission reads and treatment updates between tenants', async () => {
+    const formA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a69';
+    const formB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a70';
+    const submissionA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a71';
+    const submissionB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a72';
+    const snapshot = JSON.stringify({ version: 1, fields: [{ key: 'title', label: 'Title' }] });
+    await bootstrap.query('INSERT INTO "forms" (id, organization_id, public_id, title, updated_at) VALUES ($1, $2, $3, $4, NOW()), ($5, $6, $7, $8, NOW())', [formA, tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a73', 'A', formB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a74', 'B']);
+    await bootstrap.query('INSERT INTO "form_submissions" (id, organization_id, form_id, form_version, form_snapshot, answers, updated_at) VALUES ($1, $2, $3, 1, $4, $5, NOW()), ($6, $7, $8, 1, $4, $5, NOW())', [submissionA, tenantA, formA, snapshot, JSON.stringify({ title: 'A only' }), submissionB, tenantB, formB]);
+
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id, status::text FROM "form_submissions" ORDER BY id')).rows).toEqual([{ id: submissionA, status: 'RECEIVED' }]);
+      expect((await runtime.query('UPDATE "form_submissions" SET status = \'IN_REVIEW\' WHERE id = $1 RETURNING id, status::text', [submissionA])).rows).toEqual([{ id: submissionA, status: 'IN_REVIEW' }]);
+      expect((await runtime.query('UPDATE "form_submissions" SET status = \'REJECTED\' WHERE id = $1 RETURNING id', [submissionB])).rows).toEqual([]);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
+    expect((await bootstrap.query('SELECT status::text FROM "form_submissions" WHERE id = $1', [submissionB])).rows).toEqual([{ status: 'RECEIVED' }]);
+  });
+
+  it('moves a public response through tenant treatment and writes its audit record', async () => {
+    const formId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a75';
+    const publicId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a76';
+    await bootstrap.query('INSERT INTO "forms" (id, organization_id, public_id, title, status, updated_at) VALUES ($1, $2, $3, $4, \'PUBLISHED\', NOW())', [formId, tenantA, publicId, 'Integrated treatment']);
+    await bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, required, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', true, 0, NOW())', [tenantA, formId, 'title', 'Title']);
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: runtimeUrl }) });
+    const service = new FormsService(new TenantTransactionService(prisma as never), new FormValidationService(), new PublicFormAccessService(prisma as never), new SubmissionCursorService('c'.repeat(32)));
+    try {
+      const identity = { user: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a77', email: 'owner@example.test' }, organization: { id: tenantA, slug: 'tenant-a', name: 'Tenant A' }, membership: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a78', role: 'OWNER' as const }, access: { isPlatformAdmin: false, requiresPasswordChange: false } };
+      await expect(service.submitPublic(publicId, { title: 'Public response' })).resolves.toMatchObject({ submittedAt: expect.any(String) });
+      const listed = await service.listSubmissions(identity, formId, { pageSize: 25 });
+      expect(listed.submissions).toHaveLength(1);
+      await expect(service.updateSubmissionStatus(identity, formId, listed.submissions[0]!.id, { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' })).resolves.toMatchObject({ status: 'IN_REVIEW' });
+      expect((await bootstrap.query('SELECT action, metadata FROM "audit_logs" WHERE resource_type = \'form_submission\' ORDER BY occurred_at DESC LIMIT 1')).rows).toEqual([expect.objectContaining({ action: 'form_submission.status_updated', metadata: { from: 'RECEIVED', to: 'IN_REVIEW' } })]);
+    } finally {
+      await prisma.$disconnect();
     }
   });
 

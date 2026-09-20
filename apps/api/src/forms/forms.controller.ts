@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { CapabilityGuard } from '../identity/capability.guard.js';
 import { RequiredCapabilities } from '../identity/required-capabilities.decorator.js';
 import { SessionContextGuard, type AuthenticatedRequest } from '../identity/session-context.guard.js';
@@ -52,7 +52,7 @@ export class FormsController {
   @Get(':formId/submissions')
   @UseGuards(CapabilityGuard)
   @RequiredCapabilities('forms.submissions.view')
-  public listSubmissions(@Req() request: AuthenticatedRequest, @Param('formId') formId: string) { return this.forms.listSubmissions(request.identity, formId).then((submissions) => ({ submissions })); }
+  public listSubmissions(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Query() query: unknown) { return this.forms.listSubmissions(request.identity, formId, query); }
 
   @Patch(':formId/submissions/:submissionId')
   @UseGuards(CapabilityGuard)

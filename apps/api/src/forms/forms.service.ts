@@ -5,6 +5,7 @@ import type { SessionIdentity } from '../identity/identity.service.js';
 import { PublicFormAccessService, type PublicFormTransaction } from '../platform/public-access/public-form-access.service.js';
 import { TenantTransactionService } from '../platform/tenant/tenant-transaction.service.js';
 import { FormValidationService, formFieldsSchema, formStatuses, formSubmissionStatuses, type FormFieldInput, type StoredField } from './form-validation.service.js';
+import { SubmissionCursorService } from './submission-cursor.service.js';
 
 const formIdSchema = z.uuid();
 const publicIdSchema = z.uuid();
@@ -13,20 +14,43 @@ const expectedVersionSchema = z.number().int().positive();
 const updateFormSchema = z.object({ title: z.string().trim().min(2).max(160).optional(), description: z.string().trim().max(10_000).nullable().optional(), expectedVersion: expectedVersionSchema }).refine((input) => input.title !== undefined || input.description !== undefined, 'Informe ao menos um campo para atualizar.');
 const replaceFieldsSchema = z.object({ expectedVersion: expectedVersionSchema, fields: formFieldsSchema });
 const statusSchema = z.object({ status: z.enum(formStatuses), expectedVersion: expectedVersionSchema });
-const submissionStatusSchema = z.object({ status: z.enum(formSubmissionStatuses) });
+const submissionStatusSchema = z.object({
+  status: z.enum(formSubmissionStatuses),
+  expectedStatus: z.enum(formSubmissionStatuses)
+});
+const submissionListSchema = z.object({
+  status: z.enum(formSubmissionStatuses).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  cursor: z.string().trim().min(1).max(500).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25)
+}).refine((input) => !input.from || !input.to || input.from <= input.to, 'O período informado é inválido.');
 const publicationSchema = z.object({ expectedVersion: expectedVersionSchema, expiresAt: z.coerce.date().optional().nullable() }).refine((input) => !input.expiresAt || input.expiresAt > new Date(), 'A expiração deve estar no futuro.');
+const submissionCursorSchema = z.object({
+  v: z.literal(1),
+  formId: z.uuid(),
+  status: z.enum(formSubmissionStatuses).nullable(),
+  from: z.string().datetime().nullable(),
+  to: z.string().datetime().nullable(),
+  submittedAt: z.string().datetime(),
+  id: z.uuid(),
+  expiresAt: z.string().datetime()
+});
 
 type FormRecord = {
   id: string; publicId: string; title: string; description: string | null; status: FormStatus; version: number;
   fields: Array<{ key: string; label: string; type: FormFieldInput['type']; required: boolean; options: unknown; position: number }>;
 };
+type SubmissionFilters = z.infer<typeof submissionListSchema>;
+type SubmissionCursorScope = Pick<z.infer<typeof submissionCursorSchema>, 'formId' | 'status' | 'from' | 'to'>;
 
 @Injectable()
 export class FormsService {
   public constructor(
     private readonly tenants: TenantTransactionService,
     private readonly validation: FormValidationService,
-    private readonly publicForms: PublicFormAccessService
+    private readonly publicForms: PublicFormAccessService,
+    private readonly cursors: SubmissionCursorService
   ) {}
 
   public async list(identity: SessionIdentity): Promise<FormRecord[]> {
@@ -128,24 +152,42 @@ export class FormsService {
     });
   }
 
-  public async listSubmissions(identity: SessionIdentity, formId: string): Promise<Array<{ id: string; formVersion: number; formSnapshot: unknown; answers: unknown; status: FormSubmissionStatus; submittedAt: string }>> {
+  public async listSubmissions(identity: SessionIdentity, formId: string, input: unknown): Promise<{ submissions: Array<{ id: string; formVersion: number; formSnapshot: unknown; answers: unknown; status: FormSubmissionStatus; submittedAt: string }>; pagination: { pageSize: number; total: number; nextCursor: string | null } }> {
     const id = this.id(formId);
+    const filters = this.parse(submissionListSchema, input);
+    const cursorScope = this.submissionCursorScope(id, filters);
+    const cursor = filters.cursor === undefined ? undefined : this.decodeSubmissionCursor(filters.cursor, cursorScope);
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
       await this.exists(tx, id);
-      const rows = await tx.formSubmission.findMany({ where: { formId: id }, select: { id: true, formVersion: true, formSnapshot: true, answers: true, status: true, submittedAt: true }, orderBy: { submittedAt: 'desc' } });
-      return rows.map((row) => ({ ...row, submittedAt: row.submittedAt.toISOString() }));
+      const baseWhere: Prisma.FormSubmissionWhereInput = {
+        formId: id,
+        ...(filters.status === undefined ? {} : { status: filters.status }),
+        ...(filters.from === undefined && filters.to === undefined ? {} : { submittedAt: { ...(filters.from === undefined ? {} : { gte: filters.from }), ...(filters.to === undefined ? {} : { lte: filters.to }) } })
+      };
+      const where: Prisma.FormSubmissionWhereInput = cursor === undefined ? baseWhere : { ...baseWhere, OR: [{ submittedAt: { lt: cursor.submittedAt } }, { submittedAt: cursor.submittedAt, id: { lt: cursor.id } }] };
+      const [rows, total] = await Promise.all([
+        tx.formSubmission.findMany({ where, select: { id: true, formVersion: true, formSnapshot: true, answers: true, status: true, submittedAt: true }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: filters.pageSize + 1 }),
+        tx.formSubmission.count({ where: baseWhere })
+      ]);
+      const page = rows.slice(0, filters.pageSize);
+      const last = page.at(-1);
+      return { submissions: page.map((row) => ({ ...row, submittedAt: row.submittedAt.toISOString() })), pagination: { pageSize: filters.pageSize, total, nextCursor: rows.length > filters.pageSize && last ? this.encodeSubmissionCursor(last.submittedAt, last.id, cursorScope) : null } };
     });
   }
 
   public async updateSubmissionStatus(identity: SessionIdentity, formId: string, submissionId: string, input: unknown): Promise<{ id: string; status: FormSubmissionStatus }> {
     const id = this.id(formId);
     const submission = this.id(submissionId);
-    const { status } = this.parse(submissionStatusSchema, input);
+    const { status, expectedStatus } = this.parse(submissionStatusSchema, input);
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
       await this.exists(tx, id);
-      const updated = await tx.formSubmission.updateMany({ where: { id: submission, formId: id }, data: { status } });
-      if (updated.count !== 1) throw new NotFoundException('Resposta não encontrada.');
-      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.status_updated', resourceType: 'form_submission', resourceId: submission, metadata: { status } } });
+      const current = await tx.formSubmission.findFirst({ where: { id: submission, formId: id }, select: { status: true } });
+      if (!current) throw new NotFoundException('Resposta não encontrada.');
+      if (current.status !== expectedStatus) throw new ConflictException('A resposta foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
+      if (!this.isSubmissionTransitionAllowed(expectedStatus, status)) throw new BadRequestException('A transição de tratativa solicitada não é permitida.');
+      const updated = await tx.formSubmission.updateMany({ where: { id: submission, formId: id, status: expectedStatus }, data: { status } });
+      if (updated.count !== 1) throw new ConflictException('A resposta foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.status_updated', resourceType: 'form_submission', resourceId: submission, metadata: { from: expectedStatus, to: status } } });
       return { id: submission, status };
     });
   }
@@ -201,6 +243,34 @@ export class FormsService {
 
   private stringOptions(value: unknown): string[] {
     return Array.isArray(value) && value.every((option) => typeof option === 'string') ? value : [];
+  }
+
+  private isSubmissionTransitionAllowed(current: FormSubmissionStatus, next: FormSubmissionStatus): boolean {
+    return (current === 'RECEIVED' && (next === 'IN_REVIEW' || next === 'REJECTED'))
+      || (current === 'IN_REVIEW' && (next === 'RESOLVED' || next === 'REJECTED'));
+  }
+
+  private submissionCursorScope(formId: string, filters: SubmissionFilters): SubmissionCursorScope {
+    return { formId, status: filters.status ?? null, from: filters.from?.toISOString() ?? null, to: filters.to?.toISOString() ?? null };
+  }
+
+  private encodeSubmissionCursor(submittedAt: Date, id: string, scope: SubmissionCursorScope): string {
+    const payload = { v: 1 as const, ...scope, submittedAt: submittedAt.toISOString(), id, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() };
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    return `${body}.${this.cursors.sign(body)}`;
+  }
+
+  private decodeSubmissionCursor(value: string, scope: SubmissionCursorScope): { submittedAt: Date; id: string } {
+    try {
+      const [body, signature, ...extra] = value.split('.');
+      if (!body || !signature || extra.length > 0) throw new Error('Malformed cursor.');
+      this.cursors.assertSignature(body, signature);
+      const parsed = submissionCursorSchema.parse(JSON.parse(Buffer.from(body, 'base64url').toString('utf8')));
+      if (parsed.formId !== scope.formId || parsed.status !== scope.status || parsed.from !== scope.from || parsed.to !== scope.to || new Date(parsed.expiresAt) <= new Date()) throw new Error('Cursor scope expired or mismatched.');
+      return { submittedAt: new Date(parsed.submittedAt), id: parsed.id };
+    } catch {
+      throw new BadRequestException('Cursor de paginação inválido.');
+    }
   }
 
   private context(identity: SessionIdentity) { return { tenantId: identity.organization.id, tenantSlug: identity.organization.slug, membershipId: identity.membership.id, actorId: identity.user.id }; }

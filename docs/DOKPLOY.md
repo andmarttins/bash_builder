@@ -53,12 +53,13 @@ S3_SECRET_ACCESS_KEY=<segredo-de-runtime>
 Se algum deles ficar vazio, a API preserva os arquivos como pendentes e informa que o adaptador não está configurado; ela nunca grava credenciais em `integrations.config`.
 - `REDIS_URL`: URL interna **autenticada** (`redis://` ou `rediss://`) do `builder-redis`, usada pela API. Nunca aponte para um endpoint público. A configuração da API rejeita URL sem senha ou com protocolo diferente.
 - `BOOTSTRAP_TOKEN`: segredo aleatório de ao menos 32 caracteres, obrigatório em produção. Ele é enviado uma única vez, no formulário de primeira configuração, e impede que o primeiro visitante público assuma a conta OWNER. Cadastre-o como secret; não use URL, senha de banco ou token reaproveitado.
+- `CURSOR_SIGNING_SECRET`: segredo diferente de ao menos 32 caracteres, obrigatório em produção. Ele assina cursores de paginação de respostas de formulários e não deve ser reutilizado para bootstrap, banco, Redis ou outro propósito.
 
 O segredo de bootstrap entra somente na API e não entra em `migrate` ou worker. Não inverta as credenciais de migrator e runtime: executar aplicação com a credencial migrator tornaria RLS inefetivo. Mantenha o segredo de bootstrap fora de runbooks de aplicação e faça sua rotação em procedimento controlado.
 
 ## Ordem do primeiro deploy
 
-1. Crie os dois serviços de dados, confirme em Connection que estão em `dokploy-network`, copie os Internal Connection URLs, defina `APP_ORIGIN` com as origens HTTPS públicas exatas do web, separadas por vírgula quando houver mais de uma, e gere `BOOTSTRAP_TOKEN` no cofre de senhas. A variante HTTPS convencional `www` do domínio primário é aceita automaticamente.
+1. Crie os dois serviços de dados, confirme em Connection que estão em `dokploy-network`, copie os Internal Connection URLs, defina `APP_ORIGIN` com as origens HTTPS públicas exatas do web, separadas por vírgula quando houver mais de uma, e gere `BOOTSTRAP_TOKEN` e `CURSOR_SIGNING_SECRET` distintos no cofre de senhas. A variante HTTPS convencional `www` do domínio primário é aceita automaticamente.
 2. Preencha todas as variáveis no Compose, configure o domínio do `web` e use Preview Compose para confirmar: dados + jobs + API/worker em `dokploy-network`; web, API, worker e Redpanda em `platform-internal`.
 3. Confirme que `db-bootstrap` terminou com sucesso. Ele é idempotente e cria os papéis `app_migrator` e `app_runtime` no PostgreSQL separado.
 4. Confirme que `migrate` terminou com sucesso. Ele aplica migrations uma única vez e é pré-requisito de API e worker.

@@ -57,4 +57,30 @@ describe('FormsController authorization', () => {
     expect(published.statusCode).toBe(201);
     expect(forms.publish).toHaveBeenCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', { expectedVersion: 1 });
   });
+
+  it('returns the paginated submission contract to a member and preserves filters', async () => {
+    const member = { ...owner, membership: { ...owner.membership, role: 'MEMBER' as const } };
+    identity.session.mockResolvedValue(member);
+    forms.listSubmissions.mockResolvedValue({ submissions: [{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'RECEIVED' }], pagination: { pageSize: 25, total: 26, nextCursor: 'opaque-next-page' } });
+
+    const response = await app.inject({ method: 'GET', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions?status=RECEIVED&cursor=opaque-current-page&pageSize=25', cookies: { [sessionCookieName]: 'opaque' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ submissions: [{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'RECEIVED' }], pagination: { pageSize: 25, total: 26, nextCursor: 'opaque-next-page' } });
+    expect(forms.listSubmissions).toHaveBeenLastCalledWith(member, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', { status: 'RECEIVED', cursor: 'opaque-current-page', pageSize: '25' });
+  });
+
+  it('denies submission treatment to a member and passes a guarded owner update through unchanged', async () => {
+    const submissionId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16';
+    identity.session.mockResolvedValue({ ...owner, membership: { ...owner.membership, role: 'MEMBER' } });
+    const denied = await app.inject({ method: 'PATCH', url: `/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/${submissionId}`, cookies: { [sessionCookieName]: 'opaque' }, payload: { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' } });
+    expect(denied.statusCode).toBe(403);
+
+    identity.session.mockResolvedValue(owner);
+    forms.updateSubmissionStatus.mockResolvedValue({ id: submissionId, status: 'IN_REVIEW' });
+    const allowed = await app.inject({ method: 'PATCH', url: `/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/${submissionId}`, cookies: { [sessionCookieName]: 'opaque' }, payload: { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' } });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toEqual({ submission: { id: submissionId, status: 'IN_REVIEW' } });
+    expect(forms.updateSubmissionStatus).toHaveBeenLastCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', submissionId, { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' });
+  });
 });

@@ -16,6 +16,7 @@ import { OrganizationAccessService } from './organizations/organization-access.s
 import { OrganizationInvitationController } from './organizations/organization-invitation.controller.js';
 import { FormsController, PublicFormsController } from './forms/forms.controller.js';
 import { FormsService } from './forms/forms.service.js';
+import { SubmissionCursorService } from './forms/submission-cursor.service.js';
 import { FormValidationService } from './forms/form-validation.service.js';
 import { PublicFormAccessService } from './platform/public-access/public-form-access.service.js';
 import { ObjectStorageService } from './platform/storage/object-storage.service.js';
@@ -37,6 +38,7 @@ import { OperationsService } from './operations/operations.service.js';
     CapabilityGuard,
     OrganizationAccessService,
     FormValidationService,
+    SubmissionCursorService,
     FormsService,
     PublicFormAccessService,
     ObjectStorageService,

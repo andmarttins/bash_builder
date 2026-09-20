@@ -32,6 +32,7 @@ const apiEnvironmentSchema = z.object({
   APP_ORIGIN: z.string().min(1),
   DATABASE_URL: z.string().url(),
   BOOTSTRAP_TOKEN: z.string().min(32).optional(),
+  CURSOR_SIGNING_SECRET: z.string().min(32).optional(),
   REDIS_URL: z.string().url().superRefine((value, context) => {
     const url = new URL(value);
     if (url.protocol !== 'redis:' && url.protocol !== 'rediss:') {
@@ -53,6 +54,9 @@ const apiEnvironmentSchema = z.object({
   }
   if (value.NODE_ENV === 'production' && !value.BOOTSTRAP_TOKEN) {
     context.addIssue({ code: 'custom', message: 'BOOTSTRAP_TOKEN is required in production.', path: ['BOOTSTRAP_TOKEN'] });
+  }
+  if (value.NODE_ENV === 'production' && !value.CURSOR_SIGNING_SECRET) {
+    context.addIssue({ code: 'custom', message: 'CURSOR_SIGNING_SECRET is required in production.', path: ['CURSOR_SIGNING_SECRET'] });
   }
 });
 

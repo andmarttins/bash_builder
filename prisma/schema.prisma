@@ -330,7 +330,7 @@ model FormSubmission {
   organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   form           Form                 @relation(fields: [formId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
-  @@index([organizationId, formId, submittedAt(sort: Desc)])
+  @@index([formId, submittedAt(sort: Desc), id(sort: Desc)])
   @@map("form_submissions")
 }
 
