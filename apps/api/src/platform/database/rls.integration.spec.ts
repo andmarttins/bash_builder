@@ -217,6 +217,24 @@ describeIntegration('PostgreSQL row-level security', () => {
     }
   });
 
+  it('exports only the active tenant submissions through FormsService', async () => {
+    const formA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a79'; const formB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a80';
+    const actor = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81'; const membership = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';
+    const snapshot = JSON.stringify({ version: 1, fields: [{ key: 'note', label: 'Note' }] });
+    await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW())', [actor, 'export-owner@example.test']);
+    await bootstrap.query('INSERT INTO "memberships" (id, organization_id, identity_user_id, role, status, updated_at) VALUES ($1, $2, $3, \'OWNER\', \'ACTIVE\', NOW())', [membership, tenantA, actor]);
+    await bootstrap.query('INSERT INTO "forms" (id, organization_id, public_id, title, updated_at) VALUES ($1, $2, $3, $4, NOW()), ($5, $6, $7, $8, NOW())', [formA, tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a83', 'Export A', formB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a84', 'Export B']);
+    await bootstrap.query('INSERT INTO "form_submissions" (organization_id, form_id, form_version, form_snapshot, answers, updated_at) VALUES ($1, $2, 1, $3, $4, NOW()), ($5, $6, 1, $3, $7, NOW())', [tenantA, formA, snapshot, JSON.stringify({ note: 'A only' }), tenantB, formB, JSON.stringify({ note: 'B only' })]);
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: runtimeUrl }) });
+    const service = new FormsService(new TenantTransactionService(prisma as never), new FormValidationService(), new PublicFormAccessService(prisma as never), new SubmissionCursorService('c'.repeat(32)));
+    try {
+      const identity = { user: { id: actor, email: 'export-owner@example.test' }, organization: { id: tenantA, slug: 'tenant-a', name: 'Tenant A' }, membership: { id: membership, role: 'OWNER' as const }, access: { isPlatformAdmin: false, requiresPasswordChange: false } };
+      const exported = await service.exportSubmissions(identity, formA, {});
+      expect(exported.csv).toContain('A only'); expect(exported.csv).not.toContain('B only'); expect(exported.count).toBe(1);
+      await expect(service.exportSubmissions(identity, formB, {})).rejects.toMatchObject({ status: 404 });
+    } finally { await prisma.$disconnect(); }
+  });
+
   it('revokes a public form at the database boundary', async () => {
     const formId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a65';
     const publicId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';

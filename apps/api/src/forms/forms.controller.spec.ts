@@ -88,6 +88,8 @@ describe('FormsController authorization', () => {
     const url = '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/export?status=RECEIVED';
     identity.session.mockResolvedValue({ ...owner, membership: { ...owner.membership, role: 'MEMBER' } });
     expect((await app.inject({ method: 'GET', url, cookies: { [sessionCookieName]: 'opaque' } })).statusCode).toBe(403);
+    identity.session.mockResolvedValue({ ...owner, membership: { ...owner.membership, role: 'VIEWER' } });
+    expect((await app.inject({ method: 'GET', url, cookies: { [sessionCookieName]: 'opaque' } })).statusCode).toBe(403);
     identity.session.mockResolvedValue(owner); forms.exportSubmissions.mockResolvedValue({ filename: 'answers.csv', contentType: 'text/csv; charset=utf-8', csv: 'id', count: 0 });
     const allowed = await app.inject({ method: 'GET', url, cookies: { [sessionCookieName]: 'opaque' } });
     expect(allowed.statusCode).toBe(200);
