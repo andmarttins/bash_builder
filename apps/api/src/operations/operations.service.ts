@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { ChangeStatus, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus } from '@prisma/client';
+import { ChangeStatus, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { TenantTransactionService, type TenantTransaction } from '../platform/tenant/tenant-transaction.service.js';
@@ -28,7 +28,7 @@ const createCardSchema = z.object({ title: text(2, 200), description: z.string()
 const commentSchema = z.object({ content: text(1, 10_000) });
 const moveCardSchema = z.object({ stage: z.enum(bashStages), position: z.number().finite().nonnegative(), expectedVersion });
 const createCompanySchema = z.object({ name: text(2, 200), document: optionalText(32), site: text(2, 120), coordination: optionalText(160) });
-const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative() });
+const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative(), expectedVersion: expectedVersion.optional() });
 const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
 const dashboardSchema = z.object({ title: text(2, 160), description: optionalText(10_000), widgets: z.array(z.object({ type: text(2, 80), title: text(2, 160), config: z.record(z.string(), z.unknown()).default({}) })).max(24).default([]) });
@@ -191,10 +191,16 @@ export class OperationsService {
       const current = await tx.bashCard.findFirst({ where: { id: cardId }, select: { id: true, stage: true } });
       if (!current) throw new NotFoundException('Cartão não encontrado.');
       for (const stage of [...new Set([current.stage, data.stage])].sort()) await this.lockBoardStage(tx, identity.organization.id, stage);
-      const cards = await tx.bashCard.findMany({ where: { stage: data.stage, NOT: { id: cardId } }, select: { id: true, position: true }, orderBy: { position: 'asc' } });
+      let cards = await tx.bashCard.findMany({ where: { stage: data.stage, NOT: { id: cardId } }, select: { id: true, position: true }, orderBy: { position: 'asc' } });
       const index = Math.min(Math.floor(data.position), cards.length);
-      const before = index > 0 ? cards[index - 1]?.position : undefined;
-      const after = cards[index]?.position;
+      let before = index > 0 ? cards[index - 1]?.position : undefined;
+      let after = cards[index]?.position;
+      if (before && after && after.minus(before).lessThanOrEqualTo(new Prisma.Decimal('0.000001'))) {
+        await Promise.all(cards.map((card, cardIndex) => tx.bashCard.update({ where: { id: card.id }, data: { position: new Prisma.Decimal(cardIndex + 1) } })));
+        cards = cards.map((card, cardIndex) => ({ ...card, position: new Prisma.Decimal(cardIndex + 1) }));
+        before = cards[index - 1]?.position;
+        after = cards[index]?.position;
+      }
       const position = before === undefined ? (after === undefined ? new Prisma.Decimal(1) : after.minus(1)) : after === undefined ? before.plus(1) : before.plus(after).dividedBy(2);
       const moved = await tx.bashCard.updateMany({ where: { id: cardId, version: data.expectedVersion }, data: { stage: data.stage, position, version: { increment: 1 } } });
       if (moved.count !== 1) throw new ConflictException('Este cartão foi alterado por outra pessoa.');
@@ -221,7 +227,8 @@ export class OperationsService {
   }
 
   public upsertHhtReport(identity: SessionIdentity, input: unknown) {
-    const data = this.parse(reportSchema, input);
+    const parsed = this.parse(reportSchema, input);
+    const { expectedVersion, ...data } = parsed;
     return this.withTenant(identity, async (tx) => {
       if (!await tx.hhtCompany.findFirst({ where: { id: data.companyId }, select: { id: true } })) throw new NotFoundException('Empresa HHT não encontrada.');
       const window = await tx.hhtReportWindow.findFirst({ where: { year: data.year, month: data.month } });
@@ -229,7 +236,19 @@ export class OperationsService {
       if (!window || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
       const existing = await tx.hhtReport.findFirst({ where: { companyId: data.companyId, year: data.year, month: data.month } });
       if (existing?.status === 'LOCKED') throw new ConflictException('Este período HHT está bloqueado.');
-      const report = await tx.hhtReport.upsert({ where: { companyId_year_month: { companyId: data.companyId, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: { ...data, version: { increment: 1 } } });
+      let report: HhtReport;
+      if (existing) {
+        if (expectedVersion === undefined) throw new BadRequestException('Informe a versão atual para editar este relatório HHT.');
+        const updated = await tx.hhtReport.updateMany({ where: { id: existing.id, version: expectedVersion, status: 'DRAFT' }, data: { ...data, version: { increment: 1 } } });
+        if (updated.count !== 1) throw new ConflictException('Este relatório HHT foi alterado ou enviado por outra pessoa. Atualize a página antes de tentar novamente.');
+        report = await tx.hhtReport.findFirstOrThrow({ where: { id: existing.id } });
+      } else {
+        try { report = await tx.hhtReport.create({ data: { organizationId: identity.organization.id, ...data } }); }
+        catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Este relatório HHT foi criado por outra pessoa. Atualize a página antes de tentar novamente.');
+          throw error;
+        }
+      }
       await this.record(tx, identity, existing ? 'hht_report.updated' : 'hht_report.created', 'hht_report', report.id, { year: report.year, month: report.month });
       return { ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) };
     });

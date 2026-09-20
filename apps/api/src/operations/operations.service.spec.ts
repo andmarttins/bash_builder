@@ -78,6 +78,25 @@ describe('calculateHhtRates', () => {
     expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
   });
 
+  it('rebalances dense BASH positions before inserting another card between them', async () => {
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      bashCard: {
+        findFirst: vi.fn().mockResolvedValue({ id: eventId, stage: 'BACKLOG' }),
+        findMany: vi.fn().mockResolvedValue([{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', position: new Prisma.Decimal(1) }, { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17', position: new Prisma.Decimal('1.000001') }]),
+        update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, stage: 'BACKLOG', position: new Prisma.Decimal('1.5'), version: 2 })
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await new OperationsService(tenants as never).moveCard(identity, eventId, { stage: 'BACKLOG', position: 1, expectedVersion: 1 });
+    expect(tx.bashCard.update).toHaveBeenCalledTimes(2);
+    expect((tx.bashCard.updateMany.mock.calls[0]?.[0] as { data: { position: Prisma.Decimal } }).data.position.toString()).toBe('1.5');
+  });
+
   it('rejects a stale HHT status transition instead of overwriting a newer report', async () => {
     const tx = { hhtReport: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'DRAFT', submittedAt: null }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
@@ -85,5 +104,17 @@ describe('calculateHhtRates', () => {
 
     await expect(service.setHhtReportStatus(identity, eventId, { status: 'SUBMITTED', expectedVersion: 1 })).rejects.toBeInstanceOf(ConflictException);
     expect(tx.hhtReport.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1, status: 'DRAFT' } }));
+  });
+
+  it('requires a version before editing an existing HHT report', async () => {
+    const tx = {
+      hhtCompany: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
+      hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ opensAt: new Date(Date.now() - 60_000), closesAt: new Date(Date.now() + 60_000) }) },
+      hhtReport: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'DRAFT', version: 2 }) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new OperationsService(tenants as never);
+
+    await expect(service.upsertHhtReport(identity, { companyId: eventId, year: 2026, month: 9, hhtWorked: 100, hhtMeal: 10, workforce: 4, lostDays: 0, lti: 0 })).rejects.toBeInstanceOf(BadRequestException);
   });
 });
