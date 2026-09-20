@@ -39,6 +39,16 @@ export class FormsController {
   @RequiredCapabilities('forms.manage')
   public setStatus(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Body() input: unknown) { return this.forms.setStatus(request.identity, formId, input).then((form) => ({ form })); }
 
+  @Post(':formId/publication')
+  @UseGuards(CapabilityGuard)
+  @RequiredCapabilities('forms.manage')
+  public publish(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Body() input: unknown) { return this.forms.publish(request.identity, formId, input).then((form) => ({ form })); }
+
+  @Post(':formId/publication/revoke')
+  @UseGuards(CapabilityGuard)
+  @RequiredCapabilities('forms.manage')
+  public revokePublication(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Body() input: unknown) { return this.forms.revokePublication(request.identity, formId, input).then((form) => ({ form })); }
+
   @Get(':formId/submissions')
   @UseGuards(CapabilityGuard)
   @RequiredCapabilities('forms.submissions.view')

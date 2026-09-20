@@ -7,7 +7,9 @@ type WorkspaceView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 
 type Organization = { id: string; name: string; slug: string; membership: { id: string; role: string } };
 type Member = { id: string; userId: string; email: string; role: string; status: string; createdAt: string };
 type Invitation = { id: string; email: string; role: string; expiresAt: string; createdAt: string };
-type FormSummary = { id: string; publicId: string; title: string; description: string | null; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; version: number; fields: Array<{ key: string }> };
+type FormFieldSummary = { key: string; label: string; type: 'SHORT_TEXT' | 'LONG_TEXT' | 'NUMBER' | 'DATE' | 'SELECT' | 'MULTI_SELECT' | 'CHECKBOX'; required: boolean; options: string[]; position: number };
+type FormSummary = { id: string; publicId: string; title: string; description: string | null; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; version: number; fields: FormFieldSummary[] };
+type FormSubmission = { id: string; status: string; submittedAt: string; answers: Record<string, unknown> };
 type PublicForm = { id: string; publicId: string; title: string; description: string | null; fields: Array<{ key: string; label: string; type: 'SHORT_TEXT' | 'LONG_TEXT' | 'NUMBER' | 'DATE' | 'SELECT' | 'MULTI_SELECT' | 'CHECKBOX'; required: boolean; options: string[]; position: number }> };
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -30,6 +32,8 @@ export function App(): React.JSX.Element {
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('home');
   const [forms, setForms] = useState<FormSummary[]>([]);
+  const [selectedForm, setSelectedForm] = useState<FormSummary | null>(null);
+  const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
 
   useEffect(() => { void (async () => {
     if (publicFormId) return;
@@ -159,6 +163,43 @@ export function App(): React.JSX.Element {
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível criar o formulário.'); }
     finally { setPending(false); }
   }
+  async function openForm(formId: string): Promise<void> {
+    setPending(true); setError(null);
+    try {
+      const form = (await api<{ form: FormSummary }>(`/v1/forms/${formId}`)).form;
+      setSelectedForm(form);
+      if (identity && (identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN' || identity.membership.role === 'MEMBER')) setSubmissions((await api<{ submissions: FormSubmission[] }>(`/v1/forms/${formId}/submissions`)).submissions);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível abrir o formulário.'); }
+    finally { setPending(false); }
+  }
+  async function refreshForms(selectedId?: string): Promise<void> {
+    const next = (await api<{ forms: FormSummary[] }>('/v1/forms')).forms;
+    setForms(next);
+    const id = selectedId ?? selectedForm?.id;
+    if (id) setSelectedForm(next.find((form) => form.id === id) ?? null);
+  }
+  async function addFormField(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault(); if (!selectedForm) return;
+    const values = new FormData(event.currentTarget); const key = slugValue(String(values.get('label') ?? ''));
+    setPending(true); setError(null);
+    try {
+      const form = (await api<{ form: FormSummary }>(`/v1/forms/${selectedForm.id}/fields`, { method: 'PUT', body: JSON.stringify({ expectedVersion: selectedForm.version, fields: [...selectedForm.fields, { key, label: values.get('label'), type: values.get('type'), required: values.get('required') === 'on', options: [] }] }) })).form;
+      setSelectedForm(form); await refreshForms(form.id); event.currentTarget.reset();
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível adicionar o campo.'); }
+    finally { setPending(false); }
+  }
+  async function publishForm(): Promise<void> {
+    if (!selectedForm) return; setPending(true); setError(null);
+    try { const form = (await api<{ form: FormSummary }>(`/v1/forms/${selectedForm.id}/publication`, { method: 'POST', body: JSON.stringify({ expectedVersion: selectedForm.version }) })).form; setSelectedForm(form); await refreshForms(form.id); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível publicar o formulário.'); }
+    finally { setPending(false); }
+  }
+  async function revokeForm(): Promise<void> {
+    if (!selectedForm) return; setPending(true); setError(null);
+    try { const form = (await api<{ form: FormSummary }>(`/v1/forms/${selectedForm.id}/publication/revoke`, { method: 'POST', body: JSON.stringify({ expectedVersion: selectedForm.version }) })).form; setSelectedForm(form); await refreshForms(form.id); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível revogar o formulário.'); }
+    finally { setPending(false); }
+  }
 
   if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
 
@@ -174,7 +215,8 @@ export function App(): React.JSX.Element {
       <p className="eyebrow">Módulo empresarial</p><h1 id="dashboard-title">Formulários</h1><p className="description">Crie formulários isolados por empresa. Cada criação recebe um campo inicial obrigatório, que pode ser configurado pela API nesta primeira entrega.</p>
       {error && <p className="form-error" role="alert">{error}</p>}
       {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <form className="inline-form admin-section" onSubmit={createForm}><label>Título<input name="title" required minLength={2} maxLength={160} placeholder="Inspeção de segurança" /></label><label>Descrição<input name="description" maxLength={10000} placeholder="Opcional" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar formulário</button></form>}
-      <section className="admin-section" aria-labelledby="forms-title"><h2 id="forms-title">Formulários da organização</h2>{forms.length === 0 ? <p className="section-note">Ainda não há formulários nesta empresa.</p> : <div className="form-list">{forms.map((form) => <article className="form-row" key={form.id}><FileText aria-hidden="true" /><div><strong>{form.title}</strong><small>{form.status} · versão {form.version} · {form.fields.length} campo(s)</small></div><code>{form.publicId}</code></article>)}</div>}</section>
+      <section className="admin-section" aria-labelledby="forms-title"><h2 id="forms-title">Formulários da organização</h2>{forms.length === 0 ? <p className="section-note">Ainda não há formulários nesta empresa.</p> : <div className="form-list">{forms.map((form) => <button className="form-row form-row-button" type="button" key={form.id} onClick={() => void openForm(form.id)} disabled={pending}><FileText aria-hidden="true" /><div><strong>{form.title}</strong><small>{form.status} · versão {form.version} · {form.fields.length} campo(s)</small></div><code>{form.publicId}</code></button>)}</div>}</section>
+      {selectedForm && <section className="admin-section" aria-labelledby="form-editor-title"><h2 id="form-editor-title">{selectedForm.title}</h2><p className="section-note">Versão {selectedForm.version} · {selectedForm.status}{selectedForm.status === 'PUBLISHED' && <> · Link: <code>{window.location.origin}/f/{selectedForm.publicId}</code></>}</p><div className="form-list">{selectedForm.fields.map((field) => <article className="form-row" key={field.key}><FileText aria-hidden="true" /><div><strong>{field.label}</strong><small>{field.type} · {field.required ? 'obrigatório' : 'opcional'}</small></div></article>)}</div>{(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <><form className="inline-form" onSubmit={addFormField}><label>Novo campo<input name="label" required minLength={2} maxLength={160} /></label><label>Tipo<select name="type" defaultValue="SHORT_TEXT"><option value="SHORT_TEXT">Texto curto</option><option value="LONG_TEXT">Texto longo</option><option value="NUMBER">Número</option><option value="DATE">Data</option><option value="SELECT">Seleção</option><option value="CHECKBOX">Confirmação</option></select></label><label className="checkbox-label"><input name="required" type="checkbox" /> Obrigatório</label><button className="secondary-button compact" type="submit" disabled={pending}>Adicionar campo</button></form><div className="action-row">{selectedForm.status === 'PUBLISHED' ? <button className="secondary-button compact" type="button" onClick={() => void revokeForm()} disabled={pending}>Revogar link público</button> : <button className="primary-button compact" type="button" onClick={() => void publishForm()} disabled={pending || selectedForm.fields.length === 0}>Publicar e gerar novo link</button>}</div></>}<h3>Respostas</h3>{submissions.length === 0 ? <p className="section-note">Ainda não há respostas.</p> : <div className="form-list">{submissions.map((submission) => <article className="form-row" key={submission.id}><ClipboardList aria-hidden="true" /><div><strong>{submission.status}</strong><small>{new Date(submission.submittedAt).toLocaleString('pt-BR')}</small></div></article>)}</div>}</section>}
     </> : workspaceView === 'organization' ? <>
       <div className="success-icon"><CheckCircle2 aria-hidden="true" /></div><p className="eyebrow">Administração</p><h1 id="dashboard-title">Organização e acesso</h1><p className="description">Gerencie o contexto ativo, membros e convites sem sair do workspace.</p>
       <dl className="identity-card"><div><dt>Conta</dt><dd>{identity.user.email}</dd></div><div><dt>Organização</dt><dd>{identity.organization.slug}</dd></div><div><dt>Permissão</dt><dd>{identity.access.isPlatformAdmin ? 'SUPERADMIN · ' : ''}{identity.membership.role}</dd></div></dl>

@@ -55,6 +55,8 @@ const internalRoutes: RouteContract[] = [
   { method: 'PATCH', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 },
   { method: 'PUT', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/fields', payload: [], expectedStatus: 200 },
   { method: 'POST', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', payload: {}, expectedStatus: 201 },
+  { method: 'POST', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publication', payload: {}, expectedStatus: 201 },
+  { method: 'POST', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publication/revoke', payload: {}, expectedStatus: 201 },
   { method: 'GET', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions', expectedStatus: 200 },
   { method: 'PATCH', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15', payload: {}, expectedStatus: 200 },
   { method: 'GET', url: '/v1/public/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', expectedStatus: 200 },
@@ -121,7 +123,7 @@ describe('internal API surface contract', () => {
     };
     const forms = {
       list: vi.fn().mockResolvedValue([]), get: vi.fn().mockResolvedValue({}), create: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}),
-      replaceFields: vi.fn().mockResolvedValue({}), setStatus: vi.fn().mockResolvedValue({}), listSubmissions: vi.fn().mockResolvedValue([]), updateSubmissionStatus: vi.fn().mockResolvedValue({}),
+      replaceFields: vi.fn().mockResolvedValue({}), setStatus: vi.fn().mockResolvedValue({}), publish: vi.fn().mockResolvedValue({}), revokePublication: vi.fn().mockResolvedValue({}), listSubmissions: vi.fn().mockResolvedValue([]), updateSubmissionStatus: vi.fn().mockResolvedValue({}),
       publicDefinition: vi.fn().mockResolvedValue({}), submitPublic: vi.fn().mockResolvedValue({})
     };
     const operations = {

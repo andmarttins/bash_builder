@@ -14,6 +14,7 @@ const updateFormSchema = z.object({ title: z.string().trim().min(2).max(160).opt
 const replaceFieldsSchema = z.object({ expectedVersion: expectedVersionSchema, fields: formFieldsSchema });
 const statusSchema = z.object({ status: z.enum(formStatuses), expectedVersion: expectedVersionSchema });
 const submissionStatusSchema = z.object({ status: z.enum(formSubmissionStatuses) });
+const publicationSchema = z.object({ expectedVersion: expectedVersionSchema, expiresAt: z.coerce.date().optional().nullable() }).refine((input) => !input.expiresAt || input.expiresAt > new Date(), 'A expiração deve estar no futuro.');
 
 type FormRecord = {
   id: string; publicId: string; title: string; description: string | null; status: FormStatus; version: number;
@@ -96,10 +97,34 @@ export class FormsService {
       const existing = await tx.form.findFirst({ where: { id }, select: { id: true, fields: { select: { id: true } } } });
       if (!existing) throw new NotFoundException('Formulário não encontrado.');
       if (status === 'PUBLISHED' && existing.fields.length === 0) throw new BadRequestException('Adicione ao menos um campo antes de publicar.');
-      await this.claimVersion(tx, id, expectedVersion, { status });
+      await this.claimVersion(tx, id, expectedVersion, { status, ...(status === 'PUBLISHED' ? { publicRevokedAt: null } : {}) });
       const form = await this.getRecord(tx, id);
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: `form.${status.toLowerCase()}`, resourceType: 'form', resourceId: id, metadata: { version: form.version } } });
       return form as FormRecord;
+    });
+  }
+
+  public async publish(identity: SessionIdentity, formId: string, input: unknown): Promise<FormRecord> {
+    const id = this.id(formId); const data = this.parse(publicationSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      const existing = await tx.form.findFirst({ where: { id }, select: { id: true, fields: { select: { id: true } } } });
+      if (!existing) throw new NotFoundException('Formulário não encontrado.');
+      if (existing.fields.length === 0) throw new BadRequestException('Adicione ao menos um campo antes de publicar.');
+      await this.claimVersion(tx, id, data.expectedVersion, { status: 'PUBLISHED', publicId: crypto.randomUUID(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null });
+      const form = await this.getRecord(tx, id);
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form.published', resourceType: 'form', resourceId: id, metadata: { version: form.version, expiresAt: data.expiresAt?.toISOString() ?? null } } });
+      return form;
+    });
+  }
+
+  public async revokePublication(identity: SessionIdentity, formId: string, input: unknown): Promise<FormRecord> {
+    const id = this.id(formId); const data = this.parse(z.object({ expectedVersion: expectedVersionSchema }), input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      await this.exists(tx, id);
+      await this.claimVersion(tx, id, data.expectedVersion, { status: 'ARCHIVED', publicRevokedAt: new Date() });
+      const form = await this.getRecord(tx, id);
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form.publication_revoked', resourceType: 'form', resourceId: id, metadata: { version: form.version } } });
+      return form;
     });
   }
 

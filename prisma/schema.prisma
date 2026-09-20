@@ -264,6 +264,8 @@ model Form {
   title          String       @db.VarChar(160)
   description    String?      @db.Text
   status         FormStatus   @default(DRAFT)
+  publicExpiresAt DateTime?   @map("public_expires_at") @db.Timestamptz(6)
+  publicRevokedAt DateTime?   @map("public_revoked_at") @db.Timestamptz(6)
   version        Int          @default(1)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
