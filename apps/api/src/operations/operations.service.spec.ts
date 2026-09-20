@@ -381,4 +381,60 @@ describe('calculateHhtRates', () => {
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).publishTvPlaylist(identity, eventId, { published: true, expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('rejects secret material and unsafe runtime references before creating an integration', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new OperationsService(tenants as never);
+
+    expect(() => service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', config: { apiKey: 'must-not-be-stored' } })).toThrow(BadRequestException);
+    expect(() => service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', secretRef: 'DATABASE_URL', config: {} })).toThrow(BadRequestException);
+    expect(() => service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', secretRef: 'INTEGRATION_OTHER_TENANT_WEBHOOK_SECRET', config: {} })).toThrow(BadRequestException);
+    expect(() => service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', status: 'ACTIVE', config: {} })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('checks only the presence of an allowlisted Dokploy variable and never records its value', async () => {
+    const secretRef = 'INTEGRATION_ACME_TEST_CONFIGURATION_SECRET';
+    const secretValue = 'value-that-must-never-appear-in-audit';
+    const original = process.env[secretRef]; process.env[secretRef] = secretValue;
+    const updated = { id: eventId, type: 'WEBHOOK', secretRef, lastTestedAt: new Date() };
+    const tx = {
+      integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef }), update: vi.fn().mockResolvedValue(updated) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    try {
+      await expect(new OperationsService(tenants as never).checkIntegrationConfiguration(identity, eventId)).resolves.toEqual({ integration: updated, configuration: { state: 'READY' } });
+      expect(tx.integration.update).toHaveBeenCalledWith({ where: { id: eventId }, data: { lastTestedAt: expect.any(Date) } });
+      const recorded = JSON.stringify([tx.auditLog.create.mock.calls[0]![0], tx.outboxEvent.create.mock.calls[0]![0]]);
+      expect(recorded).not.toContain(secretValue);
+      expect(recorded).toContain('integration.configuration_checked');
+    } finally {
+      if (original === undefined) delete process.env[secretRef]; else process.env[secretRef] = original;
+    }
+  });
+
+  it('does not activate an integration when its tenant secret reference is absent', async () => {
+    const tx = { integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'DISABLED', secretRef: null }), update: vi.fn() } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).updateIntegration(identity, eventId, { status: 'ACTIVE' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.integration.update).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing runtime variable without exposing or attempting to resolve another tenant namespace', async () => {
+    const secretRef = 'INTEGRATION_ACME_UNCONFIGURED_WEBHOOK_SECRET';
+    const original = process.env[secretRef]; delete process.env[secretRef];
+    const updated = { id: eventId, type: 'WEBHOOK', secretRef, lastTestedAt: new Date() };
+    const tx = {
+      integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef }), update: vi.fn().mockResolvedValue(updated) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    try {
+      await expect(new OperationsService(tenants as never).checkIntegrationConfiguration(identity, eventId)).resolves.toEqual({ integration: updated, configuration: { state: 'SECRET_NOT_CONFIGURED' } });
+    } finally {
+      if (original === undefined) delete process.env[secretRef]; else process.env[secretRef] = original;
+    }
+  });
 });

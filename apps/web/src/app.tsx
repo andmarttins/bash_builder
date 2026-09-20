@@ -334,7 +334,7 @@ export function App(): React.JSX.Element {
       <section className="admin-section" aria-labelledby="organizations-title"><h2 id="organizations-title">Organizações</h2><form className="inline-form" onSubmit={switchOrganization}><label>Contexto ativo<select name="organizationId" defaultValue={identity.organization.id} disabled={pending}>{organizations.map((organization) => <option value={organization.id} key={organization.id}>{organization.name} · {organization.membership.role}</option>)}</select></label><button className="secondary-button compact" type="submit" disabled={pending || organizations.length < 2}>Trocar organização</button></form>
       {identity.access.isPlatformAdmin && <form className="inline-form" onSubmit={createOrganization}><label>Nova organização<input name="name" minLength={2} maxLength={160} required placeholder="Nome da organização" /></label><label>Identificador<input name="slug" minLength={3} maxLength={63} pattern="[a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]{3,}" required placeholder="empresa-exemplo" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar organização</button></form>}</section>
       {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <section className="admin-section" aria-labelledby="members-title"><h2 id="members-title">Membros</h2><p className="section-note">Alterações usam o contexto da organização ativa. A própria membership não pode ser alterada nesta tela.</p><form className="inline-form" onSubmit={createInvitation}><label>E-mail do novo membro<input name="email" type="email" required placeholder="pessoa@empresa.com" /></label><label>Papel<select name="role" defaultValue="MEMBER"><option value="OWNER" disabled={identity.membership.role !== 'OWNER'}>OWNER</option><option value="ADMIN" disabled={identity.membership.role !== 'OWNER'}>ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select></label><button className="primary-button compact" type="submit" disabled={pending}>Gerar convite</button></form>{invitationUrl && <p className="invitation-link">Convite válido por 7 dias: <code>{invitationUrl}</code></p>}{invitations.length > 0 && <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-row" key={invitation.id}><span>{invitation.email} · {invitation.role}</span><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void revokeInvitation(invitation.id)}>Revogar</button></div>)}</div>}<div className="member-list">{members.map((member) => <form className="member-row" key={member.id} onSubmit={(event) => void updateMember(event, member.id)}><span>{member.email}</span><select name="role" defaultValue={member.role} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="OWNER">OWNER</option><option value="ADMIN">ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select><select name="status" defaultValue={member.status} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="ACTIVE">Ativo</option><option value="SUSPENDED">Suspenso</option></select><button className="secondary-button compact" type="submit" disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}>Salvar</button></form>)}</div></section>}
-    </> : workspaceView === 'events' ? <EventsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'changes' ? <ChangesModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} canApprove={identity.membership.role !== 'VIEWER'} identity={identity} /> : workspaceView === 'bash' ? <BashModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'hht' ? <HhtModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'dashboards' ? <DashboardsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'tv' ? <TvModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : <OperationalModulePage view={workspaceView} canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} />}
+    </> : workspaceView === 'events' ? <EventsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'changes' ? <ChangesModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} canApprove={identity.membership.role !== 'VIEWER'} identity={identity} /> : workspaceView === 'bash' ? <BashModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'hht' ? <HhtModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'dashboards' ? <DashboardsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'tv' ? <TvModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'integrations' ? <IntegrationsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : <OperationalModulePage view={workspaceView} canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} />}
     <button className="secondary-button" type="button" onClick={() => void logout()} disabled={pending}><LogOut aria-hidden="true" /> Sair</button>
   </section></DashboardShell>;
 
@@ -413,14 +413,13 @@ function PublicFormPage({ publicId }: { publicId: string }): React.JSX.Element {
   return <main className="shell"><section className="panel" aria-labelledby="public-form-title"><div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div><p className="eyebrow">Formulário</p><h1 id="public-form-title">{form.title}</h1>{form.description && <p className="description">{form.description}</p>}{error && <p className="form-error" role="alert">{error}</p>}<form className="auth-form" onSubmit={submit}>{form.fields.map((field) => <label key={field.key}>{field.label}{field.type === 'LONG_TEXT' ? <textarea name={field.key} required={field.required} maxLength={10000} /> : field.type === 'SELECT' ? <select name={field.key} required={field.required} defaultValue=""><option value="" disabled>Selecione</option>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'MULTI_SELECT' ? <select name={field.key} required={field.required} multiple>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'CHECKBOX' ? <input name={field.key} type="checkbox" required={field.required} /> : <input name={field.key} type={field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text'} required={field.required} />}</label>)}<button className="primary-button" type="submit" disabled={pending}>{pending ? 'Enviando…' : 'Enviar resposta'}</button></form></section></main>;
 }
 
-type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'notifications' | 'dashboards' | 'tv' | 'organization' | 'profile'>;
+type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'notifications' | 'dashboards' | 'tv' | 'integrations' | 'organization' | 'profile'>;
 
 const operationalPages: Record<OperationalView, { title: string; description: string; endpoint: string; property: string; createPath: string; manageLabel: string }> = {
   events: { title: 'Eventos de segurança', description: 'Registre, classifique e acompanhe eventos e suas ações corretivas.', endpoint: '/v1/events', property: 'events', createPath: '/v1/events', manageLabel: 'Novo evento' },
   changes: { title: 'Gestão de mudanças', description: 'Controle solicitações, riscos, aprovações e a implantação em etapas.', endpoint: '/v1/changes', property: 'changes', createPath: '/v1/changes', manageLabel: 'Nova mudança' },
   bash: { title: 'Quadro BASH', description: 'Organize cartões operacionais por estágio, prioridade e responsável.', endpoint: '/v1/bash/cards', property: 'cards', createPath: '/v1/bash/cards', manageLabel: 'Novo cartão' },
   hht: { title: 'HHT e taxas', description: 'Cadastre empresas, informe períodos e acompanhe indicadores normalizados.', endpoint: '/v1/hht', property: 'companies', createPath: '/v1/hht/companies', manageLabel: 'Nova empresa HHT' },
-  integrations: { title: 'Integrações', description: 'Cadastre conexões por organização; segredos continuam fora do banco transacional.', endpoint: '/v1/integrations', property: 'integrations', createPath: '/v1/integrations', manageLabel: 'Nova integração' },
   classifications: { title: 'Listas de classificação', description: 'Mantenha taxonomias empresariais usadas pelos módulos de operação.', endpoint: '/v1/classifications', property: 'items', createPath: '/v1/classifications', manageLabel: 'Novo item' },
   files: { title: 'Arquivos', description: 'Registre intenções de upload privadas. O envio só é liberado após configurar armazenamento de objetos.', endpoint: '/v1/files', property: 'files', createPath: '/v1/files/intents', manageLabel: 'Registrar arquivo' }
 };
@@ -456,6 +455,77 @@ function OperationalModulePage({ view, canManage }: { view: OperationalView; can
     {canManage && <form className="inline-form admin-section" onSubmit={create}><label>{view === 'files' ? 'Nome do arquivo' : 'Título ou nome'}<input name="title" required minLength={view === 'files' ? 1 : 2} maxLength={200} placeholder={page.manageLabel} /></label><button className="primary-button compact" type="submit" disabled={pending}>{pending ? 'Salvando…' : page.manageLabel}</button></form>}
     <section className="admin-section" aria-labelledby={`${view}-list-title`}><h2 id={`${view}-list-title`}>Registros da organização</h2>{items.length === 0 ? <p className="section-note">Nenhum registro ainda.</p> : <div className="form-list">{items.map((item, index) => <article className="form-row" key={typeof item.id === 'string' ? item.id : index}><Settings2 aria-hidden="true" /><div><strong>{recordTitle(item)}</strong><small>{recordSummary(item)}</small></div></article>)}</div>}</section>
   </>;
+}
+
+function IntegrationsModulePage({ canManage }: { canManage: boolean }): React.JSX.Element {
+  const [integrations, setIntegrations] = useState<Array<Record<string, unknown>>>([]);
+  const [configurationStates, setConfigurationStates] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const load = useCallback(async (): Promise<void> => {
+    try { setIntegrations((await api<{ integrations: Array<Record<string, unknown>> }>('/v1/integrations')).integrations); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar as integrações.'); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault(); const values = new FormData(event.currentTarget); setPending(true); setError(null);
+    try {
+      await api('/v1/integrations', { method: 'POST', body: JSON.stringify({ name: values.get('name'), type: values.get('type'), status: values.get('status'), secretRef: String(values.get('secretRef') ?? '').trim() || null, config: parseIntegrationConfig(String(values.get('config') ?? '{}')) }) });
+      event.currentTarget.reset(); await load();
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível cadastrar a integração.'); }
+    finally { setPending(false); }
+  }
+
+  async function update(event: FormEvent<HTMLFormElement>, integrationId: string): Promise<void> {
+    event.preventDefault(); const values = new FormData(event.currentTarget); setPending(true); setError(null);
+    try {
+      await api(`/v1/integrations/${integrationId}`, { method: 'PATCH', body: JSON.stringify({ name: values.get('name'), status: values.get('status'), secretRef: String(values.get('secretRef') ?? '').trim() || null, config: parseIntegrationConfig(String(values.get('config') ?? '{}')) }) });
+      await load();
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível salvar a integração.'); }
+    finally { setPending(false); }
+  }
+
+  async function checkConfiguration(integrationId: string): Promise<void> {
+    setPending(true); setError(null);
+    try {
+      const result = await api<{ configuration: { state: string } }>(`/v1/integrations/${integrationId}/configuration/check`, { method: 'POST' });
+      setConfigurationStates((current) => ({ ...current, [integrationId]: result.configuration.state })); await load();
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível verificar a configuração.'); }
+    finally { setPending(false); }
+  }
+
+  return <>
+    <p className="eyebrow">Módulo empresarial</p><h1 id="dashboard-title">Integrações</h1>
+    <p className="description">Configure conexões por organização sem gravar credenciais no banco. O segredo permanece como variável protegida no Dokploy.</p>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {canManage && <form className="inline-form admin-section" onSubmit={create}>
+      <label>Nome<input name="name" required minLength={2} maxLength={160} placeholder="Webhook de incidentes" /></label>
+      <label>Tipo<select name="type" defaultValue="WEBHOOK"><option value="WEBHOOK">Webhook</option><option value="EMAIL">E-mail</option><option value="SMARTSHEET">Smartsheet</option><option value="WHATSAPP">WhatsApp</option><option value="OBJECT_STORAGE">Armazenamento de objetos</option><option value="AI">IA</option></select></label>
+      <label>Estado<select name="status" defaultValue="DISABLED"><option value="DISABLED">Desativada</option><option value="ACTIVE">Ativa</option></select></label>
+      <label>Referência de segredo<input name="secretRef" pattern="INTEGRATION_[A-Z][A-Z0-9_]{0,107}" maxLength={120} placeholder="INTEGRATION_SUA_EMPRESA_WEBHOOK_SECRET" /></label>
+      <label>Configuração não sensível (JSON)<textarea name="config" defaultValue="{}" maxLength={10000} /></label>
+      <button className="primary-button compact" type="submit" disabled={pending}>Cadastrar integração</button>
+    </form>}
+    <section className="admin-section"><h2>Conexões da organização</h2><p className="section-note">O teste valida somente a presença da variável protegida no runtime. Ele não expõe segredos nem faz chamadas externas.</p>
+      {integrations.length === 0 ? <p className="section-note">Nenhuma integração configurada.</p> : <div className="form-list">{integrations.map((integration) => {
+        const integrationId = stringValue(integration.id); const config = isRecord(integration.config) ? integration.config : {}; const state = integrationId ? configurationStates[integrationId] : undefined;
+        return <article className="form-row event-detail" key={integrationId ?? recordTitle(integration)}><Settings2 aria-hidden="true" /><div><strong>{recordTitle(integration)}</strong><small>{String(integration.type)} · {String(integration.status)} · {stringValue(integration.secretRef) ?? 'sem referência de segredo'}</small>{state && <p className="section-note">Verificação: {integrationConfigurationLabel(state)}</p>}
+          {canManage && integrationId && <><form className="inline-form compact-form" onSubmit={(event) => void update(event, integrationId)}><label>Nome<input name="name" required minLength={2} maxLength={160} defaultValue={recordTitle(integration)} /></label><label>Estado<select name="status" defaultValue={String(integration.status ?? 'DISABLED')}><option value="DISABLED">Desativada</option><option value="ACTIVE">Ativa</option></select></label><label>Referência de segredo<input name="secretRef" pattern="INTEGRATION_[A-Z][A-Z0-9_]{0,107}" maxLength={120} defaultValue={stringValue(integration.secretRef) ?? ''} /></label><label>Configuração não sensível (JSON)<textarea name="config" defaultValue={JSON.stringify(config, null, 2)} maxLength={10000} /></label><button className="secondary-button compact" type="submit" disabled={pending}>Salvar</button></form><span className="action-row"><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void checkConfiguration(integrationId)}>Verificar configuração</button></span></>}
+        </div></article>;
+      })}</div>}
+    </section>
+  </>;
+}
+
+function parseIntegrationConfig(value: string): Record<string, unknown> {
+  try { const parsed: unknown = JSON.parse(value); if (isRecord(parsed)) return parsed; } catch { /* the error below is intentionally generic */ }
+  throw new Error('A configuração deve ser um objeto JSON válido.');
+}
+function integrationConfigurationLabel(state: string): string {
+  if (state === 'READY') return 'variável protegida disponível.';
+  if (state === 'MISSING_SECRET_REFERENCE') return 'informe uma referência de segredo antes de ativar.';
+  return 'variável protegida não encontrada na API; salve-a no Dokploy e faça deploy novamente.';
 }
 
 function EventsModulePage({ canManage }: { canManage: boolean }): React.JSX.Element {
@@ -714,7 +784,6 @@ function operationalPayload(view: OperationalView, title: string): Record<string
   if (view === 'changes') return { publicCode: `MUD-${suffix}`, title };
   if (view === 'bash') return { title };
   if (view === 'hht') return { name: title, site: 'Principal' };
-  if (view === 'integrations') return { name: title, type: 'WEBHOOK', config: {} };
   if (view === 'classifications') return { category: 'event_type', label: title, value: slugValue(title) };
   return { originalName: title, contentType: 'application/octet-stream', byteSize: 0 };
 }

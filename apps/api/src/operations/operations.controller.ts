@@ -104,6 +104,8 @@ export class OperationsController {
   public createIntegration(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createIntegration(request.identity, input).then((integration) => ({ integration })); }
   @Patch('integrations/:integrationId') @RequiredCapabilities('integrations.manage')
   public updateIntegration(@Req() request: AuthenticatedRequest, @Param('integrationId') integrationId: string, @Body() input: unknown) { return this.operations.updateIntegration(request.identity, integrationId, input).then((integration) => ({ integration })); }
+  @Post('integrations/:integrationId/configuration/check') @RequiredCapabilities('integrations.manage')
+  public checkIntegrationConfiguration(@Req() request: AuthenticatedRequest, @Param('integrationId') integrationId: string) { return this.operations.checkIntegrationConfiguration(request.identity, integrationId); }
 
   @Get('files') @RequiredCapabilities('operations.view')
   public files(@Req() request: AuthenticatedRequest) { return this.operations.listFiles(request.identity).then((files) => ({ files })); }

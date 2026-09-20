@@ -57,8 +57,14 @@ const tvPlaylistPublishSchema = z.object({ published: z.boolean(), expectedVersi
   if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
   if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
 });
-const integrationSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}) });
-const integrationUpdateSchema = integrationSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined, 'Informe alguma alteração.');
+// Only a protected runtime-variable name is persisted. Values remain in Dokploy
+// and can never be supplied through the API or written to the tenant database.
+const integrationSecretReference = z.string().trim().regex(/^INTEGRATION_[A-Z][A-Z0-9_]{0,107}$/, 'A referência deve começar com INTEGRATION_ e conter apenas letras maiúsculas, números e _.');
+const integrationFieldsSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}), secretRef: integrationSecretReference.optional().nullable() });
+const integrationSchema = integrationFieldsSchema.superRefine((input, context) => {
+  if (input.status === 'ACTIVE' && !input.secretRef) context.addIssue({ code: 'custom', path: ['secretRef'], message: 'Uma integração ativa exige uma referência de segredo protegida.' });
+});
+const integrationUpdateSchema = integrationFieldsSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined || input.secretRef !== undefined, 'Informe alguma alteração.');
 const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
 const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.enum(allowedFileTypes), byteSize: z.number().int().positive().max(10 * 1024 * 1024), checksum: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Informe o SHA-256 hexadecimal do arquivo.') });
 
@@ -582,9 +588,11 @@ export class OperationsService {
 
   public createIntegration(identity: SessionIdentity, input: unknown) {
     const data = this.parse(integrationSchema, input); this.assertNonSecretConfig(data.config);
+    if (data.secretRef) this.assertSecretReferenceForOrganization(identity, data.secretRef);
+    if (data.status === 'ACTIVE' && !this.isSecretReferenceConfigured(identity, data.secretRef)) throw new BadRequestException('A variável protegida desta integração não está configurada no runtime.');
     return this.withTenant(identity, async (tx) => {
-      const integration = await tx.integration.create({ data: { organizationId: identity.organization.id, name: data.name, type: data.type as IntegrationType, status: (data.status ?? 'DISABLED') as IntegrationStatus, config: data.config as Prisma.InputJsonValue } });
-      await this.record(tx, identity, 'integration.created', 'integration', integration.id, { type: integration.type, status: integration.status });
+      const integration = await tx.integration.create({ data: { organizationId: identity.organization.id, name: data.name, type: data.type as IntegrationType, status: (data.status ?? 'DISABLED') as IntegrationStatus, config: data.config as Prisma.InputJsonValue, secretRef: data.secretRef ?? null } });
+      await this.record(tx, identity, 'integration.created', 'integration', integration.id, { type: integration.type, status: integration.status, hasSecretReference: Boolean(integration.secretRef) });
       return integration;
     });
   }
@@ -593,10 +601,27 @@ export class OperationsService {
     const integrationId = this.id(integrationIdInput); const data = this.parse(integrationUpdateSchema, input);
     if (data.config) this.assertNonSecretConfig(data.config);
     return this.withTenant(identity, async (tx) => {
-      if (!await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true } })) throw new NotFoundException('Integração não encontrada.');
-      const integration = await tx.integration.update({ where: { id: integrationId }, data: { ...(data.name === undefined ? {} : { name: data.name }), ...(data.status === undefined ? {} : { status: data.status as IntegrationStatus }), ...(data.config === undefined ? {} : { config: data.config as Prisma.InputJsonValue }) } });
-      await this.record(tx, identity, 'integration.updated', 'integration', integrationId, { status: integration.status });
+      const current = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, status: true, secretRef: true } });
+      if (!current) throw new NotFoundException('Integração não encontrada.');
+      const nextSecretRef = data.secretRef === undefined ? current.secretRef : data.secretRef;
+      if (nextSecretRef) this.assertSecretReferenceForOrganization(identity, nextSecretRef);
+      if ((data.status ?? current.status) === 'ACTIVE' && (!nextSecretRef || !this.isSecretReferenceConfigured(identity, nextSecretRef))) throw new BadRequestException('Uma integração ativa exige uma variável protegida configurada no runtime.');
+      const integration = await tx.integration.update({ where: { id: integrationId }, data: { ...(data.name === undefined ? {} : { name: data.name }), ...(data.status === undefined ? {} : { status: data.status as IntegrationStatus }), ...(data.config === undefined ? {} : { config: data.config as Prisma.InputJsonValue }), ...(data.secretRef === undefined ? {} : { secretRef: data.secretRef }) } });
+      await this.record(tx, identity, 'integration.updated', 'integration', integrationId, { status: integration.status, hasSecretReference: Boolean(integration.secretRef) });
       return integration;
+    });
+  }
+
+  public checkIntegrationConfiguration(identity: SessionIdentity, integrationIdInput: string) {
+    const integrationId = this.id(integrationIdInput);
+    return this.withTenant(identity, async (tx) => {
+      const integration = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, type: true, secretRef: true } });
+      if (!integration) throw new NotFoundException('Integração não encontrada.');
+      if (integration.secretRef) this.assertSecretReferenceForOrganization(identity, integration.secretRef);
+      const state = !integration.secretRef ? 'MISSING_SECRET_REFERENCE' : this.isSecretReferenceConfigured(identity, integration.secretRef) ? 'READY' : 'SECRET_NOT_CONFIGURED';
+      const updated = await tx.integration.update({ where: { id: integrationId }, data: { lastTestedAt: new Date() } });
+      await this.record(tx, identity, 'integration.configuration_checked', 'integration', integrationId, { type: integration.type, state, hasSecretReference: Boolean(integration.secretRef) });
+      return { integration: updated, configuration: { state } };
     });
   }
 
@@ -779,5 +804,16 @@ export class OperationsService {
       }
     };
     inspect(config);
+  }
+  private assertSecretReferenceForOrganization(identity: SessionIdentity, secretRef: string): void {
+    const prefix = `INTEGRATION_${identity.organization.slug.replace(/-/g, '_').toUpperCase()}_`;
+    if (!secretRef.startsWith(prefix)) throw new BadRequestException(`A referência deve usar o namespace ${prefix} da organização ativa.`);
+  }
+  private isSecretReferenceConfigured(identity: SessionIdentity, secretRef: string | null | undefined): boolean {
+    if (!secretRef || !integrationSecretReference.safeParse(secretRef).success) return false;
+    const prefix = `INTEGRATION_${identity.organization.slug.replace(/-/g, '_').toUpperCase()}_`;
+    if (!secretRef.startsWith(prefix)) return false;
+    const value = process.env[secretRef];
+    return typeof value === 'string' && value.trim().length > 0;
   }
 }
