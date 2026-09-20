@@ -10,9 +10,10 @@ SET "approver_user_id" = "identity_users"."id",
     "approver_membership_id" = "memberships"."id",
     "approver_membership_role" = "memberships"."role"
 FROM "identity_users"
-JOIN "memberships" ON "memberships"."identity_user_id" = "identity_users"."id"
-  AND "memberships"."organization_id" = "change_approvals"."organization_id"
-WHERE "identity_users"."email" = "change_approvals"."approver_email";
+CROSS JOIN "memberships"
+WHERE "identity_users"."email" = "change_approvals"."approver_email"
+  AND "memberships"."identity_user_id" = "identity_users"."id"
+  AND "memberships"."organization_id" = "change_approvals"."organization_id";
 
 ALTER TABLE "change_approvals" ALTER COLUMN "approver_user_id" SET NOT NULL;
 ALTER TABLE "change_approvals" ALTER COLUMN "approver_membership_id" SET NOT NULL;
