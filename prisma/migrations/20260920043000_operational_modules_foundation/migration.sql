@@ -167,8 +167,33 @@ CREATE INDEX "file_assets_organization_id_status_created_at_idx" ON "file_assets
 
 -- All operational data is tenant-bound at the database boundary. Adding a
 -- new table here without RLS is an error, rather than a future hardening task.
-ALTER TABLE "classification_items", "safety_events", "safety_event_actions", "change_requests", "change_risks", "bash_cards", "bash_comments", "hht_companies", "hht_reports", "hht_report_windows", "dashboards", "integrations", "file_assets" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "classification_items", "safety_events", "safety_event_actions", "change_requests", "change_risks", "bash_cards", "bash_comments", "hht_companies", "hht_reports", "hht_report_windows", "dashboards", "integrations", "file_assets" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "classification_items" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "safety_events" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "safety_event_actions" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "change_requests" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "change_risks" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "bash_cards" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "bash_comments" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "hht_companies" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "hht_reports" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "hht_report_windows" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "dashboards" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "integrations" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "file_assets" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "classification_items" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "safety_events" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "safety_event_actions" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "change_requests" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "change_risks" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "bash_cards" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "bash_comments" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "hht_companies" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "hht_reports" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "hht_report_windows" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "dashboards" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "integrations" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "file_assets" FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY classification_items_tenant_isolation ON "classification_items" USING ("organization_id" = app.current_tenant_id()) WITH CHECK ("organization_id" = app.current_tenant_id());
 CREATE POLICY safety_events_tenant_isolation ON "safety_events" USING ("organization_id" = app.current_tenant_id()) WITH CHECK ("organization_id" = app.current_tenant_id());

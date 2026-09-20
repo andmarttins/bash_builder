@@ -22,8 +22,10 @@ CREATE TABLE "tv_playlists" (
 CREATE UNIQUE INDEX "tv_playlists_public_id_key" ON "tv_playlists"("public_id");
 CREATE INDEX "tv_playlists_organization_id_active_idx" ON "tv_playlists"("organization_id", "active");
 
-ALTER TABLE "tv_displays", "tv_playlists" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "tv_displays", "tv_playlists" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "tv_displays" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "tv_playlists" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "tv_displays" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "tv_playlists" FORCE ROW LEVEL SECURITY;
 CREATE POLICY "tv_displays_tenant_isolation" ON "tv_displays" USING ("organization_id" = app.current_tenant_id()) WITH CHECK ("organization_id" = app.current_tenant_id());
 CREATE POLICY "tv_playlists_tenant_isolation" ON "tv_playlists" USING ("organization_id" = app.current_tenant_id()) WITH CHECK ("organization_id" = app.current_tenant_id());
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "tv_displays", "tv_playlists" TO app_runtime;
