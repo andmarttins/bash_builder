@@ -81,7 +81,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       [formA, tenantA, publicA, 'Public A', formB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a64', 'Draft B']
     );
     await bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', 0, NOW())', [tenantA, formA, 'title', 'Title']);
-    await expect(bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', 0, NOW())', [tenantB, formA, 'forbidden', 'Forbidden',])).rejects.toThrow(/foreign key/i);
+    await expect(bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', 1, NOW())', [tenantB, formA, 'forbidden', 'Forbidden'])).rejects.toThrow(/foreign key/i);
 
     await runtime.query('BEGIN');
     try {
