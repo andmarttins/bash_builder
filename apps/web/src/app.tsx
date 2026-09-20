@@ -1,8 +1,9 @@
-import { Building2, CheckCircle2, LogOut, ShieldCheck } from 'lucide-react';
+import { Building2, CheckCircle2, ClipboardList, LayoutDashboard, LogOut, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
+type WorkspaceView = 'home' | 'organization';
 type Organization = { id: string; name: string; slug: string; membership: { id: string; role: string } };
 type Member = { id: string; userId: string; email: string; role: string; status: string; createdAt: string };
 type Invitation = { id: string; email: string; role: string; expiresAt: string; createdAt: string };
@@ -24,12 +25,17 @@ export function App(): React.JSX.Element {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [invitationToken] = useState(() => new URLSearchParams(window.location.search).get('invite'));
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('home');
 
   useEffect(() => { void (async () => {
     if (invitationToken) { setMode('invite'); return; }
     try {
       const [session, bootstrap] = await Promise.all([api<{ identity: Identity | null }>('/v1/auth/session'), api<{ bootstrapRequired: boolean }>('/v1/auth/bootstrap-status')]);
-      if (session.identity) { setIdentity(session.identity); setMode(session.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in'); } else setMode(bootstrap.bootstrapRequired ? 'bootstrap' : 'login');
+      if (session.identity) {
+        setIdentity(session.identity);
+        setWorkspaceView('home');
+        setMode(session.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in');
+      } else setMode(bootstrap.bootstrapRequired ? 'bootstrap' : 'login');
     } catch { setError('Não foi possível conectar à plataforma. Atualize a página em alguns instantes.'); setMode('login'); }
   })(); }, [invitationToken]);
 
@@ -60,7 +66,12 @@ export function App(): React.JSX.Element {
   }
   async function submit(path: string, payload: Record<string, FormDataEntryValue | null>, headers?: HeadersInit): Promise<void> {
     setPending(true); setError(null);
-    try { const result = await api<{ identity: Identity }>(path, { method: 'POST', headers, body: JSON.stringify(payload) }); setIdentity(result.identity); setMode(result.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in'); }
+    try {
+      const result = await api<{ identity: Identity }>(path, { method: 'POST', headers, body: JSON.stringify(payload) });
+      setIdentity(result.identity);
+      setWorkspaceView('home');
+      setMode(result.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in');
+    }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível concluir a solicitação.'); }
     finally { setPending(false); }
   }
@@ -108,7 +119,7 @@ export function App(): React.JSX.Element {
     setPending(true); setError(null);
     try {
       const result = await api<{ identity: Identity }>('/v1/invitations/accept', { method: 'POST', body: JSON.stringify({ token: invitationToken, password: values.get('password') }) });
-      window.history.replaceState({}, '', '/'); setIdentity(result.identity); setMode('signed-in');
+      window.history.replaceState({}, '', '/'); setIdentity(result.identity); setWorkspaceView('home'); setMode('signed-in');
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível aceitar o convite.'); }
     finally { setPending(false); }
   }
@@ -118,7 +129,7 @@ export function App(): React.JSX.Element {
     try {
       const session = await api<{ identity: Identity }>('/v1/auth/login', { method: 'POST', body: JSON.stringify({ email: values.get('email'), password: values.get('password') }) });
       await api('/v1/organizations/current/invitations/accept', { method: 'POST', body: JSON.stringify({ token: invitationToken }) });
-      window.history.replaceState({}, '', '/'); setIdentity(session.identity); setMode('signed-in');
+      window.history.replaceState({}, '', '/'); setIdentity(session.identity); setWorkspaceView('home'); setMode('signed-in');
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível associar este convite à conta existente.'); }
     finally { setPending(false); }
   }
@@ -131,13 +142,20 @@ export function App(): React.JSX.Element {
 
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
   if (mode === 'signed-in' && identity) return <main className="shell"><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
-    <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div><div className="success-icon"><CheckCircle2 aria-hidden="true" /></div>
-    <p className="eyebrow">Acesso configurado</p><h1 id="dashboard-title">Olá, {identity.organization.name}.</h1><p className="description">Sua organização está protegida por isolamento multi-tenant e o primeiro administrador já pode iniciar a configuração dos módulos.</p>
-    <dl className="identity-card"><div><dt>Conta</dt><dd>{identity.user.email}</dd></div><div><dt>Organização</dt><dd>{identity.organization.slug}</dd></div><div><dt>Permissão</dt><dd>{identity.access.isPlatformAdmin ? 'SUPERADMIN · ' : ''}{identity.membership.role}</dd></div></dl>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    <section className="admin-section" aria-labelledby="organizations-title"><h2 id="organizations-title">Organizações</h2><form className="inline-form" onSubmit={switchOrganization}><label>Contexto ativo<select name="organizationId" defaultValue={identity.organization.id} disabled={pending}>{organizations.map((organization) => <option value={organization.id} key={organization.id}>{organization.name} · {organization.membership.role}</option>)}</select></label><button className="secondary-button compact" type="submit" disabled={pending || organizations.length < 2}>Trocar organização</button></form>
+    <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div>
+    <nav className="workspace-nav" aria-label="Navegação do workspace"><button className="workspace-nav-item" aria-current={workspaceView === 'home' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('home')}><LayoutDashboard aria-hidden="true" /> Visão geral</button><button className="workspace-nav-item" aria-current={workspaceView === 'organization' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('organization')}><Settings2 aria-hidden="true" /> Organização</button></nav>
+    {workspaceView === 'home' ? <>
+      <p className="eyebrow">Workspace</p><h1 id="dashboard-title">Visão geral da empresa</h1><p className="description">Olá, {identity.organization.name}. Acompanhe a organização ativa e avance pela configuração dos módulos empresariais.</p>
+      <section className="overview-grid" aria-label="Resumo da empresa"><article className="overview-card"><Building2 aria-hidden="true" /><span>Organização ativa</span><strong>{identity.organization.name}</strong><small>{identity.organization.slug}</small></article><article className="overview-card"><UsersRound aria-hidden="true" /><span>Seu acesso</span><strong>{identity.membership.role}</strong><small>{identity.access.isPlatformAdmin ? 'Administrador da plataforma' : 'Membro da organização'}</small></article><article className="overview-card"><ClipboardList aria-hidden="true" /><span>Próxima etapa</span><strong>Configurar módulos</strong><small>Formulários, BASH, HHT e painéis entram por entregas isoladas.</small></article></section>
+      <section className="admin-section" aria-labelledby="start-title"><h2 id="start-title">Comece por aqui</h2><p className="section-note">Gerencie membros, convites e outras organizações na área de Organização. As páginas operacionais aparecerão aqui conforme os módulos forem entregues com isolamento multi-tenant.</p><button className="primary-button compact" type="button" onClick={() => setWorkspaceView('organization')}><Settings2 aria-hidden="true" /> Abrir administração da organização</button></section>
+    </> : <>
+      <div className="success-icon"><CheckCircle2 aria-hidden="true" /></div><p className="eyebrow">Administração</p><h1 id="dashboard-title">Organização e acesso</h1><p className="description">Gerencie o contexto ativo, membros e convites sem sair do workspace.</p>
+      <dl className="identity-card"><div><dt>Conta</dt><dd>{identity.user.email}</dd></div><div><dt>Organização</dt><dd>{identity.organization.slug}</dd></div><div><dt>Permissão</dt><dd>{identity.access.isPlatformAdmin ? 'SUPERADMIN · ' : ''}{identity.membership.role}</dd></div></dl>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <section className="admin-section" aria-labelledby="organizations-title"><h2 id="organizations-title">Organizações</h2><form className="inline-form" onSubmit={switchOrganization}><label>Contexto ativo<select name="organizationId" defaultValue={identity.organization.id} disabled={pending}>{organizations.map((organization) => <option value={organization.id} key={organization.id}>{organization.name} · {organization.membership.role}</option>)}</select></label><button className="secondary-button compact" type="submit" disabled={pending || organizations.length < 2}>Trocar organização</button></form>
       {identity.access.isPlatformAdmin && <form className="inline-form" onSubmit={createOrganization}><label>Nova organização<input name="name" minLength={2} maxLength={160} required placeholder="Nome da organização" /></label><label>Identificador<input name="slug" minLength={3} maxLength={63} pattern="[a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]{3,}" required placeholder="empresa-exemplo" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar organização</button></form>}</section>
-    {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <section className="admin-section" aria-labelledby="members-title"><h2 id="members-title">Membros</h2><p className="section-note">Alterações usam o contexto da organização ativa. A própria membership não pode ser alterada nesta tela.</p><form className="inline-form" onSubmit={createInvitation}><label>E-mail do novo membro<input name="email" type="email" required placeholder="pessoa@empresa.com" /></label><label>Papel<select name="role" defaultValue="MEMBER"><option value="OWNER" disabled={identity.membership.role !== 'OWNER'}>OWNER</option><option value="ADMIN" disabled={identity.membership.role !== 'OWNER'}>ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select></label><button className="primary-button compact" type="submit" disabled={pending}>Gerar convite</button></form>{invitationUrl && <p className="invitation-link">Convite válido por 7 dias: <code>{invitationUrl}</code></p>}{invitations.length > 0 && <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-row" key={invitation.id}><span>{invitation.email} · {invitation.role}</span><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void revokeInvitation(invitation.id)}>Revogar</button></div>)}</div>}<div className="member-list">{members.map((member) => <form className="member-row" key={member.id} onSubmit={(event) => void updateMember(event, member.id)}><span>{member.email}</span><select name="role" defaultValue={member.role} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="OWNER">OWNER</option><option value="ADMIN">ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select><select name="status" defaultValue={member.status} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="ACTIVE">Ativo</option><option value="SUSPENDED">Suspenso</option></select><button className="secondary-button compact" type="submit" disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}>Salvar</button></form>)}</div></section>}
+      {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <section className="admin-section" aria-labelledby="members-title"><h2 id="members-title">Membros</h2><p className="section-note">Alterações usam o contexto da organização ativa. A própria membership não pode ser alterada nesta tela.</p><form className="inline-form" onSubmit={createInvitation}><label>E-mail do novo membro<input name="email" type="email" required placeholder="pessoa@empresa.com" /></label><label>Papel<select name="role" defaultValue="MEMBER"><option value="OWNER" disabled={identity.membership.role !== 'OWNER'}>OWNER</option><option value="ADMIN" disabled={identity.membership.role !== 'OWNER'}>ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select></label><button className="primary-button compact" type="submit" disabled={pending}>Gerar convite</button></form>{invitationUrl && <p className="invitation-link">Convite válido por 7 dias: <code>{invitationUrl}</code></p>}{invitations.length > 0 && <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-row" key={invitation.id}><span>{invitation.email} · {invitation.role}</span><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void revokeInvitation(invitation.id)}>Revogar</button></div>)}</div>}<div className="member-list">{members.map((member) => <form className="member-row" key={member.id} onSubmit={(event) => void updateMember(event, member.id)}><span>{member.email}</span><select name="role" defaultValue={member.role} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="OWNER">OWNER</option><option value="ADMIN">ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select><select name="status" defaultValue={member.status} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="ACTIVE">Ativo</option><option value="SUSPENDED">Suspenso</option></select><button className="secondary-button compact" type="submit" disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}>Salvar</button></form>)}</div></section>}
+    </>}
     <button className="secondary-button" type="button" onClick={() => void logout()} disabled={pending}><LogOut aria-hidden="true" /> Sair</button>
   </section></main>;
 
