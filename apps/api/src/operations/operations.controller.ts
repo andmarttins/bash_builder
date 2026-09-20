@@ -81,4 +81,9 @@ export class OperationsController {
   public files(@Req() request: AuthenticatedRequest) { return this.operations.listFiles(request.identity).then((files) => ({ files })); }
   @Post('files/intents') @RequiredCapabilities('operations.manage')
   public createFileIntent(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createFileIntent(request.identity, input); }
+
+  @Get('operations/outbox/dead-letter') @RequiredCapabilities('operations.view')
+  public deadLetters(@Req() request: AuthenticatedRequest) { return this.operations.listDeadLetters(request.identity).then((events) => ({ events })); }
+  @Post('operations/outbox/dead-letter/:eventId/redrive') @RequiredCapabilities('operations.manage')
+  public redriveDeadLetter(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string) { return this.operations.redriveDeadLetter(request.identity, eventId).then((event) => ({ event })); }
 }

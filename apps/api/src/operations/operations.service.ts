@@ -347,6 +347,20 @@ export class OperationsService {
 
   public listFiles(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.fileAsset.findMany({ orderBy: { createdAt: 'desc' } })); }
 
+  public listDeadLetters(identity: SessionIdentity) {
+    return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, lastError: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
+  }
+
+  public redriveDeadLetter(identity: SessionIdentity, eventIdInput: string) {
+    const eventId = this.id(eventIdInput);
+    return this.withTenant(identity, async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ redriven: boolean }>>(Prisma.sql`SELECT app.request_outbox_redrive(${eventId}::uuid) AS redriven`);
+      if (rows[0]?.redriven !== true) throw new NotFoundException('Evento de fila não encontrado para esta organização.');
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'outbox.dead_letter_redriven', resourceType: 'outbox_event', resourceId: eventId, metadata: {} } });
+      return { id: eventId, status: 'PENDING' };
+    });
+  }
+
   private dashboardData(data: { title?: string; description?: string | null; widgets?: Array<{ type: string; title: string; config: Record<string, unknown> }> }): { title?: string; description?: string | null; widgets?: Prisma.InputJsonValue } {
     return { ...(data.title === undefined ? {} : { title: data.title }), ...(data.description === undefined ? {} : { description: data.description }), ...(data.widgets === undefined ? {} : { widgets: data.widgets as Prisma.InputJsonValue }) };
   }

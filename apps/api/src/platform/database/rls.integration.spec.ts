@@ -170,10 +170,10 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('grants worker queue procedures without direct queue table access', async () => {
-    const permissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>(
-      "SELECT has_function_privilege('app_worker', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS runtime"
+    const permissions = await bootstrap.query<{ worker: boolean; runtime: boolean; legacy_failure: boolean }>(
+      "SELECT has_function_privilege('app_worker', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS runtime, has_function_privilege('app_worker', 'app.mark_outbox_failed(uuid,integer)', 'EXECUTE') AS legacy_failure"
     );
-    expect(permissions.rows).toEqual([{ worker: true, runtime: false }]);
+    expect(permissions.rows).toEqual([{ worker: true, runtime: false, legacy_failure: false }]);
     await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
   });
 
@@ -185,7 +185,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2, $3, $4) AS marked', [eventId, 5, 1, 'permanent provider failure'])).rows).toEqual([{ marked: true }]);
     expect((await bootstrap.query<{ status: string }>('SELECT status::text FROM "outbox_events" WHERE id = $1', [eventId])).rows).toEqual([{ status: 'DEAD_LETTER' }]);
     expect((await worker.query<{ redriven: boolean }>('SELECT app.redrive_dead_letter_outbox_event($1::uuid) AS redriven', [eventId])).rows).toEqual([{ redriven: true }]);
-    expect((await bootstrap.query<{ status: string }>('SELECT status::text FROM "outbox_events" WHERE id = $1', [eventId])).rows).toEqual([{ status: 'PENDING' }]);
+    expect((await bootstrap.query<{ status: string; attempt_count: number }>('SELECT status::text, attempt_count FROM "outbox_events" WHERE id = $1', [eventId])).rows).toEqual([{ status: 'PENDING', attempt_count: 0 }]);
   });
 
   it('uses narrowly scoped identity procedures without granting table access', async () => {
