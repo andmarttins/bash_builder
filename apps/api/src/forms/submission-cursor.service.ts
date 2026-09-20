@@ -1,12 +1,13 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { getApiRuntimeConfig } from '../platform/config/runtime-config.js';
+
+export const CURSOR_SIGNING_SECRET = Symbol('CURSOR_SIGNING_SECRET');
 
 @Injectable()
 export class SubmissionCursorService {
   private readonly secret: string;
 
-  public constructor(secret = getApiRuntimeConfig().CURSOR_SIGNING_SECRET) {
+  public constructor(@Inject(CURSOR_SIGNING_SECRET) secret: string | undefined) {
     if (!secret) throw new Error('CURSOR_SIGNING_SECRET is required to sign submission cursors.');
     this.secret = secret;
   }
