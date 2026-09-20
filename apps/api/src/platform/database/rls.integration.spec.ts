@@ -43,6 +43,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     await bootstrap.query('DELETE FROM "hht_report_windows"');
     await bootstrap.query('DELETE FROM "tv_displays"');
     await bootstrap.query('DELETE FROM "tv_playlists"');
+    await bootstrap.query('DELETE FROM "domain_event_projections"');
     await bootstrap.query('DELETE FROM "worker_event_receipts"');
     await bootstrap.query('DELETE FROM "classification_items"');
     await bootstrap.query('DELETE FROM "dashboards"');
@@ -147,7 +148,7 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
-    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists'];
+    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
       "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1::text[]) ORDER BY tablename",
       [tableNames]
@@ -197,6 +198,17 @@ describeIntegration('PostgreSQL row-level security', () => {
     );
     expect(permissions.rows).toEqual([{ worker: true, runtime: false, legacy_failure: false }]);
     await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
+  });
+
+  it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
+    const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a85';
+    const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a86';
+    const query = 'SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz) AS recorded';
+    expect((await worker.query<{ recorded: boolean }>(query, [eventId, tenantA, 'domain-projection-v1', 'event.projected', aggregateId, '{}', '2026-09-20T00:00:00.000Z'])).rows).toEqual([{ recorded: true }]);
+    expect((await worker.query<{ recorded: boolean }>(query, [eventId, tenantA, 'domain-projection-v1', 'event.projected', aggregateId, '{}', '2026-09-20T00:00:00.000Z'])).rows).toEqual([{ recorded: false }]);
+    expect((await bootstrap.query<{ organization_id: string; event_id: string }>('SELECT organization_id, event_id FROM "domain_event_projections" WHERE event_id = $1', [eventId])).rows).toEqual([{ organization_id: tenantA, event_id: eventId }]);
+    await expect(runtime.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied/i);
+    await expect(worker.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied/i);
   });
 
   it('moves exhausted outbox work to a dead letter and permits explicit re-drive', async () => {
