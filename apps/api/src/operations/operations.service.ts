@@ -45,6 +45,11 @@ const dashboardPublishSchema = z.object({ published: z.boolean(), expectedVersio
   if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
 });
 const tvDisplaySchema = z.object({ name: text(2, 160), dashboardId: uuid, refreshSeconds: z.number().int().min(5).max(3600).optional() });
+const tvDisplayUpdateSchema = z.object({ name: text(2, 160).optional(), refreshSeconds: z.number().int().min(5).max(3600).optional(), active: z.boolean().optional(), expectedVersion }).refine((input) => input.name !== undefined || input.refreshSeconds !== undefined || input.active !== undefined, 'Informe alguma alteração.');
+const tvDisplayPublishSchema = z.object({ published: z.boolean(), expectedVersion, expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
+  if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
+  if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
+});
 const tvPlaylistSchema = z.object({ name: text(2, 160), intervalSeconds: z.number().int().min(5).max(3600).optional(), displayIds: z.array(uuid).min(1).max(30) });
 const integrationSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}) });
 const integrationUpdateSchema = integrationSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined, 'Informe alguma alteração.');
@@ -53,6 +58,7 @@ const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.e
 
 type HhtRate = { trifr: number; ltifr: number; ltisr: number };
 const dashboardSummarySelect = { id: true, title: true, description: true, widgets: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true } satisfies Prisma.DashboardSelect;
+const tvDisplaySummarySelect = { id: true, dashboardId: true, name: true, refreshSeconds: true, active: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true, dashboard: { select: { title: true } } } satisfies Prisma.TvDisplaySelect;
 
 export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; lti: number }): HhtRate {
   if (input.hhtWorked <= 0) return { trifr: 0, ltifr: 0, ltisr: 0 };
@@ -429,6 +435,9 @@ export class OperationsService {
       if (existing.published && change.widgets !== undefined) this.assertPublicDashboardWidgets(change.widgets);
       const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version }, data: { ...this.dashboardData(change), version: { increment: 1 } } });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
+      if (existing.published && (change.widgets !== undefined || change.title !== undefined || change.description !== undefined)) {
+        await tx.tvDisplay.updateMany({ where: { dashboardId, published: true }, data: { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } } });
+      }
       const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId }, select: dashboardSummarySelect });
       await this.record(tx, identity, 'dashboard.updated', 'dashboard', dashboardId, { version: dashboard.version });
       return dashboard;
@@ -447,6 +456,9 @@ export class OperationsService {
         : { published: false, publicTokenHash: null, publicRevokedAt: new Date(), version: { increment: 1 } }
       });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
+      // A TV snapshot is derived from this dashboard. Any dashboard publication
+      // change invalidates it, forcing an explicit, auditable display re-publish.
+      await tx.tvDisplay.updateMany({ where: { dashboardId, published: true }, data: { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } } });
       const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId }, select: dashboardSummarySelect });
       await this.record(tx, identity, data.published ? 'dashboard.publication_created' : 'dashboard.publication_revoked', 'dashboard', dashboardId, { version: dashboard.version, expiresAt: data.published ? (data.expiresAt?.toISOString() ?? null) : undefined });
       return { dashboard, publication: token ? { token, expiresAt: data.expiresAt ?? null } : null };
@@ -455,7 +467,7 @@ export class OperationsService {
 
   public listTv(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => ({
-      displays: await tx.tvDisplay.findMany({ include: { dashboard: { select: { title: true, published: true } } }, orderBy: { name: 'asc' } }),
+      displays: await tx.tvDisplay.findMany({ select: tvDisplaySummarySelect, orderBy: { name: 'asc' } }),
       playlists: await tx.tvPlaylist.findMany({ orderBy: { name: 'asc' } })
     }));
   }
@@ -464,9 +476,45 @@ export class OperationsService {
     const data = this.parse(tvDisplaySchema, input);
     return this.withTenant(identity, async (tx) => {
       if (!await tx.dashboard.findFirst({ where: { id: data.dashboardId, published: true }, select: { id: true } })) throw new BadRequestException('Publique o painel antes de disponibilizá-lo na TV.');
-      const display = await tx.tvDisplay.create({ data: { organizationId: identity.organization.id, ...data } });
+      const display = await tx.tvDisplay.create({ data: { organizationId: identity.organization.id, ...data }, select: tvDisplaySummarySelect });
       await this.record(tx, identity, 'tv_display.created', 'tv_display', display.id, { dashboardId: display.dashboardId });
       return display;
+    });
+  }
+
+  public updateTvDisplay(identity: SessionIdentity, displayIdInput: string, input: unknown) {
+    const displayId = this.id(displayIdInput); const data = this.parse(tvDisplayUpdateSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const { expectedVersion: version, ...change } = data;
+      const update = change.active === false
+        ? { ...change, active: false, published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } }
+        : { ...change, version: { increment: 1 } };
+      const updated = await tx.tvDisplay.updateMany({ where: { id: displayId, version }, data: update });
+      if (updated.count !== 1) throw new ConflictException('Esta tela foi alterada por outra pessoa.');
+      const display = await tx.tvDisplay.findFirst({ where: { id: displayId }, select: tvDisplaySummarySelect });
+      if (!display) throw new NotFoundException('Tela de TV não encontrada.');
+      await this.record(tx, identity, 'tv_display.updated', 'tv_display', displayId, { version: display.version, active: display.active, publicationRevoked: change.active === false });
+      return display;
+    });
+  }
+
+  public publishTvDisplay(identity: SessionIdentity, displayIdInput: string, input: unknown) {
+    const displayId = this.id(displayIdInput); const data = this.parse(tvDisplayPublishSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const display = await tx.tvDisplay.findFirst({ where: { id: displayId }, include: { dashboard: { select: { title: true, description: true, widgets: true, published: true, publicRevokedAt: true, publicExpiresAt: true } } } });
+      if (!display) throw new NotFoundException('Tela de TV não encontrada.');
+      if (data.published && (!display.active || !display.dashboard.published || display.dashboard.publicRevokedAt || (display.dashboard.publicExpiresAt && display.dashboard.publicExpiresAt <= new Date()))) throw new BadRequestException('A tela exige um painel publicado, ativo e disponível.');
+      const effectiveExpiresAt = data.published ? this.earliestExpiry(data.expiresAt ?? null, display.dashboard.publicExpiresAt) : null;
+      const token = data.published ? randomBytes(32).toString('base64url') : null;
+      const snapshot = data.published ? this.publicDashboardSnapshot(display.dashboard) : null;
+      const updated = await tx.tvDisplay.updateMany({ where: { id: displayId, version: data.expectedVersion }, data: data.published
+        ? { published: true, publicTokenHash: this.publicationTokenHash(token!), publicSnapshot: snapshot as Prisma.InputJsonValue, publicPublishedAt: new Date(), publicExpiresAt: effectiveExpiresAt, publicRevokedAt: null, version: { increment: 1 } }
+        : { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } }
+      });
+      if (updated.count !== 1) throw new ConflictException('Esta tela foi alterada por outra pessoa.');
+      const result = await tx.tvDisplay.findFirstOrThrow({ where: { id: displayId }, select: tvDisplaySummarySelect });
+      await this.record(tx, identity, data.published ? 'tv_display.publication_created' : 'tv_display.publication_revoked', 'tv_display', displayId, { version: result.version, expiresAt: data.published ? (effectiveExpiresAt?.toISOString() ?? null) : undefined });
+      return { display: result, publication: token ? { token, expiresAt: effectiveExpiresAt } : null };
     });
   }
 
@@ -596,6 +644,11 @@ export class OperationsService {
   }
 
   private publicationTokenHash(token: string): string { return createHash('sha256').update(token).digest('hex'); }
+  private earliestExpiry(requested: Date | null, source: Date | null): Date | null {
+    if (!requested) return source;
+    if (!source) return requested;
+    return requested <= source ? requested : source;
+  }
   private assertPublicDashboardWidgets(value: unknown): void {
     if (!Array.isArray(value)) throw new BadRequestException('Os widgets do painel são inválidos para publicação.');
     for (const widget of value) {
@@ -606,6 +659,15 @@ export class OperationsService {
       if (candidate.type === 'NOTICE' && candidate.config && typeof candidate.config === 'object' && !Array.isArray(candidate.config) && typeof (candidate.config as Record<string, unknown>).message === 'string' && ((candidate.config as Record<string, unknown>).message as string).length <= 1_000) continue;
       throw new BadRequestException('O painel público aceita somente widgets TEXT, METRIC ou NOTICE com conteúdo estático.');
     }
+  }
+  private publicDashboardSnapshot(dashboard: { title: string; description: string | null; widgets: unknown }): { title: string; description: string | null; widgets: Array<{ type: string; title: string; config: Record<string, string | number> }> } {
+    this.assertPublicDashboardWidgets(dashboard.widgets);
+    const widgets = (dashboard.widgets as Array<{ type: string; title: string; config: Record<string, unknown> }>).map((widget): { type: string; title: string; config: Record<string, string | number> } => {
+      if (widget.type === 'TEXT') return { type: widget.type, title: widget.title, config: { content: String(widget.config.content) } };
+      if (widget.type === 'METRIC') { const config: Record<string, string | number> = { value: widget.config.value as string | number }; if (typeof widget.config.label === 'string') config.label = widget.config.label; return { type: widget.type, title: widget.title, config }; }
+      const config: Record<string, string | number> = { message: String(widget.config.message) }; if (typeof widget.config.tone === 'string' && ['INFO', 'SUCCESS', 'WARNING'].includes(widget.config.tone)) config.tone = widget.config.tone; return { type: widget.type, title: widget.title, config };
+    });
+    return { title: dashboard.title, description: dashboard.description, widgets };
   }
 
   private safeFilename(value: string): string {

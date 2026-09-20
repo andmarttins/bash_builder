@@ -254,6 +254,7 @@ describe('calculateHhtRates', () => {
     const dashboard = { id: eventId, title: 'Status', widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Tudo normal' } }], version: 2, published: true };
     const tx = {
       dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, widgets: dashboard.widgets }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
+      tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
@@ -261,6 +262,7 @@ describe('calculateHhtRates', () => {
 
     expect(result.publication?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(tx.dashboard.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ published: true, publicTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), publicRevokedAt: null }) }));
+    expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { dashboardId: eventId, published: true }, data: expect.objectContaining({ published: false, publicTokenHash: null, publicRevokedAt: expect.any(Date) }) }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'dashboard.publication_created', metadata: expect.not.objectContaining({ token: expect.anything() }) }) }));
     expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'dashboard.publication_created' }) }));
   });
@@ -284,6 +286,17 @@ describe('calculateHhtRates', () => {
     await expect(new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 2, widgets: [{ type: 'SQL', title: 'Unsafe', config: { query: 'select * from identity_users' } }] })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('invalidates derived TV snapshots when a published dashboard widgets change', async () => {
+    const dashboard = { id: eventId, version: 2, title: 'Status', published: true };
+    const tx = {
+      dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, published: true }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
+      tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 1, widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Atualizado' } }] })).resolves.toEqual(dashboard);
+    expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { dashboardId: eventId, published: true }, data: expect.objectContaining({ published: false, publicTokenHash: null, publicRevokedAt: expect.any(Date) }) }));
+  });
+
   it('rejects an already expired publication before opening a tenant transaction', async () => {
     const tenants = { withTenantTransaction: vi.fn() };
     expect(() => new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1, expiresAt: new Date(Date.now() - 1_000).toISOString() })).toThrow(BadRequestException);
@@ -295,5 +308,50 @@ describe('calculateHhtRates', () => {
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: false, expectedVersion: 4 })).rejects.toBeInstanceOf(ConflictException);
     expect(tx.dashboard.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 4 }, data: expect.objectContaining({ published: false, publicTokenHash: null }) }));
+  });
+
+  it('creates an opaque TV display publication snapshot and keeps its token out of audit and outbox data', async () => {
+    const dashboard = { title: 'Status operacional', description: 'Snapshot aprovado', widgets: [{ type: 'METRIC', title: 'TRIFR', config: { value: 0, label: 'Meta' } }], published: true, publicRevokedAt: null, publicExpiresAt: new Date(Date.now() + 86_400_000) };
+    const display = { id: eventId, active: true, dashboard, version: 2, published: true };
+    const tx = {
+      tvDisplay: { findFirst: vi.fn().mockResolvedValue(display), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, version: 2, published: true }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const result = await new OperationsService(tenants as never).publishTvDisplay(identity, eventId, { published: true, expectedVersion: 1 });
+
+    expect(result.publication?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(result.publication?.expiresAt).toEqual(dashboard.publicExpiresAt);
+    expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ published: true, publicTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), publicSnapshot: { title: 'Status operacional', description: 'Snapshot aprovado', widgets: [{ type: 'METRIC', title: 'TRIFR', config: { value: 0, label: 'Meta' } }] } }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'tv_display.publication_created', metadata: expect.not.objectContaining({ token: expect.anything() }) }) }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tv_display.publication_created' }) }));
+  });
+
+  it('rejects an already expired TV publication before opening a tenant transaction', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    expect(() => new OperationsService(tenants as never).publishTvDisplay(identity, eventId, { published: true, expectedVersion: 1, expiresAt: new Date(Date.now() - 1_000).toISOString() })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('uses optimistic concurrency when revoking a TV publication', async () => {
+    const tx = { tvDisplay: { findFirst: vi.fn().mockResolvedValue({ id: eventId, active: true, dashboard: { title: 'Status', description: null, widgets: [], published: true, publicRevokedAt: null, publicExpiresAt: null } }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).publishTvDisplay(identity, eventId, { published: false, expectedVersion: 4 })).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 4 }, data: expect.objectContaining({ published: false, publicTokenHash: null }) }));
+  });
+
+  it('deactivates a TV screen by revoking its publication and uses version control', async () => {
+    const updated = { id: eventId, version: 2, active: false, published: false };
+    const tx = { tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(updated) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).updateTvDisplay(identity, eventId, { active: false, expectedVersion: 1 })).resolves.toEqual(updated);
+    expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ active: false, published: false, publicTokenHash: null, publicSnapshot: expect.anything() }) }));
+  });
+
+  it('never selects TV publication tokens or snapshots through the authenticated TV listing', async () => {
+    const tx = { tvDisplay: { findMany: vi.fn().mockResolvedValue([]) }, tvPlaylist: { findMany: vi.fn().mockResolvedValue([]) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).listTv(identity)).resolves.toEqual({ displays: [], playlists: [] });
+    expect(tx.tvDisplay.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.not.objectContaining({ publicTokenHash: expect.anything(), publicSnapshot: expect.anything() }) }));
   });
 });

@@ -225,6 +225,38 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('exposes only an active TV display snapshot selected by its token digest', async () => {
+    const dashboardId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a52';
+    const published = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a53';
+    const revoked = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a54';
+    const expired = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
+    const tenantBDashboard = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a56';
+    const tenantBDisplay = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a57';
+    const digest = 'e'.repeat(64);
+    await bootstrap.query('INSERT INTO "dashboards" (id, organization_id, title, updated_at) VALUES ($1, $2, $3, NOW())', [dashboardId, tenantA, 'TV source']);
+    await bootstrap.query('INSERT INTO "dashboards" (id, organization_id, title, updated_at) VALUES ($1, $2, $3, NOW())', [tenantBDashboard, tenantB, 'Other tenant TV source']);
+    await bootstrap.query('INSERT INTO "tv_displays" (id, organization_id, dashboard_id, name, published, public_token_hash, public_snapshot, updated_at) VALUES ($1, $2, $3, $4, TRUE, $5, $6, NOW()), ($7, $2, $3, $8, TRUE, $9, $10, NOW()), ($11, $2, $3, $12, TRUE, $13, $14, NOW())', [published, tenantA, dashboardId, 'Published TV', digest, JSON.stringify({ title: 'Safe' }), revoked, 'Revoked TV', 'f'.repeat(64), JSON.stringify({ title: 'Safe' }), expired, 'Expired TV', '0'.repeat(64), JSON.stringify({ title: 'Safe' })]);
+    await bootstrap.query('UPDATE "tv_displays" SET public_revoked_at = NOW() WHERE id = $1', [revoked]);
+    await bootstrap.query('UPDATE "tv_displays" SET public_expires_at = NOW() - INTERVAL \'1 second\' WHERE id = $1', [expired]);
+    await bootstrap.query('INSERT INTO "tv_displays" (id, organization_id, dashboard_id, name, published, public_token_hash, public_snapshot, updated_at) VALUES ($1, $2, $3, $4, TRUE, $5, $6, NOW())', [tenantBDisplay, tenantB, tenantBDashboard, 'Other tenant TV', '2'.repeat(64), JSON.stringify({ title: 'Must not leak' })]);
+    await runtime.query('BEGIN');
+    try {
+      expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [published])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_tv_display_token_hash', $1, true)", [digest]);
+      expect((await runtime.query('SELECT id, name FROM "tv_displays" ORDER BY id')).rows).toEqual([{ id: published, name: 'Published TV' }]);
+      await expect(runtime.query('UPDATE "tv_displays" SET name = \'tampered\' WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      const replacementDigest = '1'.repeat(64);
+      await bootstrap.query('UPDATE "tv_displays" SET public_token_hash = $1 WHERE id = $2', [replacementDigest, published]);
+      expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [published])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_tv_display_token_hash', $1, true)", [replacementDigest]);
+      expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [published])).rows).toEqual([{ id: published }]);
+      await runtime.query("SELECT set_config('app.public_tv_display_token_hash', $1, true)", ['f'.repeat(64)]);
+      expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [revoked])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_tv_display_token_hash', $1, true)", ['0'.repeat(64)]);
+      expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [expired])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+  });
+
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
     const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
@@ -232,7 +264,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       [tableNames]
     );
     expect(policies.rows).toHaveLength(tableNames.length);
-    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : name === 'dashboards' ? 'dashboards_tenant_or_publication' : `${name}_tenant_isolation`).sort());
+    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : name === 'dashboards' ? 'dashboards_tenant_or_publication' : name === 'tv_displays' ? 'tv_displays_tenant_or_publication' : `${name}_tenant_isolation`).sort());
     const rls = await bootstrap.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>(
       "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY relname",
       [tableNames]
