@@ -424,6 +424,19 @@ export class OperationsService {
 
   public listDashboards(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.dashboard.findMany({ select: dashboardSummarySelect, orderBy: { updatedAt: 'desc' } })); }
 
+  public analyticsSummary(identity: SessionIdentity) {
+    return this.withTenant(identity, async (tx) => {
+      const [openEvents, eventsInReview, changes, cards, latestHht] = await Promise.all([
+        tx.safetyEvent.count({ where: { status: 'OPEN' } }),
+        tx.safetyEvent.count({ where: { status: 'IN_REVIEW' } }),
+        tx.changeRequest.groupBy({ by: ['status'], _count: { _all: true } }),
+        tx.bashCard.groupBy({ by: ['stage'], _count: { _all: true } }),
+        tx.hhtReport.findFirst({ orderBy: [{ year: 'desc' }, { month: 'desc' }], select: { year: true, month: true, hhtWorked: true, lostDays: true, lti: true } })
+      ]);
+      return { generatedAt: new Date().toISOString(), safety: { open: openEvents, inReview: eventsInReview }, changes: changes.map((row) => ({ status: row.status, total: row._count._all })), bash: cards.map((row) => ({ stage: row.stage, total: row._count._all })), hht: latestHht ? { year: latestHht.year, month: latestHht.month, rates: calculateHhtRates({ hhtWorked: Number(latestHht.hhtWorked), lostDays: latestHht.lostDays, lti: latestHht.lti }) } : null };
+    });
+  }
+
   public createDashboard(identity: SessionIdentity, input: unknown) {
     const data = this.parse(dashboardSchema, input);
     return this.withTenant(identity, async (tx) => {
