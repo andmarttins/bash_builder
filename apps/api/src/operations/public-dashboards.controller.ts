@@ -19,11 +19,19 @@ export class PublicDashboardsController {
     return this.publicDashboards.withPublishedDashboard(parsed.data, async (tx, tokenHash) => {
       const dashboard = await tx.dashboard.findFirst({
         where: { publicTokenHash: tokenHash, published: true },
-        select: { title: true, description: true, widgets: true }
+        select: { publicSnapshot: true }
       });
-      if (!dashboard) throw new NotFoundException('Publicação não encontrada.');
-      return { dashboard: { title: dashboard.title, description: dashboard.description, widgets: this.widgets(dashboard.widgets) } };
+      const snapshot = this.snapshot(dashboard?.publicSnapshot);
+      if (!snapshot) throw new NotFoundException('Publicação não encontrada.');
+      return { dashboard: snapshot };
     });
+  }
+
+  private snapshot(value: unknown): { title: string; description: string | null; widgets: PublicWidget[] } | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const snapshot = value as { title?: unknown; description?: unknown; widgets?: unknown };
+    if (typeof snapshot.title !== 'string' || snapshot.title.length < 2 || snapshot.title.length > 160 || (snapshot.description !== null && snapshot.description !== undefined && typeof snapshot.description !== 'string')) return null;
+    return { title: snapshot.title, description: typeof snapshot.description === 'string' ? snapshot.description : null, widgets: this.widgets(snapshot.widgets) };
   }
 
   private widgets(value: unknown): PublicWidget[] {

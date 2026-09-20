@@ -8,6 +8,7 @@ import { FormValidationService } from '../../forms/form-validation.service.js';
 import { PublicFormAccessService } from '../public-access/public-form-access.service.js';
 import { TenantTransactionService } from '../tenant/tenant-transaction.service.js';
 import { SubmissionCursorService } from '../../forms/submission-cursor.service.js';
+import { OperationsService } from '../../operations/operations.service.js';
 
 const migratorUrl = process.env.TEST_DATABASE_URL;
 const runtimeUrl = process.env.TEST_RUNTIME_DATABASE_URL;
@@ -124,6 +125,20 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect((await bootstrap.query('SELECT id, status::text FROM "file_assets" WHERE id IN ($1, $2) ORDER BY id', [fileA, fileB])).rows).toEqual([
       { id: fileA, status: 'PENDING' }, { id: fileB, status: 'PENDING' }
     ]);
+  });
+
+  it('calculates an authorized analytics source only from the active tenant rows', async () => {
+    await bootstrap.query(
+      `INSERT INTO "safety_events" (id, organization_id, code, title, occurred_at, origin, status, updated_at)
+       VALUES ($1, $2, 'ANA-A', 'Tenant A event', NOW(), 'test', 'OPEN', NOW()),
+              ($3, $4, 'ANA-B', 'Tenant B event', NOW(), 'test', 'OPEN', NOW())`,
+      ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a83', tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a84', tenantB]
+    );
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: runtimeUrl }) });
+    const identity = { user: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a85', email: 'analytics@example.test' }, organization: { id: tenantA, slug: 'tenant-a', name: 'Tenant A' }, membership: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a86', role: 'OWNER' as const }, access: { isPlatformAdmin: false, requiresPasswordChange: false } };
+    try {
+      await expect(new OperationsService(new TenantTransactionService(prisma as never)).analyticsSource(identity, 'safety.open_events', {})).resolves.toMatchObject({ data: { metrics: { open: 1, inReview: 0, total: 1 } } });
+    } finally { await prisma.$disconnect(); }
   });
 
   it('does not grant the runtime role access to identity hashes', async () => {

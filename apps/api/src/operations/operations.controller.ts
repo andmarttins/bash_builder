@@ -78,6 +78,8 @@ export class OperationsController {
   public dashboards(@Req() request: AuthenticatedRequest) { return this.operations.listDashboards(request.identity).then((dashboards) => ({ dashboards })); }
   @Get('analytics/summary') @RequiredCapabilities('dashboards.view')
   public analyticsSummary(@Req() request: AuthenticatedRequest) { return this.operations.analyticsSummary(request.identity); }
+  @Get('analytics/sources/:source') @RequiredCapabilities('dashboards.view')
+  public analyticsSource(@Req() request: AuthenticatedRequest, @Param('source') source: string, @Query() query: unknown) { return this.operations.analyticsSource(request.identity, source, query); }
   @Post('dashboards') @RequiredCapabilities('dashboards.manage')
   public createDashboard(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createDashboard(request.identity, input).then((dashboard) => ({ dashboard })); }
   @Patch('dashboards/:dashboardId') @RequiredCapabilities('dashboards.manage')

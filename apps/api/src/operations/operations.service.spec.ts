@@ -240,6 +240,65 @@ describe('calculateHhtRates', () => {
     expect(new OperationsService({} as never, storage as never, scanner as never).fileUploadConfiguration()).toEqual({ upload: expect.objectContaining({ supported: true, maxByteSize: 10 * 1024 * 1024, contentTypes: expect.arrayContaining(['application/pdf']) }) });
   });
 
+  it('exposes only catalogued analytics sources and rejects arbitrary query fields before a tenant transaction', () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new OperationsService(tenants as never);
+    expect(() => service.analyticsSource(identity, 'identity_users', {})).toThrow(BadRequestException);
+    expect(() => service.analyticsSource(identity, 'safety.open_events', { table: 'identity_users' })).toThrow(BadRequestException);
+    expect(() => service.analyticsSource(identity, 'bash.by_stage', { year: 2026 })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects incompatible analytics widget metrics and filters before persisting a dashboard', () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new OperationsService(tenants as never);
+    expect(() => service.createDashboard(identity, { title: 'Painel', widgets: [{ type: 'ANALYTICS', title: 'Inválido', config: { source: 'safety.open_events', metric: 'trifr' } }] })).toThrow(BadRequestException);
+    expect(() => service.createDashboard(identity, { title: 'Painel', widgets: [{ type: 'ANALYTICS', title: 'Inválido', config: { source: 'changes.by_status', metric: 'total', filters: { stage: 'DONE' } } }] })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('resolves the safety, changes and BASH sources with only their allowed filters inside the active tenant', async () => {
+    const tx = {
+      safetyEvent: { count: vi.fn().mockResolvedValueOnce(3).mockResolvedValueOnce(1) },
+      changeRequest: { groupBy: vi.fn().mockResolvedValue([{ status: 'APPROVED', _count: { _all: 2 } }]) },
+      bashCard: { groupBy: vi.fn().mockResolvedValue([{ stage: 'DONE', _count: { _all: 4 } }]) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (context, work) => { expect(context.tenantId).toBe(identity.organization.id); return work(tx); }) };
+    const service = new OperationsService(tenants as never);
+    await expect(service.analyticsSource(identity, 'safety.open_events', { year: 2026, month: 8 })).resolves.toMatchObject({ data: { metrics: { open: 3, inReview: 1, total: 4 } } });
+    await expect(service.analyticsSource(identity, 'changes.by_status', { status: 'APPROVED' })).resolves.toMatchObject({ data: { metrics: { total: 2 }, breakdown: [{ key: 'APPROVED', total: 2 }] } });
+    await expect(service.analyticsSource(identity, 'bash.by_stage', { stage: 'DONE' })).resolves.toMatchObject({ data: { metrics: { total: 4 }, breakdown: [{ key: 'DONE', total: 4 }] } });
+    expect(tx.safetyEvent.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ occurredAt: expect.any(Object) }) }));
+    expect(tx.changeRequest.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'APPROVED' }) }));
+    expect(tx.bashCard.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ stage: 'DONE' }) }));
+  });
+
+  it('aggregates only submitted or locked HHT reports across companies for the latest approved period', async () => {
+    const tx = {
+      hhtReport: {
+        findFirst: vi.fn().mockResolvedValue({ year: 2026, month: 8 }),
+        aggregate: vi.fn().mockResolvedValue({ _sum: { hhtWorked: 400_000, lostDays: 4, lti: 2 }, _count: { _all: 2 } })
+      }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const result = await new OperationsService(tenants as never).analyticsSource(identity, 'hht.latest_rates', {});
+    expect(result).toMatchObject({ source: 'hht.latest_rates', data: { metrics: { trifr: 5, ltifr: 5, ltisr: 10, companies: 2 }, period: { year: 2026, month: 8, companies: 2 } } });
+    expect(tx.hhtReport.aggregate).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ year: 2026, month: 8, status: { in: ['SUBMITTED', 'LOCKED'] } }) }));
+  });
+
+  it('renders an analytics widget into a static public snapshot at publication time', async () => {
+    const dashboard = { id: eventId, title: 'Operação', description: null, widgets: [{ type: 'ANALYTICS', title: 'Eventos críticos', config: { source: 'safety.open_events', metric: 'total' } }] };
+    const tx = {
+      dashboard: { findFirst: vi.fn().mockResolvedValue(dashboard), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ ...dashboard, published: true, version: 2 }) },
+      safetyEvent: { count: vi.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(3) },
+      tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1 })).resolves.toMatchObject({ publication: { token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) } });
+    expect(tx.dashboard.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ publicSnapshot: { title: 'Operação', description: null, widgets: [{ type: 'METRIC', title: 'Eventos críticos', config: { value: 5, label: 'safety.open_events' } }] } }) }));
+  });
+
   it('rejects a malformed non-binary upload body before it reaches tenant storage', async () => {
     const tenants = { withTenantTransaction: vi.fn() };
     const storage = { isConfigured: vi.fn().mockReturnValue(true) };
@@ -421,7 +480,7 @@ describe('calculateHhtRates', () => {
   it('does not allow an already public dashboard to acquire an unapproved widget through its update endpoint', async () => {
     const tx = { dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, published: true }) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
-    await expect(new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 2, widgets: [{ type: 'SQL', title: 'Unsafe', config: { query: 'select * from identity_users' } }] })).rejects.toBeInstanceOf(BadRequestException);
+    expect(() => new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 2, widgets: [{ type: 'SQL', title: 'Unsafe', config: { query: 'select * from identity_users' } }] })).toThrow(BadRequestException);
   });
 
   it('invalidates derived TV snapshots when a published dashboard widgets change', async () => {
@@ -449,7 +508,7 @@ describe('calculateHhtRates', () => {
   });
 
   it('creates an opaque TV display publication snapshot and keeps its token out of audit and outbox data', async () => {
-    const dashboard = { title: 'Status operacional', description: 'Snapshot aprovado', widgets: [{ type: 'METRIC', title: 'TRIFR', config: { value: 0, label: 'Meta' } }], published: true, publicRevokedAt: null, publicExpiresAt: new Date(Date.now() + 86_400_000) };
+    const dashboard = { publicSnapshot: { title: 'Status operacional', description: 'Snapshot aprovado', widgets: [{ type: 'METRIC', title: 'TRIFR', config: { value: 0, label: 'Meta' } }] }, published: true, publicRevokedAt: null, publicExpiresAt: new Date(Date.now() + 86_400_000) };
     const display = { id: eventId, active: true, dashboard, version: 2, published: true };
     const tx = {
       tvDisplay: { findFirst: vi.fn().mockResolvedValue(display), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, version: 2, published: true }) },

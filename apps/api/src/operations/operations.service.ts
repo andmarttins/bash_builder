@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
+import { BashStage, ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { assertFileContentMatchesType } from '../platform/storage/file-content-validation.js';
@@ -40,7 +40,21 @@ const createCompanySchema = z.object({ name: text(2, 200), document: optionalTex
 const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative(), expectedVersion: expectedVersion.optional() });
 const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
-const dashboardSchema = z.object({ title: text(2, 160), description: optionalText(10_000), widgets: z.array(z.object({ type: text(2, 80), title: text(2, 160), config: z.record(z.string(), z.unknown()).default({}) })).max(24).default([]) });
+const analyticsSourceKeys = ['safety.open_events', 'changes.by_status', 'hht.latest_rates', 'bash.by_stage'] as const;
+const analyticsSourceSchema = z.enum(analyticsSourceKeys);
+const analyticsMetrics: Record<z.infer<typeof analyticsSourceSchema>, readonly string[]> = {
+  'safety.open_events': ['open', 'inReview', 'total'],
+  'changes.by_status': ['total'],
+  'hht.latest_rates': ['trifr', 'ltifr', 'ltisr', 'companies'],
+  'bash.by_stage': ['total']
+};
+const analyticsQuerySchema = z.object({ year: z.coerce.number().int().min(2000).max(2200).optional(), month: z.coerce.number().int().min(1).max(12).optional(), status: z.enum(changeStatuses).optional(), stage: z.enum(bashStages).optional() }).strict().superRefine((input, context) => {
+  if ((input.year === undefined) !== (input.month === undefined)) context.addIssue({ code: 'custom', message: 'Informe ano e mês juntos.' });
+});
+const dashboardStaticWidgetSchema = z.object({ type: z.enum(['TEXT', 'METRIC', 'NOTICE']), title: text(2, 160), config: z.record(z.string(), z.unknown()).default({}) });
+const analyticsWidgetSchema = z.object({ type: z.literal('ANALYTICS'), title: text(2, 160), config: z.object({ source: analyticsSourceSchema, metric: z.string().trim().min(1).max(32), filters: analyticsQuerySchema.optional() }).strict() });
+const dashboardWidgetSchema = z.union([dashboardStaticWidgetSchema, analyticsWidgetSchema]);
+const dashboardSchema = z.object({ title: text(2, 160), description: optionalText(10_000), widgets: z.array(dashboardWidgetSchema).max(24).default([]) });
 const dashboardUpdateSchema = dashboardSchema.partial().extend({ expectedVersion }).refine((input) => input.title !== undefined || input.description !== undefined || input.widgets !== undefined, 'Informe alguma alteração.');
 const dashboardPublishSchema = z.object({ published: z.boolean(), expectedVersion, expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
   if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
@@ -434,19 +448,28 @@ export class OperationsService {
 
   public analyticsSummary(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => {
-      const [openEvents, eventsInReview, changes, cards, latestHht] = await Promise.all([
+      const [openEvents, eventsInReview, changes, cards, latestPeriod] = await Promise.all([
         tx.safetyEvent.count({ where: { status: 'OPEN' } }),
         tx.safetyEvent.count({ where: { status: 'IN_REVIEW' } }),
         tx.changeRequest.groupBy({ by: ['status'], _count: { _all: true } }),
         tx.bashCard.groupBy({ by: ['stage'], _count: { _all: true } }),
-        tx.hhtReport.findFirst({ orderBy: [{ year: 'desc' }, { month: 'desc' }], select: { year: true, month: true, hhtWorked: true, lostDays: true, lti: true } })
+        tx.hhtReport.findFirst({ where: { status: { in: ['SUBMITTED', 'LOCKED'] } }, orderBy: [{ year: 'desc' }, { month: 'desc' }], select: { year: true, month: true } })
       ]);
-      return { generatedAt: new Date().toISOString(), safety: { open: openEvents, inReview: eventsInReview }, changes: changes.map((row) => ({ status: row.status, total: row._count._all })), bash: cards.map((row) => ({ stage: row.stage, total: row._count._all })), hht: latestHht ? { year: latestHht.year, month: latestHht.month, rates: calculateHhtRates({ hhtWorked: Number(latestHht.hhtWorked), lostDays: latestHht.lostDays, lti: latestHht.lti }) } : null };
+      const hhtTotals = latestPeriod ? await tx.hhtReport.aggregate({ where: { year: latestPeriod.year, month: latestPeriod.month, status: { in: ['SUBMITTED', 'LOCKED'] } }, _sum: { hhtWorked: true, lostDays: true, lti: true }, _count: { _all: true } }) : null;
+      return { generatedAt: new Date().toISOString(), safety: { open: openEvents, inReview: eventsInReview }, changes: changes.map((row) => ({ status: row.status, total: row._count._all })), bash: cards.map((row) => ({ stage: row.stage, total: row._count._all })), hht: latestPeriod && hhtTotals ? { year: latestPeriod.year, month: latestPeriod.month, companies: hhtTotals._count._all, rates: calculateHhtRates({ hhtWorked: Number(hhtTotals._sum.hhtWorked ?? 0), lostDays: hhtTotals._sum.lostDays ?? 0, lti: hhtTotals._sum.lti ?? 0 }) } : null };
     });
+  }
+
+  public analyticsSource(identity: SessionIdentity, sourceInput: string, query: unknown) {
+    const source = this.parse(analyticsSourceSchema, sourceInput);
+    const filters = this.parse(analyticsQuerySchema, query ?? {});
+    this.assertAnalyticsContract(source, filters);
+    return this.withTenant(identity, async (tx) => ({ source, generatedAt: new Date().toISOString(), data: await this.analyticsSourceData(tx, source, filters) }));
   }
 
   public createDashboard(identity: SessionIdentity, input: unknown) {
     const data = this.parse(dashboardSchema, input);
+    this.assertDashboardAnalyticsWidgets(data.widgets);
     return this.withTenant(identity, async (tx) => {
       const created = await tx.dashboard.create({ data: { organizationId: identity.organization.id, title: data.title, description: data.description, widgets: data.widgets as Prisma.InputJsonValue }, select: dashboardSummarySelect });
       await this.record(tx, identity, 'dashboard.created', 'dashboard', created.id, {});
@@ -456,11 +479,11 @@ export class OperationsService {
 
   public updateDashboard(identity: SessionIdentity, dashboardIdInput: string, input: unknown) {
     const dashboardId = this.id(dashboardIdInput); const data = this.parse(dashboardUpdateSchema, input);
+    if (data.widgets !== undefined) this.assertDashboardAnalyticsWidgets(data.widgets);
     return this.withTenant(identity, async (tx) => {
       const existing = await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true, published: true } });
       if (!existing) throw new NotFoundException('Painel não encontrado.');
       const { expectedVersion: version, ...change } = data;
-      if (existing.published && change.widgets !== undefined) this.assertPublicDashboardWidgets(change.widgets);
       const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version }, data: { ...this.dashboardData(change), version: { increment: 1 } } });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
       if (existing.published && (change.widgets !== undefined || change.title !== undefined || change.description !== undefined)) {
@@ -477,13 +500,13 @@ export class OperationsService {
   public publishDashboard(identity: SessionIdentity, dashboardIdInput: string, input: unknown) {
     const dashboardId = this.id(dashboardIdInput); const data = this.parse(dashboardPublishSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const existing = await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true, widgets: true } });
+      const existing = await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true, title: true, description: true, widgets: true } });
       if (!existing) throw new NotFoundException('Painel não encontrado.');
-      if (data.published) this.assertPublicDashboardWidgets(existing.widgets);
+      const snapshot = data.published ? await this.publicDashboardSnapshot(tx, existing) : null;
       const token = data.published ? randomBytes(32).toString('base64url') : null;
       const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version: data.expectedVersion }, data: data.published
-        ? { published: true, publicTokenHash: this.publicationTokenHash(token!), publicPublishedAt: new Date(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null, version: { increment: 1 } }
-        : { published: false, publicTokenHash: null, publicRevokedAt: new Date(), version: { increment: 1 } }
+        ? { published: true, publicTokenHash: this.publicationTokenHash(token!), publicSnapshot: snapshot as Prisma.InputJsonValue, publicPublishedAt: new Date(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null, version: { increment: 1 } }
+        : { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } }
       });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
       // A TV snapshot is derived from this dashboard. Any dashboard publication
@@ -534,12 +557,12 @@ export class OperationsService {
   public publishTvDisplay(identity: SessionIdentity, displayIdInput: string, input: unknown) {
     const displayId = this.id(displayIdInput); const data = this.parse(tvDisplayPublishSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const display = await tx.tvDisplay.findFirst({ where: { id: displayId }, include: { dashboard: { select: { title: true, description: true, widgets: true, published: true, publicRevokedAt: true, publicExpiresAt: true } } } });
+      const display = await tx.tvDisplay.findFirst({ where: { id: displayId }, include: { dashboard: { select: { publicSnapshot: true, published: true, publicRevokedAt: true, publicExpiresAt: true } } } });
       if (!display) throw new NotFoundException('Tela de TV não encontrada.');
       if (data.published && (!display.active || !display.dashboard.published || display.dashboard.publicRevokedAt || (display.dashboard.publicExpiresAt && display.dashboard.publicExpiresAt <= new Date()))) throw new BadRequestException('A tela exige um painel publicado, ativo e disponível.');
       const effectiveExpiresAt = data.published ? this.earliestExpiry(data.expiresAt ?? null, display.dashboard.publicExpiresAt) : null;
       const token = data.published ? randomBytes(32).toString('base64url') : null;
-      const snapshot = data.published ? this.publicDashboardSnapshot(display.dashboard) : null;
+      const snapshot = data.published ? this.sanitizeTvDisplaySnapshot(display.dashboard.publicSnapshot) : null;
       const updated = await tx.tvDisplay.updateMany({ where: { id: displayId, version: data.expectedVersion }, data: data.published
         ? { published: true, publicTokenHash: this.publicationTokenHash(token!), publicSnapshot: snapshot as Prisma.InputJsonValue, publicPublishedAt: new Date(), publicExpiresAt: effectiveExpiresAt, publicRevokedAt: null, version: { increment: 1 } }
         : { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } }
@@ -770,6 +793,43 @@ export class OperationsService {
     if (!source) return requested;
     return requested <= source ? requested : source;
   }
+  private assertAnalyticsContract(source: z.infer<typeof analyticsSourceSchema>, filters: z.infer<typeof analyticsQuerySchema>, metric?: string): void {
+    if (metric && !analyticsMetrics[source].includes(metric)) throw new BadRequestException('A métrica selecionada não é permitida para esta fonte.');
+    if ((source === 'safety.open_events' || source === 'hht.latest_rates') && (filters.status || filters.stage)) throw new BadRequestException('Esta fonte aceita apenas o período ano/mês.');
+    if (source === 'changes.by_status' && filters.stage) throw new BadRequestException('Esta fonte não aceita etapa BASH.');
+    if (source === 'bash.by_stage' && filters.status) throw new BadRequestException('Esta fonte não aceita status de mudança.');
+  }
+  private assertDashboardAnalyticsWidgets(widgets: Array<z.infer<typeof dashboardWidgetSchema>>): void {
+    for (const widget of widgets) if (widget.type === 'ANALYTICS') this.assertAnalyticsContract(widget.config.source, widget.config.filters ?? {}, widget.config.metric);
+  }
+  private async analyticsSourceData(tx: TenantTransaction, source: z.infer<typeof analyticsSourceSchema>, filters: z.infer<typeof analyticsQuerySchema>): Promise<{ metrics: Record<string, number>; breakdown?: Array<{ key: string; total: number }>; period?: { year: number; month: number; companies: number } }> {
+    const period = filters.year === undefined ? undefined : { gte: new Date(Date.UTC(filters.year, filters.month! - 1, 1)), lt: new Date(Date.UTC(filters.year, filters.month!, 1)) };
+    if (source === 'safety.open_events') {
+      if (filters.status || filters.stage) throw new BadRequestException('Esta fonte aceita apenas o período ano/mês.');
+      const [open, inReview] = await Promise.all([tx.safetyEvent.count({ where: { status: 'OPEN', ...(period ? { occurredAt: period } : {}) } }), tx.safetyEvent.count({ where: { status: 'IN_REVIEW', ...(period ? { occurredAt: period } : {}) } })]);
+      return { metrics: { open, inReview, total: open + inReview } };
+    }
+    if (source === 'changes.by_status') {
+      if (filters.stage) throw new BadRequestException('Esta fonte não aceita etapa BASH.');
+      const rows = await tx.changeRequest.groupBy({ by: ['status'], where: { ...(filters.status ? { status: filters.status } : {}), ...(period ? { createdAt: period } : {}) }, _count: { _all: true } });
+      const breakdown = rows.map((row) => ({ key: row.status, total: row._count._all }));
+      return { metrics: { total: breakdown.reduce((total, row) => total + row.total, 0) }, breakdown };
+    }
+    if (source === 'bash.by_stage') {
+      if (filters.status) throw new BadRequestException('Esta fonte não aceita status de mudança.');
+      const rows = await tx.bashCard.groupBy({ by: ['stage'], where: { ...(filters.stage ? { stage: filters.stage as BashStage } : {}), ...(period ? { createdAt: period } : {}) }, _count: { _all: true } });
+      const breakdown = rows.map((row) => ({ key: row.stage, total: row._count._all }));
+      return { metrics: { total: breakdown.reduce((total, row) => total + row.total, 0) }, breakdown };
+    }
+    if (filters.status || filters.stage) throw new BadRequestException('Esta fonte aceita apenas o período ano/mês.');
+    const latest = filters.year === undefined
+      ? await tx.hhtReport.findFirst({ where: { status: { in: ['SUBMITTED', 'LOCKED'] } }, orderBy: [{ year: 'desc' }, { month: 'desc' }], select: { year: true, month: true } })
+      : { year: filters.year, month: filters.month! };
+    if (!latest) return { metrics: { trifr: 0, ltifr: 0, ltisr: 0, companies: 0 } };
+    const totals = await tx.hhtReport.aggregate({ where: { year: latest.year, month: latest.month, status: { in: ['SUBMITTED', 'LOCKED'] } }, _sum: { hhtWorked: true, lostDays: true, lti: true }, _count: { _all: true } });
+    const rates = calculateHhtRates({ hhtWorked: Number(totals._sum.hhtWorked ?? 0), lostDays: totals._sum.lostDays ?? 0, lti: totals._sum.lti ?? 0 });
+    return { metrics: { ...rates, companies: totals._count._all }, period: { year: latest.year, month: latest.month, companies: totals._count._all } };
+  }
   private assertPublicDashboardWidgets(value: unknown): void {
     if (!Array.isArray(value)) throw new BadRequestException('Os widgets do painel são inválidos para publicação.');
     for (const widget of value) {
@@ -781,13 +841,22 @@ export class OperationsService {
       throw new BadRequestException('O painel público aceita somente widgets TEXT, METRIC ou NOTICE com conteúdo estático.');
     }
   }
-  private publicDashboardSnapshot(dashboard: { title: string; description: string | null; widgets: unknown }): { title: string; description: string | null; widgets: Array<{ type: string; title: string; config: Record<string, string | number> }> } {
-    this.assertPublicDashboardWidgets(dashboard.widgets);
-    const widgets = (dashboard.widgets as Array<{ type: string; title: string; config: Record<string, unknown> }>).map((widget): { type: string; title: string; config: Record<string, string | number> } => {
+  private async publicDashboardSnapshot(tx: TenantTransaction, dashboard: { title: string; description: string | null; widgets: unknown }): Promise<{ title: string; description: string | null; widgets: Array<{ type: string; title: string; config: Record<string, string | number> }> }> {
+    const parsed = z.array(dashboardWidgetSchema).max(24).safeParse(dashboard.widgets);
+    if (!parsed.success) throw new BadRequestException('Os widgets do painel são inválidos para publicação.');
+    const widgets = await Promise.all(parsed.data.map(async (widget): Promise<{ type: string; title: string; config: Record<string, string | number> }> => {
+      if (widget.type === 'ANALYTICS') {
+        this.assertAnalyticsContract(widget.config.source, widget.config.filters ?? {}, widget.config.metric);
+        const data = await this.analyticsSourceData(tx, widget.config.source, widget.config.filters ?? {});
+        const value = data.metrics[widget.config.metric];
+        if (value === undefined) throw new BadRequestException('A métrica selecionada não é permitida para esta fonte.');
+        return { type: 'METRIC', title: widget.title, config: { value, label: widget.config.source } };
+      }
+      this.assertPublicDashboardWidgets([widget]);
       if (widget.type === 'TEXT') return { type: widget.type, title: widget.title, config: { content: String(widget.config.content) } };
       if (widget.type === 'METRIC') { const config: Record<string, string | number> = { value: widget.config.value as string | number }; if (typeof widget.config.label === 'string') config.label = widget.config.label; return { type: widget.type, title: widget.title, config }; }
-      const config: Record<string, string | number> = { message: String(widget.config.message) }; if (typeof widget.config.tone === 'string' && ['INFO', 'SUCCESS', 'WARNING'].includes(widget.config.tone)) config.tone = widget.config.tone; return { type: widget.type, title: widget.title, config };
-    });
+      const config: Record<string, string |number> = { message: String(widget.config.message) }; if (typeof widget.config.tone === 'string' && ['INFO', 'SUCCESS', 'WARNING'].includes(widget.config.tone)) config.tone = widget.config.tone; return { type: widget.type, title: widget.title, config };
+    }));
     return { title: dashboard.title, description: dashboard.description, widgets };
   }
 
@@ -795,7 +864,13 @@ export class OperationsService {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('A tela não possui um snapshot público válido. Republique-a antes de criar a playlist.');
     const snapshot = value as { title?: unknown; description?: unknown; widgets?: unknown };
     if (typeof snapshot.title !== 'string' || (snapshot.description !== null && typeof snapshot.description !== 'string')) throw new BadRequestException('A tela não possui um snapshot público válido. Republique-a antes de criar a playlist.');
-    return this.publicDashboardSnapshot({ title: snapshot.title, description: snapshot.description ?? null, widgets: snapshot.widgets });
+    this.assertPublicDashboardWidgets(snapshot.widgets);
+    const widgets = (snapshot.widgets as Array<{ type: string; title: string; config: Record<string, unknown> }>).map((widget): { type: string; title: string; config: Record<string, string | number> } => {
+      if (widget.type === 'TEXT') return { type: widget.type, title: widget.title, config: { content: String(widget.config.content) } };
+      if (widget.type === 'METRIC') { const config: Record<string, string | number> = { value: widget.config.value as string | number }; if (typeof widget.config.label === 'string') config.label = widget.config.label; return { type: widget.type, title: widget.title, config }; }
+      const config: Record<string, string | number> = { message: String(widget.config.message) }; if (typeof widget.config.tone === 'string') config.tone = widget.config.tone; return { type: widget.type, title: widget.title, config };
+    });
+    return { title: snapshot.title, description: snapshot.description ?? null, widgets };
   }
 
   private playlistDisplayIds(items: unknown): string[] {
