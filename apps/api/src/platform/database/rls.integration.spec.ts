@@ -158,7 +158,8 @@ describeIntegration('PostgreSQL row-level security', () => {
     await bootstrap.query("INSERT INTO \"outbox_events\" (id, organization_id, aggregate_id, event_type, payload) VALUES ($1, $2, $3, 'event.tested', '{}')", [eventId, tenantA, aggregateId]);
     const claimed = await worker.query<{ id: string; organization_id: string }>('SELECT * FROM app.claim_outbox_events($1, $2)', [5, 30]);
     expect(claimed.rows).toEqual([expect.objectContaining({ id: eventId, organization_id: tenantA })]);
-    expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2) AS marked', [eventId, 5])).rows).toEqual([{ marked: true }]);
+    expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2, $3, $4) AS marked', [eventId, 5, 8, 'temporary provider failure'])).rows).toEqual([{ marked: true }]);
+    expect((await bootstrap.query<{ status: string; last_error: string }>('SELECT status::text, last_error FROM "outbox_events" WHERE id = $1', [eventId])).rows).toEqual([{ status: 'FAILED', last_error: 'temporary provider failure' }]);
     await bootstrap.query('UPDATE "outbox_events" SET available_at = NOW() - INTERVAL \'1 second\' WHERE id = $1', [eventId]);
     expect((await worker.query<{ id: string }>('SELECT * FROM app.claim_outbox_events($1, $2)', [5, 30])).rows).toEqual([expect.objectContaining({ id: eventId })]);
     expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_published($1::uuid) AS marked', [eventId])).rows).toEqual([{ marked: true }]);
@@ -174,6 +175,17 @@ describeIntegration('PostgreSQL row-level security', () => {
     );
     expect(permissions.rows).toEqual([{ worker: true, runtime: false }]);
     await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
+  });
+
+  it('moves exhausted outbox work to a dead letter and permits explicit re-drive', async () => {
+    const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a83';
+    const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a84';
+    await bootstrap.query("INSERT INTO \"outbox_events\" (id, organization_id, aggregate_id, event_type, payload) VALUES ($1, $2, $3, 'event.dead_letter_tested', '{}')", [eventId, tenantA, aggregateId]);
+    expect((await worker.query<{ id: string }>('SELECT * FROM app.claim_outbox_events($1, $2)', [5, 30])).rows).toEqual([expect.objectContaining({ id: eventId })]);
+    expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2, $3, $4) AS marked', [eventId, 5, 1, 'permanent provider failure'])).rows).toEqual([{ marked: true }]);
+    expect((await bootstrap.query<{ status: string }>('SELECT status::text FROM "outbox_events" WHERE id = $1', [eventId])).rows).toEqual([{ status: 'DEAD_LETTER' }]);
+    expect((await worker.query<{ redriven: boolean }>('SELECT app.redrive_dead_letter_outbox_event($1::uuid) AS redriven', [eventId])).rows).toEqual([{ redriven: true }]);
+    expect((await bootstrap.query<{ status: string }>('SELECT status::text FROM "outbox_events" WHERE id = $1', [eventId])).rows).toEqual([{ status: 'PENDING' }]);
   });
 
   it('uses narrowly scoped identity procedures without granting table access', async () => {

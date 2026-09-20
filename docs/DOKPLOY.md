@@ -60,4 +60,4 @@ Cada release executa `db-bootstrap` (idempotente) e `migrate` antes da API. Migr
 
 - Redpanda é o broker Kafka-compatível para a primeira instalação. Para produção de maior criticidade, trocar por Kafka gerenciado exige TLS/SASL, ACL, retenção, re-drive de DLQ e observabilidade de lag antes do corte.
 - Redis está conectado e compõe a readiness da API. O login usa contadores distribuídos por IP e e-mail; cache de domínio permanece futuro.
-- O worker publica a outbox transacional em `builder.domain-events.v1`, aplica retry exponencial com lease e registra recibo idempotente por consumer. Antes de ligar um provedor externo, inclua seu consumer, métrica de atraso e política de DLQ/re-drive.
+- O worker publica a outbox transacional em `builder.domain-events.v1`, aplica retry exponencial com lease, persiste o último erro, move falhas esgotadas para `DEAD_LETTER` e registra recibo idempotente por consumer. O re-drive exige procedimento operacional autenticado; antes de ligar um provedor externo, inclua seu consumer e métrica de atraso.

@@ -10,7 +10,8 @@ const workerEnvironmentSchema = z.object({
   KAFKA_GROUP_ID: z.string().min(3).max(120),
   OUTBOX_DISPATCH_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(2_000),
   OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
-  OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(900).default(60)
+  OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(900).default(60),
+  OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(8)
 }).transform((value) => ({
   ...value,
   brokers: value.KAFKA_BROKERS.split(',').map((item) => brokerSchema.parse(item.trim()))

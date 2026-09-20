@@ -51,7 +51,9 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
       await this.database.query<{ marked: boolean }>('SELECT app.mark_outbox_published($1::uuid) AS marked', [event.id]);
     } catch (error) {
       const delay = retryDelaySeconds(event.attempt_count);
-      await this.database.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2) AS marked', [event.id, delay]);
+      const config = getWorkerRuntimeConfig();
+      const message = error instanceof Error ? error.message : 'unknown worker error';
+      await this.database.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2, $3, $4) AS marked', [event.id, delay, config.OUTBOX_MAX_ATTEMPTS, message]);
       throw error;
     }
   }

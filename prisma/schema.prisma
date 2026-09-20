@@ -29,6 +29,7 @@ enum OutboxStatus {
   PROCESSING
   PUBLISHED
   FAILED
+  DEAD_LETTER
 }
 
 enum FormStatus {
@@ -247,6 +248,7 @@ model OutboxEvent {
   availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(6)
   leasedUntil    DateTime?    @map("leased_until") @db.Timestamptz(6)
   publishedAt    DateTime?    @map("published_at") @db.Timestamptz(6)
+  lastError      String?      @map("last_error") @db.Text
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
