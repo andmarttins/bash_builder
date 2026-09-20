@@ -1,7 +1,7 @@
 import { Building2, ClipboardList, FileText, LayoutDashboard, LogOut, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-type DashboardView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization';
+type DashboardView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization' | 'profile';
 
 type DashboardShellProps = {
   children: ReactNode;
@@ -31,7 +31,7 @@ export function DashboardShell({ children, collapsed, identity, onLogout, onNavi
       </div>
       <nav className="sidebar-nav">{menuGroups.map((group) => <section className="sidebar-group" key={group.label} aria-label={group.label}><p>{group.label}</p>{group.items.map((item) => { const Icon = item.icon; return <button className="sidebar-item" data-active={view === item.view || undefined} key={item.view} type="button" aria-current={view === item.view ? 'page' : undefined} title={collapsed ? item.label : undefined} onClick={() => onNavigate(item.view)}><Icon aria-hidden="true" /><span>{item.label}</span></button>; })}</section>)}</nav>
       <div className="sidebar-account">
-        <button className="account-summary" type="button" title={collapsed ? 'Perfil e organização' : undefined} onClick={() => onNavigate('organization')}><span className="account-avatar">{initials}</span><span className="account-copy"><strong>{identity.user.email}</strong><small>{identity.organization.name}</small></span><Menu className="account-menu-icon" aria-hidden="true" /></button>
+        <button className="account-summary" type="button" title={collapsed ? 'Abrir perfil' : undefined} onClick={() => onNavigate('profile')}><span className="account-avatar">{initials}</span><span className="account-copy"><strong>{identity.user.email}</strong><small>{identity.organization.name}</small></span><Menu className="account-menu-icon" aria-hidden="true" /></button>
         <button className="account-overview" type="button" onClick={() => onNavigate('home')}><LayoutDashboard aria-hidden="true" /><span>Visão geral</span></button>
         <button className="account-logout" type="button" onClick={onLogout} disabled={pending}><LogOut aria-hidden="true" /><span>Sair</span></button>
       </div>

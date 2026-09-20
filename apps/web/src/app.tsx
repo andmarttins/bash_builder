@@ -5,7 +5,7 @@ import { DashboardShell } from './dashboard-shell.js';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
-type WorkspaceView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization';
+type WorkspaceView = 'home' | 'forms' | 'events' | 'changes' | 'bash' | 'hht' | 'dashboards' | 'tv' | 'integrations' | 'classifications' | 'files' | 'organization' | 'profile';
 type Organization = { id: string; name: string; slug: string; membership: { id: string; role: string } };
 type Member = { id: string; userId: string; email: string; role: string; status: string; createdAt: string };
 type Invitation = { id: string; email: string; role: string; expiresAt: string; createdAt: string };
@@ -36,6 +36,7 @@ export function App(): React.JSX.Element {
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('home');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [profileNotice, setProfileNotice] = useState<string | null>(null);
   const [forms, setForms] = useState<FormSummary[]>([]);
   const [selectedForm, setSelectedForm] = useState<FormSummary | null>(null);
   const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
@@ -100,6 +101,18 @@ export function App(): React.JSX.Element {
   }
   async function logout(): Promise<void> {
     setPending(true); try { await api('/v1/auth/logout', { method: 'POST' }); setIdentity(null); setMode('login'); } finally { setPending(false); }
+  }
+  async function changeOwnPassword(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    setPending(true); setError(null); setProfileNotice(null);
+    try {
+      const result = await api<{ identity: Identity }>('/v1/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword: values.get('currentPassword'), newPassword: values.get('newPassword') }) });
+      setIdentity(result.identity);
+      event.currentTarget.reset();
+      setProfileNotice('Senha atualizada. As demais sessões desta conta foram encerradas.');
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a senha.'); }
+    finally { setPending(false); }
   }
   async function switchOrganization(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); const values = new FormData(event.currentTarget);
@@ -268,7 +281,7 @@ export function App(): React.JSX.Element {
       <p className="eyebrow">Workspace</p><h1 id="dashboard-title">Visão geral da empresa</h1><p className="description">Olá, {identity.organization.name}. Acompanhe a organização ativa e avance pela configuração dos módulos empresariais.</p>
       <section className="overview-grid" aria-label="Resumo da empresa"><article className="overview-card"><Building2 aria-hidden="true" /><span>Organização ativa</span><strong>{identity.organization.name}</strong><small>{identity.organization.slug}</small></article><article className="overview-card"><UsersRound aria-hidden="true" /><span>Seu acesso</span><strong>{identity.membership.role}</strong><small>{identity.access.isPlatformAdmin ? 'Administrador da plataforma' : 'Membro da organização'}</small></article><article className="overview-card"><ClipboardList aria-hidden="true" /><span>Próxima etapa</span><strong>Configurar módulos</strong><small>Formulários já estão disponíveis; os demais entram por entregas isoladas.</small></article></section>
       <section className="admin-section" aria-labelledby="start-title"><h2 id="start-title">Comece por aqui</h2><p className="section-note">Crie e publique formulários, ou gerencie membros, convites e outras organizações.</p><button className="primary-button compact" type="button" onClick={() => setWorkspaceView('forms')}><FileText aria-hidden="true" /> Abrir formulários</button></section>
-    </> : workspaceView === 'forms' ? <>
+    </> : workspaceView === 'profile' ? <ProfilePage identity={identity} notice={profileNotice} pending={pending} onChangePassword={changeOwnPassword} /> : workspaceView === 'forms' ? <>
       <p className="eyebrow">Módulo empresarial</p><h1 id="dashboard-title">Formulários</h1><p className="description">Crie formulários isolados por empresa. Cada criação recebe um campo inicial obrigatório, que pode ser configurado pela API nesta primeira entrega.</p>
       {error && <p className="form-error" role="alert">{error}</p>}
       {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <form className="inline-form admin-section" onSubmit={createForm}><label>Título<input name="title" required minLength={2} maxLength={160} placeholder="Inspeção de segurança" /></label><label>Descrição<input name="description" maxLength={10000} placeholder="Opcional" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar formulário</button></form>}
@@ -313,6 +326,17 @@ export function App(): React.JSX.Element {
   </section></main>;
 }
 
+function ProfilePage({ identity, notice, pending, onChangePassword }: { identity: Identity; notice: string | null; pending: boolean; onChangePassword: (event: FormEvent<HTMLFormElement>) => Promise<void> }): React.JSX.Element {
+  return <><p className="eyebrow">Sua conta</p><h1 id="dashboard-title">Perfil e segurança</h1><p className="description">Consulte o contexto de acesso ativo e mantenha sua credencial protegida.</p>
+    <section className="profile-grid" aria-label="Informações do perfil">
+      <article className="overview-card"><UsersRound aria-hidden="true" /><span>Conta conectada</span><strong>{identity.user.email}</strong><small>Identidade protegida por sessão segura.</small></article>
+      <article className="overview-card"><Building2 aria-hidden="true" /><span>Organização ativa</span><strong>{identity.organization.name}</strong><small>{identity.organization.slug} · {identity.membership.role}</small></article>
+      <article className="overview-card"><ShieldCheck aria-hidden="true" /><span>Permissões</span><strong>{identity.access.isPlatformAdmin ? 'Administrador da plataforma' : 'Membro da organização'}</strong><small>O acesso é validado no servidor em cada ação.</small></article>
+    </section>
+    <section className="admin-section profile-security" aria-labelledby="profile-password-title"><h2 id="profile-password-title">Alterar senha</h2><p className="section-note">Use uma senha exclusiva, com pelo menos 12 caracteres. A alteração encerra as demais sessões abertas nesta conta.</p>{notice && <p className="profile-notice" role="status">{notice}</p>}<form className="inline-form" onSubmit={(event) => void onChangePassword(event)}><label>Senha atual<input name="currentPassword" type="password" autoComplete="current-password" minLength={12} maxLength={128} required /></label><label>Nova senha<input name="newPassword" type="password" autoComplete="new-password" minLength={12} maxLength={128} required placeholder="Mínimo de 12 caracteres" /></label><button className="primary-button compact" type="submit" disabled={pending}>{pending ? 'Atualizando…' : 'Atualizar senha'}</button></form></section>
+  </>;
+}
+
 function PublicFormPage({ publicId }: { publicId: string }): React.JSX.Element {
   const [form, setForm] = useState<PublicForm | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -349,7 +373,7 @@ function PublicFormPage({ publicId }: { publicId: string }): React.JSX.Element {
   return <main className="shell"><section className="panel" aria-labelledby="public-form-title"><div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div><p className="eyebrow">Formulário</p><h1 id="public-form-title">{form.title}</h1>{form.description && <p className="description">{form.description}</p>}{error && <p className="form-error" role="alert">{error}</p>}<form className="auth-form" onSubmit={submit}>{form.fields.map((field) => <label key={field.key}>{field.label}{field.type === 'LONG_TEXT' ? <textarea name={field.key} required={field.required} maxLength={10000} /> : field.type === 'SELECT' ? <select name={field.key} required={field.required} defaultValue=""><option value="" disabled>Selecione</option>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'MULTI_SELECT' ? <select name={field.key} required={field.required} multiple>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'CHECKBOX' ? <input name={field.key} type="checkbox" required={field.required} /> : <input name={field.key} type={field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text'} required={field.required} />}</label>)}<button className="primary-button" type="submit" disabled={pending}>{pending ? 'Enviando…' : 'Enviar resposta'}</button></form></section></main>;
 }
 
-type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'tv' | 'organization'>;
+type OperationalView = Exclude<WorkspaceView, 'home' | 'forms' | 'tv' | 'organization' | 'profile'>;
 
 const operationalPages: Record<OperationalView, { title: string; description: string; endpoint: string; property: string; createPath: string; manageLabel: string }> = {
   events: { title: 'Eventos de segurança', description: 'Registre, classifique e acompanhe eventos e suas ações corretivas.', endpoint: '/v1/events', property: 'events', createPath: '/v1/events', manageLabel: 'Novo evento' },
