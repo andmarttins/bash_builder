@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import { CapabilityGuard } from '../identity/capability.guard.js';
 import { RequiredCapabilities } from '../identity/required-capabilities.decorator.js';
 import { SessionContextGuard, type AuthenticatedRequest } from '../identity/session-context.guard.js';
@@ -53,6 +54,15 @@ export class FormsController {
   @UseGuards(CapabilityGuard)
   @RequiredCapabilities('forms.submissions.view')
   public listSubmissions(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Query() query: unknown) { return this.forms.listSubmissions(request.identity, formId, query); }
+
+  @Get(':formId/submissions/export')
+  @UseGuards(CapabilityGuard)
+  @RequiredCapabilities('forms.submissions.export')
+  public async exportSubmissions(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Query() query: unknown, @Res({ passthrough: true }) response: FastifyReply) {
+    const exported = await this.forms.exportSubmissions(request.identity, formId, query);
+    response.header('content-type', exported.contentType).header('content-disposition', `attachment; filename="${exported.filename}"`).header('cache-control', 'no-store');
+    return exported.csv;
+  }
 
   @Patch(':formId/submissions/:submissionId')
   @UseGuards(CapabilityGuard)

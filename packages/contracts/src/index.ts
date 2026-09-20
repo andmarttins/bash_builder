@@ -23,7 +23,7 @@ export type MembershipStatus = z.infer<typeof membershipStatusSchema>;
 
 export const capabilities = [
   'workspace.view', 'organization.manage',
-  'forms.view', 'forms.manage', 'forms.submissions.view', 'forms.submissions.manage',
+  'forms.view', 'forms.manage', 'forms.submissions.view', 'forms.submissions.manage', 'forms.submissions.export',
   'events.view', 'events.manage', 'changes.view', 'changes.manage', 'changes.approve',
   'notifications.view',
   'bash.view', 'bash.manage', 'hht.view', 'hht.manage',

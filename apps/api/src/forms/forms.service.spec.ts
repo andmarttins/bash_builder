@@ -160,4 +160,23 @@ describe('FormsService', () => {
     expect(tx.formSubmission.updateMany).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
+
+  it('exports only tenant-scoped filtered submissions as escaped CSV and records the audit trail', async () => {
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, title: 'Inspeção diária' }) }, formSubmission: { findMany: vi.fn().mockResolvedValue([{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'RECEIVED', submittedAt: new Date('2026-09-20T00:00:00.000Z'), answers: { note: '"ok"' } }]) }, auditLog: { create: vi.fn() } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new FormsService(tenants as never, new FormValidationService(), {} as never, cursors);
+    const exported = await service.exportSubmissions(identity, formId, { status: 'RECEIVED' });
+    expect(exported).toMatchObject({ filename: 'inspecao-diaria-respostas.csv', count: 1 });
+    expect(exported.csv).toContain('""note""');
+    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { formId, status: 'RECEIVED' }, take: 10001 }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submissions.exported' }) }));
+  });
+
+  it('refuses an oversized export before writing an audit record', async () => {
+    const row = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'RECEIVED', submittedAt: new Date(), answers: {} };
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, title: 'Teste' }) }, formSubmission: { findMany: vi.fn().mockResolvedValue(Array.from({ length: 10_001 }, () => row)) }, auditLog: { create: vi.fn() } };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+    await expect(service.exportSubmissions(identity, formId, {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
 });

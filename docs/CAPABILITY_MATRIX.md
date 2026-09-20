@@ -12,6 +12,7 @@ alteração e em toda leitura que exponha dados operacionais.
 | `forms.manage` | ✓ | ✓ | — | — | criar, editar campos, publicar, arquivar |
 | `forms.submissions.view` | ✓ | ✓ | ✓ | — | respostas e tratativas |
 | `forms.submissions.manage` | ✓ | ✓ | — | — | alterar estado de resposta |
+| `forms.submissions.export` | ✓ | ✓ | — | — | exportação CSV auditável |
 | `events.*`, `changes.*`, `bash.*`, `hht.*`, `dashboards.*`, `tv.*` | ✓ | ✓ | view | view | mesma convenção: `manage` não é concedido a MEMBER/VIEWER |
 | `integrations.*`, `operations.*` | ✓ | ✓ | — | — | conexões, webhooks e operação |
 

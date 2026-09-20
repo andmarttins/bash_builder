@@ -18,7 +18,7 @@ const owner = {
 describe('FormsController authorization', () => {
   let app: NestFastifyApplication;
   const identity = { session: vi.fn() };
-  const forms = { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), replaceFields: vi.fn(), setStatus: vi.fn(), publish: vi.fn(), revokePublication: vi.fn(), listSubmissions: vi.fn(), updateSubmissionStatus: vi.fn() };
+  const forms = { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), replaceFields: vi.fn(), setStatus: vi.fn(), publish: vi.fn(), revokePublication: vi.fn(), listSubmissions: vi.fn(), exportSubmissions: vi.fn(), updateSubmissionStatus: vi.fn() };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -82,5 +82,18 @@ describe('FormsController authorization', () => {
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json()).toEqual({ submission: { id: submissionId, status: 'IN_REVIEW' } });
     expect(forms.updateSubmissionStatus).toHaveBeenLastCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', submissionId, { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' });
+  });
+
+  it('permits CSV export only to roles with the dedicated export capability', async () => {
+    const url = '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/export?status=RECEIVED';
+    identity.session.mockResolvedValue({ ...owner, membership: { ...owner.membership, role: 'MEMBER' } });
+    expect((await app.inject({ method: 'GET', url, cookies: { [sessionCookieName]: 'opaque' } })).statusCode).toBe(403);
+    identity.session.mockResolvedValue(owner); forms.exportSubmissions.mockResolvedValue({ filename: 'answers.csv', contentType: 'text/csv; charset=utf-8', csv: 'id', count: 0 });
+    const allowed = await app.inject({ method: 'GET', url, cookies: { [sessionCookieName]: 'opaque' } });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.headers['content-type']).toContain('text/csv');
+    expect(allowed.headers['content-disposition']).toContain('attachment; filename="answers.csv"');
+    expect(allowed.body).toBe('id');
+    expect(forms.exportSubmissions).toHaveBeenLastCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', { status: 'RECEIVED' });
   });
 });

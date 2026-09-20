@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { FormStatus, FormSubmissionStatus, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
@@ -193,6 +193,23 @@ export class FormsService {
     });
   }
 
+  public async exportSubmissions(identity: SessionIdentity, formId: string, input: unknown): Promise<{ filename: string; contentType: string; csv: string; count: number }> {
+    const id = this.id(formId); const filters = this.parse(submissionListSchema, input);
+    if (filters.cursor !== undefined) throw new BadRequestException('A exportação não aceita cursor.');
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      const form = await tx.form.findFirst({ where: { id }, select: { id: true, title: true } });
+      if (!form) throw new NotFoundException('Formulário não encontrado.');
+      const where: Prisma.FormSubmissionWhereInput = { formId: id, ...(filters.status === undefined ? {} : { status: filters.status }), ...(filters.from === undefined && filters.to === undefined ? {} : { submittedAt: { ...(filters.from === undefined ? {} : { gte: filters.from }), ...(filters.to === undefined ? {} : { lte: filters.to }) } }) };
+      const rows = await tx.formSubmission.findMany({ where, select: { id: true, status: true, submittedAt: true, answers: true }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: 10_001 });
+      if (rows.length > 10_000) throw new BadRequestException('A exportação excede 10.000 respostas. Restrinja o período ou o status.');
+      const escape = (value: unknown) => { const cell = String(value ?? ''); return `"${(/^[=+\-@]/.test(cell) ? `'${cell}` : cell).replaceAll('"', '""')}"`; };
+      const csv = `\ufeffid,status,enviado_em,respostas_json\n${rows.map((row) => [row.id, row.status, row.submittedAt.toISOString(), JSON.stringify(row.answers)].map(escape).join(',')).join('\n')}\n`;
+      if (Buffer.byteLength(csv, 'utf8') > 10 * 1024 * 1024) throw new PayloadTooLargeException('A exportação excede 10 MiB. Restrinja o período ou o status.');
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submissions.exported', resourceType: 'form', resourceId: id, metadata: { count: rows.length, status: filters.status ?? null, from: filters.from?.toISOString() ?? null, to: filters.to?.toISOString() ?? null } } });
+      return { filename: `${this.exportFilename(form.title)}-respostas.csv`, contentType: 'text/csv; charset=utf-8', csv, count: rows.length };
+    });
+  }
+
   public async publicDefinition(publicIdInput: string): Promise<FormRecord> {
     const publicId = this.publicId(publicIdInput);
     return this.withPublicForm(publicId, async (tx) => {
@@ -246,6 +263,8 @@ export class FormsService {
   private stringOptions(value: unknown): string[] {
     return Array.isArray(value) && value.every((option) => typeof option === 'string') ? value : [];
   }
+
+  private exportFilename(title: string): string { return (title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'formulario').slice(0, 80); }
 
   private publicSnapshot(value: unknown): { title: string; description: string | null; version: number; fields: Array<FormFieldInput & { position: number }> } {
     const parsed = z.object({ title: z.string(), description: z.string().nullable(), version: z.number().int().positive(), fields: z.array(z.object({ key: z.string(), label: z.string(), type: z.enum(formFieldTypes), required: z.boolean(), options: z.array(z.string()), position: z.number().int().nonnegative() })) }).safeParse(value);
