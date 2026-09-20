@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { FormsService } from './forms.service.js';
 import { FormValidationService } from './form-validation.service.js';
@@ -32,5 +32,42 @@ describe('FormsService', () => {
 
     await expect(service.submitPublic(publicId, { title: 'Resposta' })).resolves.toEqual({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', submittedAt: '2026-09-20T00:00:00.000Z' });
     expect(tx.formSubmission.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ formVersion: 7, formSnapshot: expect.objectContaining({ title: 'Inspeção', version: 7 }) }) }));
+  });
+
+  it('refuses the legacy status endpoint for publication so revoked links cannot be restored', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new FormsService(tenants as never, new FormValidationService(), {} as never);
+
+    await expect(service.setStatus(identity, formId, { status: 'PUBLISHED', expectedVersion: 2 })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('requires at least one field before publishing', async () => {
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, fields: [] }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new FormsService(tenants as never, new FormValidationService(), {} as never);
+
+    await expect(service.publish(identity, formId, { expectedVersion: 2 })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.form.findFirst).toHaveBeenCalledOnce();
+  });
+
+  it('rotates the opaque public link and clears revocation when publishing a form again', async () => {
+    const rotatedPublicId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17';
+    const published = { id: formId, publicId: rotatedPublicId, title: 'Inspeção', description: null, status: 'PUBLISHED', version: 3, fields: [{ key: 'title', label: 'Título', type: 'SHORT_TEXT', required: true, options: [], position: 0 }] };
+    const tx = {
+      form: {
+        findFirst: vi.fn().mockResolvedValueOnce({ id: formId, fields: [{ id: 'field-id' }] }).mockResolvedValueOnce(published),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const uuid = vi.spyOn(crypto, 'randomUUID').mockReturnValue(rotatedPublicId);
+    const service = new FormsService(tenants as never, new FormValidationService(), {} as never);
+
+    await expect(service.publish(identity, formId, { expectedVersion: 2 })).resolves.toEqual(published);
+    expect(tx.form.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: formId, version: 2 }, data: expect.objectContaining({ status: 'PUBLISHED', publicId: rotatedPublicId, publicRevokedAt: null }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form.published' }) }));
+    uuid.mockRestore();
   });
 });

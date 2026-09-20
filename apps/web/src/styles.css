@@ -48,6 +48,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .form-row-button:hover:not(:disabled) { border-color: #38bdf8; background: #12203a; }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: .45rem; }
 .action-row { display: flex; gap: .75rem; margin: .8rem 0; }
+.field-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
 .admin-section { display: grid; gap: .85rem; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155; }
 .admin-section h2 { margin: 0; color: #e2e8f0; font-size: 1.05rem; }
 .inline-form { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; }
@@ -62,4 +63,4 @@ select { width: 100%; border: 1px solid #475569; border-radius: .65rem; padding:
 .invitation-link code { color: #e0f2fe; }
 .invitation-list { display: grid; gap: .45rem; }
 .invitation-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .6rem; border: 1px solid #334155; border-radius: .65rem; color: #cbd5e1; font-size: .86rem; }
-@media (max-width: 42rem) { .overview-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: auto 1fr; } .form-row code { grid-column: 1 / -1; } .member-row { grid-template-columns: 1fr 1fr; } .member-row span { grid-column: 1 / -1; } .member-row button { width: 100%; } }
+@media (max-width: 42rem) { .overview-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: auto 1fr; } .form-row code, .field-actions { grid-column: 1 / -1; } .field-actions { justify-content: flex-start; } .member-row { grid-template-columns: 1fr 1fr; } .member-row span { grid-column: 1 / -1; } .member-row button { width: 100%; } }

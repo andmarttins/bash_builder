@@ -18,7 +18,7 @@ const owner = {
 describe('FormsController authorization', () => {
   let app: NestFastifyApplication;
   const identity = { session: vi.fn() };
-  const forms = { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), replaceFields: vi.fn(), setStatus: vi.fn(), listSubmissions: vi.fn(), updateSubmissionStatus: vi.fn() };
+  const forms = { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), replaceFields: vi.fn(), setStatus: vi.fn(), publish: vi.fn(), revokePublication: vi.fn(), listSubmissions: vi.fn(), updateSubmissionStatus: vi.fn() };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -47,13 +47,14 @@ describe('FormsController authorization', () => {
     expect(forms.create).not.toHaveBeenCalled();
   });
 
-  it('permits a form owner to create and publish', async () => {
+  it('permits a form owner to create and publish only through the publication endpoint', async () => {
     identity.session.mockResolvedValue(owner);
     forms.create.mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14' });
-    forms.setStatus.mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', status: 'PUBLISHED' });
+    forms.publish.mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', status: 'PUBLISHED' });
     const created = await app.inject({ method: 'POST', url: '/v1/forms', cookies: { [sessionCookieName]: 'opaque' }, payload: { title: 'Inspeção' } });
     expect(created.statusCode).toBe(201);
-    const published = await app.inject({ method: 'POST', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', cookies: { [sessionCookieName]: 'opaque' }, payload: { status: 'PUBLISHED', expectedVersion: 1 } });
+    const published = await app.inject({ method: 'POST', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publication', cookies: { [sessionCookieName]: 'opaque' }, payload: { expectedVersion: 1 } });
     expect(published.statusCode).toBe(201);
+    expect(forms.publish).toHaveBeenCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', { expectedVersion: 1 });
   });
 });

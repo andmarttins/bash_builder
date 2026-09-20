@@ -93,8 +93,8 @@ export class FormsService {
   public async setStatus(identity: SessionIdentity, formId: string, input: unknown): Promise<FormRecord> {
     const id = this.id(formId);
     const { status, expectedVersion } = this.parse(statusSchema, input);
+    if (status === 'PUBLISHED') throw new BadRequestException('Use a publicação para gerar um novo link público.');
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
-      if (status === 'PUBLISHED') throw new BadRequestException('Use a publicação para gerar um novo link público.');
       const existing = await tx.form.findFirst({ where: { id }, select: { id: true, fields: { select: { id: true } } } });
       if (!existing) throw new NotFoundException('Formulário não encontrado.');
       await this.claimVersion(tx, id, expectedVersion, { status });
