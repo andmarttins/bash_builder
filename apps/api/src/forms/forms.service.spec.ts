@@ -190,6 +190,17 @@ describe('FormsService', () => {
     expect(tx.formSubmission.findMany.mock.calls[0]![0].where.submittedAt.lte).toBeInstanceOf(Date);
   });
 
+  it('preserves a bounded period and serializes commas, CRLF and formulas as one JSON cell', async () => {
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, title: 'Teste' }) }, formSubmission: { findMany: vi.fn().mockResolvedValue([{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'RECEIVED', submittedAt: new Date('2026-09-20T00:00:00.000Z'), answers: { note: 'one,two\r\n=SUM(1,1)' } }]) }, auditLog: { create: vi.fn() } };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+    const exported = await service.exportSubmissions(identity, formId, { from: '2025-01-01T00:00:00.000Z', to: '2025-12-31T00:00:00.000Z' });
+    const period = tx.formSubmission.findMany.mock.calls[0]![0].where.submittedAt as { gte: Date; lte: Date };
+    expect(period.gte.toISOString()).toBe('2025-01-01T00:00:00.000Z');
+    expect(period.lte.toISOString()).toBe('2025-12-31T00:00:00.000Z');
+    expect(exported.csv).toContain('one,two\\r\\n=SUM(1,1)');
+    expect(exported.csv.split('\n')).toHaveLength(3);
+  });
+
   it('stops before retaining a CSV line that would exceed the byte limit', async () => {
     const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, title: 'Teste' }) }, formSubmission: { findMany: vi.fn().mockResolvedValue([{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'RECEIVED', submittedAt: new Date(), answers: { note: 'x'.repeat(10 * 1024 * 1024) } }]) }, auditLog: { create: vi.fn() } };
     const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
