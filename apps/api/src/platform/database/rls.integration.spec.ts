@@ -207,6 +207,9 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect((await worker.query<{ recorded: boolean }>(query, [eventId, tenantA, 'domain-projection-v1', 'event.projected', aggregateId, '{}', '2026-09-20T00:00:00.000Z'])).rows).toEqual([{ recorded: true }]);
     expect((await worker.query<{ recorded: boolean }>(query, [eventId, tenantA, 'domain-projection-v1', 'event.projected', aggregateId, '{}', '2026-09-20T00:00:00.000Z'])).rows).toEqual([{ recorded: false }]);
     expect((await bootstrap.query<{ organization_id: string; event_id: string }>('SELECT organization_id, event_id FROM "domain_event_projections" WHERE event_id = $1', [eventId])).rows).toEqual([{ organization_id: tenantA, event_id: eventId }]);
+    const permissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.record_domain_event_projection(uuid,uuid,character varying,character varying,uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.record_domain_event_projection(uuid,uuid,character varying,character varying,uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS runtime");
+    expect(permissions.rows).toEqual([{ worker: true, runtime: false }]);
+    await expect(runtime.query(query, [eventId, tenantA, 'domain-projection-v1', 'event.projected', aggregateId, '{}', '2026-09-20T00:00:00.000Z'])).rejects.toThrow(/permission denied/i);
     await expect(runtime.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied/i);
     await expect(worker.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied/i);
   });
