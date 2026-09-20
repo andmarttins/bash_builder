@@ -203,8 +203,14 @@ export class FormsService {
       const rows = await tx.formSubmission.findMany({ where, select: { id: true, status: true, submittedAt: true, answers: true }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: 10_001 });
       if (rows.length > 10_000) throw new BadRequestException('A exportação excede 10.000 respostas. Restrinja o período ou o status.');
       const escape = (value: unknown) => { const cell = String(value ?? ''); return `"${(/^[=+\-@]/.test(cell) ? `'${cell}` : cell).replaceAll('"', '""')}"`; };
-      const csv = `\ufeffid,status,enviado_em,respostas_json\n${rows.map((row) => [row.id, row.status, row.submittedAt.toISOString(), JSON.stringify(row.answers)].map(escape).join(',')).join('\n')}\n`;
-      if (Buffer.byteLength(csv, 'utf8') > 10 * 1024 * 1024) throw new PayloadTooLargeException('A exportação excede 10 MiB. Restrinja o período ou o status.');
+      const header = '\ufeffid,status,enviado_em,respostas_json\n'; const lines: string[] = []; let bytes = Buffer.byteLength(header, 'utf8');
+      for (const row of rows) {
+        const line = `${[row.id, row.status, row.submittedAt.toISOString(), JSON.stringify(row.answers)].map(escape).join(',')}\n`;
+        const lineBytes = Buffer.byteLength(line, 'utf8');
+        if (bytes + lineBytes > 10 * 1024 * 1024) throw new PayloadTooLargeException('A exportação excede 10 MiB. Restrinja o período ou o status.');
+        lines.push(line); bytes += lineBytes;
+      }
+      const csv = header + lines.join('');
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submissions.exported', resourceType: 'form', resourceId: id, metadata: { count: rows.length, status: filters.status ?? null, from: filters.from?.toISOString() ?? null, to: filters.to?.toISOString() ?? null } } });
       return { filename: `${this.exportFilename(form.title)}-respostas.csv`, contentType: 'text/csv; charset=utf-8', csv, count: rows.length };
     });
