@@ -35,7 +35,8 @@ Cadastre os valores de `.env.example` na interface Environment do serviço Compo
 
 - `BOOTSTRAP_DATABASE_URL`: URL interna de administrador do PostgreSQL, direcionada ao banco `builder`. É montada somente no `db-bootstrap`, que termina após criar/atualizar os papéis limitados.
 - `MIGRATOR_DATABASE_URL`: URL interna de `app_migrator`. Ela é usada somente por `migrate` e possui `CREATE` de schema para aplicar migrations.
-- `DATABASE_URL`: URL interna de `app_runtime`. Ela é usada apenas por API e worker, sem propriedade das tabelas e sem `BYPASSRLS`.
+- `DATABASE_URL`: URL interna de `app_runtime`, usada somente pela API e limitada por RLS ao tenant da sessão.
+- `WORKER_DATABASE_URL`: URL interna de `app_worker`, usada somente pelo worker. Esta role não é proprietária, não tem `BYPASSRLS` e só pode acessar a fila por procedimentos armazenados; não reutilize `DATABASE_URL`.
 - `REDIS_URL`: URL interna **autenticada** (`redis://` ou `rediss://`) do `builder-redis`, usada pela API. Nunca aponte para um endpoint público. A configuração da API rejeita URL sem senha ou com protocolo diferente.
 - `BOOTSTRAP_TOKEN`: segredo aleatório de ao menos 32 caracteres, obrigatório em produção. Ele é enviado uma única vez, no formulário de primeira configuração, e impede que o primeiro visitante público assuma a conta OWNER. Cadastre-o como secret; não use URL, senha de banco ou token reaproveitado.
 
@@ -59,4 +60,4 @@ Cada release executa `db-bootstrap` (idempotente) e `migrate` antes da API. Migr
 
 - Redpanda é o broker Kafka-compatível para a primeira instalação. Para produção de maior criticidade, trocar por Kafka gerenciado exige TLS/SASL, ACL, retenção, re-drive de DLQ e observabilidade de lag antes do corte.
 - Redis está conectado e compõe a readiness da API. O login usa contadores distribuídos por IP e e-mail; cache de domínio permanece futuro.
-- O worker consome o tópico `builder.domain-events.v1`, mas o dispatcher/outbox será entregue junto ao primeiro módulo que emita efeitos assíncronos.
+- O worker publica a outbox transacional em `builder.domain-events.v1`, aplica retry exponencial com lease e registra recibo idempotente por consumer. Antes de ligar um provedor externo, inclua seu consumer, métrica de atraso e política de DLQ/re-drive.

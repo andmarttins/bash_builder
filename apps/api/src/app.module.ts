@@ -18,9 +18,11 @@ import { FormsController, PublicFormsController } from './forms/forms.controller
 import { FormsService } from './forms/forms.service.js';
 import { FormValidationService } from './forms/form-validation.service.js';
 import { PublicFormAccessService } from './platform/public-access/public-form-access.service.js';
+import { OperationsController } from './operations/operations.controller.js';
+import { OperationsService } from './operations/operations.service.js';
 
 @Module({
-  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController],
+  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController],
   providers: [
     PrismaService,
     RedisService,
@@ -35,7 +37,8 @@ import { PublicFormAccessService } from './platform/public-access/public-form-ac
     OrganizationAccessService,
     FormValidationService,
     FormsService,
-    PublicFormAccessService
+    PublicFormAccessService,
+    OperationsService
   ]
 })
 export class AppModule {}

@@ -54,6 +54,59 @@ enum FormSubmissionStatus {
   REJECTED
 }
 
+enum SafetyEventStatus {
+  DRAFT
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+enum ChangeStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  IMPLEMENTING
+  COMPLETED
+  REJECTED
+}
+
+enum BashStage {
+  BACKLOG
+  DESIGN
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum HhtReportStatus {
+  DRAFT
+  SUBMITTED
+  LOCKED
+}
+
+enum IntegrationType {
+  WEBHOOK
+  EMAIL
+  SMARTSHEET
+  WHATSAPP
+  OBJECT_STORAGE
+  AI
+}
+
+enum IntegrationStatus {
+  DISABLED
+  ACTIVE
+  ERROR
+}
+
+enum FileAssetStatus {
+  PENDING
+  READY
+  QUARANTINED
+  REJECTED
+}
+
 model Organization {
   id          String             @id @default(uuid()) @db.Uuid
   slug        String             @unique @db.VarChar(63)
@@ -68,6 +121,21 @@ model Organization {
   forms       Form[]
   formFields  FormField[]
   formSubmissions FormSubmission[]
+  classificationItems ClassificationItem[]
+  safetyEvents SafetyEvent[]
+  safetyEventActions SafetyEventAction[]
+  changes ChangeRequest[]
+  changeRisks ChangeRisk[]
+  bashCards BashCard[]
+  bashComments BashComment[]
+  hhtCompanies HhtCompany[]
+  hhtReports HhtReport[]
+  hhtWindows HhtReportWindow[]
+  dashboards Dashboard[]
+  tvDisplays TvDisplay[]
+  tvPlaylists TvPlaylist[]
+  integrations Integration[]
+  fileAssets FileAsset[]
 
   @@map("organizations")
 }
@@ -242,4 +310,294 @@ model FormSubmission {
 
   @@index([organizationId, formId, submittedAt(sort: Desc)])
   @@map("form_submissions")
+}
+
+model ClassificationItem {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  category       String       @db.VarChar(80)
+  label          String       @db.VarChar(160)
+  value          String       @db.VarChar(120)
+  active         Boolean      @default(true)
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, category, value])
+  @@index([organizationId, category, active, position])
+  @@map("classification_items")
+}
+
+model SafetyEvent {
+  id                 String            @id @default(uuid()) @db.Uuid
+  organizationId     String            @map("organization_id") @db.Uuid
+  code               String            @db.VarChar(32)
+  title              String            @db.VarChar(200)
+  description        String?           @db.Text
+  occurredAt         DateTime          @map("occurred_at") @db.Timestamptz(6)
+  site               String?           @db.VarChar(160)
+  area               String?           @db.VarChar(160)
+  origin             String            @db.VarChar(80)
+  status             SafetyEventStatus @default(DRAFT)
+  actualClass        String?           @map("actual_class") @db.VarChar(120)
+  potentialClass     String?           @map("potential_class") @db.VarChar(120)
+  reporterName       String?           @map("reporter_name") @db.VarChar(160)
+  reporterEmail      String?           @map("reporter_email") @db.VarChar(320)
+  createdById        String?           @map("created_by_id") @db.Uuid
+  version            Int               @default(1)
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actions            SafetyEventAction[]
+
+  @@unique([organizationId, code])
+  @@unique([id, organizationId])
+  @@index([organizationId, status, occurredAt(sort: Desc)])
+  @@map("safety_events")
+}
+
+model SafetyEventAction {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  eventId        String       @map("event_id") @db.Uuid
+  title          String       @db.VarChar(200)
+  owner          String?      @db.VarChar(160)
+  dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
+  completedAt    DateTime?    @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  event          SafetyEvent  @relation(fields: [eventId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId, eventId, dueAt])
+  @@map("safety_event_actions")
+}
+
+model ChangeRequest {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  publicCode     String       @map("public_code") @db.VarChar(32)
+  title          String       @db.VarChar(200)
+  description    String?      @db.Text
+  status         ChangeStatus @default(DRAFT)
+  currentStep    Int          @default(1) @map("current_step")
+  requestedBy    String?      @map("requested_by") @db.VarChar(160)
+  owner          String?      @db.VarChar(160)
+  dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  risks          ChangeRisk[]
+
+  @@unique([organizationId, publicCode])
+  @@unique([id, organizationId])
+  @@index([organizationId, status, updatedAt(sort: Desc)])
+  @@map("change_requests")
+}
+
+model ChangeRisk {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  changeId       String        @map("change_id") @db.Uuid
+  hazard         String        @db.VarChar(300)
+  consequence    String?       @db.Text
+  probability    Int           @default(1)
+  severity       Int           @default(1)
+  controls       String?       @db.Text
+  owner          String?       @db.VarChar(160)
+  dueAt          DateTime?     @map("due_at") @db.Timestamptz(6)
+  position       Int           @default(0)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  change         ChangeRequest @relation(fields: [changeId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId, changeId, position])
+  @@map("change_risks")
+}
+
+model BashCard {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  title          String       @db.VarChar(200)
+  description    String       @default("") @db.Text
+  client         String?      @db.VarChar(160)
+  criticality    String       @default("LOW") @db.VarChar(32)
+  stage          BashStage    @default(BACKLOG)
+  position       Decimal      @default(0) @db.Decimal(18, 6)
+  dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
+  assignedTo     String?      @map("assigned_to") @db.VarChar(160)
+  createdById    String?      @map("created_by_id") @db.Uuid
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  comments       BashComment[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, stage, position])
+  @@map("bash_cards")
+}
+
+model BashComment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  cardId         String       @map("card_id") @db.Uuid
+  authorId       String?      @map("author_id") @db.Uuid
+  authorName     String?      @map("author_name") @db.VarChar(160)
+  content        String       @db.Text
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  card           BashCard     @relation(fields: [cardId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@index([organizationId, cardId, createdAt])
+  @@map("bash_comments")
+}
+
+model HhtCompany {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  name           String       @db.VarChar(200)
+  document       String?      @db.VarChar(32)
+  site           String       @db.VarChar(120)
+  coordination   String?      @db.VarChar(160)
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  reports        HhtReport[]
+
+  @@unique([organizationId, name, site])
+  @@unique([id, organizationId])
+  @@index([organizationId, active, name])
+  @@map("hht_companies")
+}
+
+model HhtReport {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  companyId      String          @map("company_id") @db.Uuid
+  year           Int
+  month          Int
+  hhtWorked      Decimal         @default(0) @map("hht_worked") @db.Decimal(18, 2)
+  hhtMeal        Decimal         @default(0) @map("hht_meal") @db.Decimal(18, 2)
+  workforce      Int             @default(0)
+  lostDays       Int             @default(0) @map("lost_days")
+  lti            Int             @default(0)
+  status         HhtReportStatus @default(DRAFT)
+  submittedAt    DateTime?       @map("submitted_at") @db.Timestamptz(6)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  company        HhtCompany      @relation(fields: [companyId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([companyId, year, month])
+  @@index([organizationId, year, month])
+  @@map("hht_reports")
+}
+
+model HhtReportWindow {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  year           Int
+  month          Int
+  opensAt        DateTime     @map("opens_at") @db.Timestamptz(6)
+  closesAt       DateTime     @map("closes_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, year, month])
+  @@map("hht_report_windows")
+}
+
+model Dashboard {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  publicId       String       @unique @default(uuid()) @map("public_id") @db.Uuid
+  title          String       @db.VarChar(160)
+  description    String?      @db.Text
+  widgets        Json         @default("[]")
+  published      Boolean      @default(false)
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  displays       TvDisplay[]
+
+  @@unique([id, organizationId])
+  @@index([organizationId, published, updatedAt(sort: Desc)])
+  @@map("dashboards")
+}
+
+model TvDisplay {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  dashboardId    String       @map("dashboard_id") @db.Uuid
+  name           String       @db.VarChar(160)
+  publicId       String       @unique @default(uuid()) @map("public_id") @db.Uuid
+  refreshSeconds Int          @default(30) @map("refresh_seconds")
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  dashboard      Dashboard    @relation(fields: [dashboardId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([id, organizationId])
+  @@index([organizationId, active])
+  @@map("tv_displays")
+}
+
+model TvPlaylist {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  name           String       @db.VarChar(160)
+  publicId       String       @unique @default(uuid()) @map("public_id") @db.Uuid
+  active         Boolean      @default(true)
+  intervalSeconds Int         @default(30) @map("interval_seconds")
+  items          Json         @default("[]")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, active])
+  @@map("tv_playlists")
+}
+
+model Integration {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  name           String            @db.VarChar(160)
+  type           IntegrationType
+  status         IntegrationStatus @default(DISABLED)
+  config         Json              @default("{}")
+  lastTestedAt   DateTime?         @map("last_tested_at") @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, name])
+  @@index([organizationId, type, status])
+  @@map("integrations")
+}
+
+model FileAsset {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  storageKey     String          @map("storage_key") @db.VarChar(512)
+  originalName   String          @map("original_name") @db.VarChar(255)
+  contentType    String          @map("content_type") @db.VarChar(160)
+  byteSize       Int             @map("byte_size")
+  checksum       String?         @db.VarChar(128)
+  status         FileAssetStatus @default(PENDING)
+  createdById    String?         @map("created_by_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, storageKey])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@map("file_assets")
 }

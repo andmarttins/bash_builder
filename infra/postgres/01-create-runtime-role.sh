@@ -3,13 +3,15 @@ set -eu
 
 : "${APP_MIGRATOR_DB_PASSWORD:?APP_MIGRATOR_DB_PASSWORD is required}"
 : "${APP_RUNTIME_DB_PASSWORD:?APP_RUNTIME_DB_PASSWORD is required}"
+: "${APP_WORKER_DB_PASSWORD:?APP_WORKER_DB_PASSWORD is required}"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
 
 if [ -n "${BOOTSTRAP_DATABASE_URL:-}" ]; then
   psql "$BOOTSTRAP_DATABASE_URL" --set=ON_ERROR_STOP=1 \
     --set=db_name="$POSTGRES_DB" \
     --set=migrator_password="$APP_MIGRATOR_DB_PASSWORD" \
-    --set=runtime_password="$APP_RUNTIME_DB_PASSWORD" <<'SQL'
+    --set=runtime_password="$APP_RUNTIME_DB_PASSWORD" \
+    --set=worker_password="$APP_WORKER_DB_PASSWORD" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_migrator') THEN
@@ -18,17 +20,23 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_runtime') THEN
     CREATE ROLE app_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_worker') THEN
+    CREATE ROLE app_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  END IF;
 END
 $$;
 ALTER ROLE app_migrator PASSWORD :'migrator_password';
 ALTER ROLE app_runtime PASSWORD :'runtime_password';
+ALTER ROLE app_worker PASSWORD :'worker_password';
 REVOKE ALL ON DATABASE :"db_name" FROM PUBLIC;
 GRANT CONNECT, CREATE, TEMPORARY ON DATABASE :"db_name" TO app_migrator;
 GRANT CONNECT, TEMPORARY ON DATABASE :"db_name" TO app_runtime;
+GRANT CONNECT, TEMPORARY ON DATABASE :"db_name" TO app_worker;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION app_migrator;
 GRANT USAGE, CREATE ON SCHEMA public TO app_migrator;
 GRANT USAGE ON SCHEMA public TO app_runtime;
-CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION app_migrator;
+GRANT USAGE ON SCHEMA app TO app_worker;
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 SQL
@@ -44,7 +52,8 @@ psql --set=ON_ERROR_STOP=1 \
   --dbname "$POSTGRES_DB" \
   --set=db_name="$POSTGRES_DB" \
   --set=migrator_password="$APP_MIGRATOR_DB_PASSWORD" \
-  --set=runtime_password="$APP_RUNTIME_DB_PASSWORD" <<'SQL'
+  --set=runtime_password="$APP_RUNTIME_DB_PASSWORD" \
+  --set=worker_password="$APP_WORKER_DB_PASSWORD" <<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_migrator') THEN
@@ -53,17 +62,23 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_runtime') THEN
     CREATE ROLE app_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_worker') THEN
+    CREATE ROLE app_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  END IF;
 END
 $$;
 ALTER ROLE app_migrator PASSWORD :'migrator_password';
 ALTER ROLE app_runtime PASSWORD :'runtime_password';
+ALTER ROLE app_worker PASSWORD :'worker_password';
 REVOKE ALL ON DATABASE :"db_name" FROM PUBLIC;
 GRANT CONNECT, CREATE, TEMPORARY ON DATABASE :"db_name" TO app_migrator;
 GRANT CONNECT, TEMPORARY ON DATABASE :"db_name" TO app_runtime;
+GRANT CONNECT, TEMPORARY ON DATABASE :"db_name" TO app_worker;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION app_migrator;
 GRANT USAGE, CREATE ON SCHEMA public TO app_migrator;
 GRANT USAGE ON SCHEMA public TO app_runtime;
-CREATE SCHEMA IF NOT EXISTS app AUTHORIZATION app_migrator;
+GRANT USAGE ON SCHEMA app TO app_worker;
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 SQL

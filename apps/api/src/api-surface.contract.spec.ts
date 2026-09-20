@@ -15,6 +15,8 @@ import { OrganizationAccessService } from './organizations/organization-access.s
 import { OrganizationInvitationController } from './organizations/organization-invitation.controller.js';
 import { FormsController, PublicFormsController } from './forms/forms.controller.js';
 import { FormsService } from './forms/forms.service.js';
+import { OperationsController } from './operations/operations.controller.js';
+import { OperationsService } from './operations/operations.service.js';
 
 const identity = {
   user: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'owner@example.com' },
@@ -57,6 +59,38 @@ const internalRoutes: RouteContract[] = [
   { method: 'PATCH', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15', payload: {}, expectedStatus: 200 },
   { method: 'GET', url: '/v1/public/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', expectedStatus: 200 },
   { method: 'POST', url: '/v1/public/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/classifications', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/classifications', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/events', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/events', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/events/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/actions', payload: {}, expectedStatus: 201 }
+  ,{ method: 'PATCH', url: '/v1/events/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/actions/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15/complete', payload: {}, expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/events/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/changes', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/changes', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/risks', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/bash/cards', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/bash/cards', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/bash/cards/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/comments', payload: {}, expectedStatus: 201 }
+  ,{ method: 'PATCH', url: '/v1/bash/cards/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/move', payload: {}, expectedStatus: 200 }
+  ,{ method: 'GET', url: '/v1/hht', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/hht/companies', payload: {}, expectedStatus: 201 }
+  ,{ method: 'PUT', url: '/v1/hht/reports', payload: {}, expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/hht/reports/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', payload: {}, expectedStatus: 201 }
+  ,{ method: 'PUT', url: '/v1/hht/windows', payload: {}, expectedStatus: 200 }
+  ,{ method: 'GET', url: '/v1/dashboards', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/dashboards', payload: {}, expectedStatus: 201 }
+  ,{ method: 'PATCH', url: '/v1/dashboards/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/dashboards/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publish', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/tv', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/tv/displays', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/tv/playlists', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/integrations', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/integrations', payload: {}, expectedStatus: 201 }
+  ,{ method: 'PATCH', url: '/v1/integrations/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 }
+  ,{ method: 'GET', url: '/v1/files', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/files/intents', payload: {}, expectedStatus: 201 }
 ];
 
 describe('internal API surface contract', () => {
@@ -88,12 +122,19 @@ describe('internal API surface contract', () => {
       replaceFields: vi.fn().mockResolvedValue({}), setStatus: vi.fn().mockResolvedValue({}), listSubmissions: vi.fn().mockResolvedValue([]), updateSubmissionStatus: vi.fn().mockResolvedValue({}),
       publicDefinition: vi.fn().mockResolvedValue({}), submitPublic: vi.fn().mockResolvedValue({})
     };
+    const operations = {
+      listClassifications: vi.fn().mockResolvedValue([]), createClassification: vi.fn().mockResolvedValue({}), listEvents: vi.fn().mockResolvedValue([]), createEvent: vi.fn().mockResolvedValue({}), addEventAction: vi.fn().mockResolvedValue({}), completeEventAction: vi.fn().mockResolvedValue({}), transitionEvent: vi.fn().mockResolvedValue({}),
+      listChanges: vi.fn().mockResolvedValue([]), createChange: vi.fn().mockResolvedValue({}), addChangeRisk: vi.fn().mockResolvedValue({}), transitionChange: vi.fn().mockResolvedValue({}), listCards: vi.fn().mockResolvedValue([]), createCard: vi.fn().mockResolvedValue({}), addCardComment: vi.fn().mockResolvedValue({}), moveCard: vi.fn().mockResolvedValue({}),
+      listHht: vi.fn().mockResolvedValue({ companies: [], reports: [], windows: [] }), createHhtCompany: vi.fn().mockResolvedValue({}), upsertHhtReport: vi.fn().mockResolvedValue({}), setHhtReportStatus: vi.fn().mockResolvedValue({}), upsertHhtWindow: vi.fn().mockResolvedValue({}),
+      listDashboards: vi.fn().mockResolvedValue([]), createDashboard: vi.fn().mockResolvedValue({}), updateDashboard: vi.fn().mockResolvedValue({}), publishDashboard: vi.fn().mockResolvedValue({}), listTv: vi.fn().mockResolvedValue({ displays: [], playlists: [] }), createTvDisplay: vi.fn().mockResolvedValue({}), createTvPlaylist: vi.fn().mockResolvedValue({}), listIntegrations: vi.fn().mockResolvedValue([]), createIntegration: vi.fn().mockResolvedValue({}), updateIntegration: vi.fn().mockResolvedValue({}), listFiles: vi.fn().mockResolvedValue([]), createFileIntent: vi.fn().mockResolvedValue({})
+    };
     const module = await Test.createTestingModule({
-      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController],
+      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController],
       providers: [
         { provide: IdentityService, useValue: identityService },
         { provide: OrganizationAccessService, useValue: organizations },
         { provide: FormsService, useValue: forms },
+        { provide: OperationsService, useValue: operations },
         { provide: PrismaService, useValue: { $queryRaw: vi.fn().mockResolvedValue([{ ok: 1 }]) } },
         { provide: RedisService, useValue: { ping: vi.fn().mockResolvedValue('PONG') } },
         { provide: SessionContextGuard, useValue: { canActivate: () => true } },

@@ -4,14 +4,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const migratorUrl = process.env.TEST_DATABASE_URL;
 const runtimeUrl = process.env.TEST_RUNTIME_DATABASE_URL;
+const workerUrl = process.env.TEST_WORKER_DATABASE_URL;
 const bootstrapUrl = process.env.TEST_BOOTSTRAP_DATABASE_URL;
-const describeIntegration = migratorUrl && runtimeUrl && bootstrapUrl ? describe : describe.skip;
+const describeIntegration = migratorUrl && runtimeUrl && workerUrl && bootstrapUrl ? describe : describe.skip;
 
 describeIntegration('PostgreSQL row-level security', () => {
   const tenantA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
   const tenantB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12';
   const bootstrap = new Client({ connectionString: bootstrapUrl });
   const runtime = new Client({ connectionString: runtimeUrl });
+  const worker = new Client({ connectionString: workerUrl });
 
   beforeAll(async () => {
     await bootstrap.connect();
@@ -30,6 +32,22 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect(requiredExtensions.rows).toEqual([{ extname: 'citext' }, { extname: 'pgcrypto' }]);
     await bootstrap.query('DELETE FROM "auth_sessions"');
     await bootstrap.query('DELETE FROM "organization_invitations"');
+    await bootstrap.query('DELETE FROM "safety_event_actions"');
+    await bootstrap.query('DELETE FROM "safety_events"');
+    await bootstrap.query('DELETE FROM "change_risks"');
+    await bootstrap.query('DELETE FROM "change_requests"');
+    await bootstrap.query('DELETE FROM "bash_comments"');
+    await bootstrap.query('DELETE FROM "bash_cards"');
+    await bootstrap.query('DELETE FROM "hht_reports"');
+    await bootstrap.query('DELETE FROM "hht_companies"');
+    await bootstrap.query('DELETE FROM "hht_report_windows"');
+    await bootstrap.query('DELETE FROM "tv_displays"');
+    await bootstrap.query('DELETE FROM "tv_playlists"');
+    await bootstrap.query('DELETE FROM "worker_event_receipts"');
+    await bootstrap.query('DELETE FROM "classification_items"');
+    await bootstrap.query('DELETE FROM "dashboards"');
+    await bootstrap.query('DELETE FROM "integrations"');
+    await bootstrap.query('DELETE FROM "file_assets"');
     await bootstrap.query('DELETE FROM "form_submissions"');
     await bootstrap.query('DELETE FROM "form_fields"');
     await bootstrap.query('DELETE FROM "forms"');
@@ -41,10 +59,12 @@ describeIntegration('PostgreSQL row-level security', () => {
       [tenantA, 'tenant-a', 'Tenant A', tenantB, 'tenant-b', 'Tenant B']
     );
     await runtime.connect();
+    await worker.connect();
   }, 60_000);
 
   afterAll(async () => {
     await runtime.end();
+    await worker.end();
     await bootstrap.end();
   });
 
@@ -102,6 +122,50 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally {
       await runtime.query('ROLLBACK');
     }
+  });
+
+  it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
+    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists'];
+    const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
+      "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1::text[]) ORDER BY tablename",
+      [tableNames]
+    );
+    expect(policies.rows).toHaveLength(tableNames.length);
+    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => `${name}_tenant_isolation`).sort());
+    const rls = await bootstrap.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>(
+      "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY relname",
+      [tableNames]
+    );
+    expect(rls.rows).toHaveLength(tableNames.length);
+    expect(rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
+
+    const eventA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a71';
+    await bootstrap.query("INSERT INTO \"safety_events\" (id, organization_id, code, title, occurred_at, origin, updated_at) VALUES ($1, $2, 'EV-A', 'Event A', NOW(), 'TEST', NOW())", [eventA, tenantA]);
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "safety_events"')).rows).toEqual([{ id: eventA }]);
+      await expect(runtime.query("INSERT INTO \"safety_event_actions\" (organization_id, event_id, title, updated_at) VALUES ($1, $2, 'forbidden', NOW())", [tenantB, eventA])).rejects.toThrow(/row-level security|foreign key/i);
+      await expect(runtime.query("INSERT INTO \"classification_items\" (organization_id, category, label, value, updated_at) VALUES ($1, 'event_type', 'cross', 'cross', NOW())", [tenantB])).rejects.toThrow(/row-level security/i);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
+  });
+
+  it('claims, retries, publishes and de-duplicates outbox events through narrow worker procedures', async () => {
+    const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81';
+    const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';
+    await bootstrap.query("INSERT INTO \"outbox_events\" (id, organization_id, aggregate_id, event_type, payload) VALUES ($1, $2, $3, 'event.tested', '{}')", [eventId, tenantA, aggregateId]);
+    const claimed = await worker.query<{ id: string; organization_id: string }>('SELECT * FROM app.claim_outbox_events($1, $2)', [5, 30]);
+    expect(claimed.rows).toEqual([expect.objectContaining({ id: eventId, organization_id: tenantA })]);
+    expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2) AS marked', [eventId, 5])).rows).toEqual([{ marked: true }]);
+    await bootstrap.query('UPDATE "outbox_events" SET available_at = NOW() - INTERVAL \'1 second\' WHERE id = $1', [eventId]);
+    expect((await worker.query<{ id: string }>('SELECT * FROM app.claim_outbox_events($1, $2)', [5, 30])).rows).toEqual([expect.objectContaining({ id: eventId })]);
+    expect((await worker.query<{ marked: boolean }>('SELECT app.mark_outbox_published($1::uuid) AS marked', [eventId])).rows).toEqual([{ marked: true }]);
+    expect((await worker.query<{ claimed: boolean }>('SELECT app.claim_worker_event_receipt($1::uuid, $2::uuid, $3, $4) AS claimed', [eventId, tenantA, 'test-consumer', 30])).rows).toEqual([{ claimed: true }]);
+    expect((await worker.query<{ claimed: boolean }>('SELECT app.claim_worker_event_receipt($1::uuid, $2::uuid, $3, $4) AS claimed', [eventId, tenantA, 'test-consumer', 30])).rows).toEqual([{ claimed: false }]);
+    expect((await worker.query<{ completed: boolean }>('SELECT app.complete_worker_event_receipt($1::uuid, $2) AS completed', [eventId, 'test-consumer'])).rows).toEqual([{ completed: true }]);
+    expect((await worker.query<{ claimed: boolean }>('SELECT app.claim_worker_event_receipt($1::uuid, $2::uuid, $3, $4) AS claimed', [eventId, tenantA, 'test-consumer', 30])).rows).toEqual([{ claimed: false }]);
   });
 
   it('uses narrowly scoped identity procedures without granting table access', async () => {

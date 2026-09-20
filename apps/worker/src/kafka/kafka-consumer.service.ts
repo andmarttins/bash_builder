@@ -2,12 +2,15 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Kafka, Consumer } from 'kafkajs';
 import { outboxEventSchema } from '@builder/contracts';
 import { getWorkerRuntimeConfig } from '../config/runtime-config.js';
+import { WorkerDatabaseHealthService } from '../health/worker-database-health.service.js';
 
 @Injectable()
 export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(KafkaConsumerService.name);
   private consumer: Consumer | undefined;
   private ready = false;
+
+  public constructor(private readonly database: WorkerDatabaseHealthService) {}
 
   public async onModuleInit(): Promise<void> {
     const config = getWorkerRuntimeConfig();
@@ -20,8 +23,21 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
       eachMessage: async ({ message }) => {
         if (!message.value) return;
         const event = outboxEventSchema.parse(JSON.parse(message.value.toString()));
-        // Domain handlers will be registered here. Do not place provider calls in API requests.
-        this.logger.log(`Received ${event.eventType} (${event.eventId}) for tenant ${event.tenantId}`);
+        const consumerName = 'domain-projection-v1';
+        const firstDelivery = await this.database.claimReceipt(event.eventId, event.tenantId, consumerName, 60);
+        if (!firstDelivery) {
+          this.logger.debug(`Duplicate ${event.eventId} ignored.`);
+          return;
+        }
+        try {
+          // Provider effects are registered as explicit consumers. A receipt is
+          // completed only after the handler succeeds, so failed work can retry.
+          this.logger.log(`Received ${event.eventType} (${event.eventId}) for tenant ${event.tenantId}`);
+          await this.database.completeReceipt(event.eventId, consumerName);
+        } catch (error) {
+          await this.database.failReceipt(event.eventId, consumerName);
+          throw error;
+        }
       }
     });
     this.ready = true;

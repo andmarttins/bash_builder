@@ -1,0 +1,388 @@
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ChangeStatus, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus } from '@prisma/client';
+import { z } from 'zod';
+import type { SessionIdentity } from '../identity/identity.service.js';
+import { TenantTransactionService, type TenantTransaction } from '../platform/tenant/tenant-transaction.service.js';
+
+const uuid = z.uuid();
+const text = (minimum: number, maximum: number) => z.string().trim().min(minimum).max(maximum);
+const optionalText = (maximum: number) => z.string().trim().max(maximum).optional().nullable();
+const expectedVersion = z.number().int().positive();
+const eventStatuses = ['DRAFT', 'OPEN', 'IN_REVIEW', 'RESOLVED', 'CLOSED'] as const;
+const changeStatuses = ['DRAFT', 'IN_REVIEW', 'APPROVED', 'IMPLEMENTING', 'COMPLETED', 'REJECTED'] as const;
+const bashStages = ['BACKLOG', 'DESIGN', 'IN_PROGRESS', 'REVIEW', 'DONE'] as const;
+const integrationTypes = ['WEBHOOK', 'EMAIL', 'SMARTSHEET', 'WHATSAPP', 'OBJECT_STORAGE', 'AI'] as const;
+const integrationStatuses = ['DISABLED', 'ACTIVE', 'ERROR'] as const;
+
+const createClassificationSchema = z.object({ category: text(2, 80), label: text(2, 160), value: text(1, 120), position: z.number().int().nonnegative().optional() });
+const createEventSchema = z.object({
+  code: text(2, 32).regex(/^[A-Z0-9][A-Z0-9-]*$/i, 'Código do evento inválido.'), title: text(2, 200), description: optionalText(10_000), occurredAt: z.coerce.date(),
+  site: optionalText(160), area: optionalText(160), origin: text(2, 80), actualClass: optionalText(120), potentialClass: optionalText(120), reporterName: optionalText(160), reporterEmail: z.string().email().max(320).optional().nullable()
+});
+const eventActionSchema = z.object({ title: text(2, 200), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
+const eventTransitionSchema = z.object({ status: z.enum(eventStatuses), expectedVersion });
+const createChangeSchema = z.object({ publicCode: text(2, 32).regex(/^[A-Z0-9][A-Z0-9-]*$/i, 'Código da mudança inválido.'), title: text(2, 200), description: optionalText(10_000), requestedBy: optionalText(160), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
+const riskSchema = z.object({ hazard: text(2, 300), consequence: optionalText(10_000), probability: z.number().int().min(1).max(5), severity: z.number().int().min(1).max(5), controls: optionalText(10_000), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable(), position: z.number().int().nonnegative().optional() });
+const changeTransitionSchema = z.object({ status: z.enum(changeStatuses), expectedVersion });
+const createCardSchema = z.object({ title: text(2, 200), description: z.string().trim().max(10_000).optional(), client: optionalText(160), criticality: text(2, 32).optional(), assignedTo: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
+const commentSchema = z.object({ content: text(1, 10_000) });
+const moveCardSchema = z.object({ stage: z.enum(bashStages), position: z.number().finite().nonnegative(), expectedVersion });
+const createCompanySchema = z.object({ name: text(2, 200), document: optionalText(32), site: text(2, 120), coordination: optionalText(160) });
+const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative() });
+const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), });
+const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
+const dashboardSchema = z.object({ title: text(2, 160), description: optionalText(10_000), widgets: z.array(z.object({ type: text(2, 80), title: text(2, 160), config: z.record(z.string(), z.unknown()).default({}) })).max(24).default([]) });
+const dashboardUpdateSchema = dashboardSchema.partial().extend({ expectedVersion }).refine((input) => input.title !== undefined || input.description !== undefined || input.widgets !== undefined, 'Informe alguma alteração.');
+const dashboardPublishSchema = z.object({ published: z.boolean(), expectedVersion });
+const tvDisplaySchema = z.object({ name: text(2, 160), dashboardId: uuid, refreshSeconds: z.number().int().min(5).max(3600).optional() });
+const tvPlaylistSchema = z.object({ name: text(2, 160), intervalSeconds: z.number().int().min(5).max(3600).optional(), displayIds: z.array(uuid).min(1).max(30) });
+const integrationSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}) });
+const integrationUpdateSchema = integrationSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined, 'Informe alguma alteração.');
+const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: text(3, 160), byteSize: z.number().int().nonnegative().max(100 * 1024 * 1024), checksum: z.string().trim().min(16).max(128).optional() });
+
+type HhtRate = { trifr: number; ltifr: number; ltisr: number };
+
+export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; lti: number }): HhtRate {
+  if (input.hhtWorked <= 0) return { trifr: 0, ltifr: 0, ltisr: 0 };
+  return {
+    trifr: Number(((input.lti * 1_000_000) / input.hhtWorked).toFixed(4)),
+    ltifr: Number(((input.lti * 1_000_000) / input.hhtWorked).toFixed(4)),
+    ltisr: Number(((input.lostDays * 1_000_000) / input.hhtWorked).toFixed(4))
+  };
+}
+
+@Injectable()
+export class OperationsService {
+  public constructor(private readonly tenants: TenantTransactionService) {}
+
+  public listClassifications(identity: SessionIdentity, category?: string) {
+    return this.withTenant(identity, (tx) => tx.classificationItem.findMany({ where: category ? { category } : undefined, orderBy: [{ category: 'asc' }, { position: 'asc' }, { label: 'asc' }] }));
+  }
+
+  public createClassification(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(createClassificationSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const item = await tx.classificationItem.create({ data: { organizationId: identity.organization.id, ...data } });
+      await this.record(tx, identity, 'classification.created', 'classification', item.id, { category: item.category, value: item.value });
+      return item;
+    });
+  }
+
+  public listEvents(identity: SessionIdentity) {
+    return this.withTenant(identity, (tx) => tx.safetyEvent.findMany({ include: { actions: { orderBy: { dueAt: 'asc' } } }, orderBy: { occurredAt: 'desc' } }));
+  }
+
+  public createEvent(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(createEventSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const event = await tx.safetyEvent.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, ...data } });
+      await this.record(tx, identity, 'safety_event.created', 'safety_event', event.id, { code: event.code });
+      return event;
+    });
+  }
+
+  public addEventAction(identity: SessionIdentity, eventIdInput: string, input: unknown) {
+    const eventId = this.id(eventIdInput); const data = this.parse(eventActionSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      await this.eventExists(tx, eventId);
+      const action = await tx.safetyEventAction.create({ data: { organizationId: identity.organization.id, eventId, ...data } });
+      await this.record(tx, identity, 'safety_event.action_created', 'safety_event_action', action.id, { eventId });
+      return action;
+    });
+  }
+
+  public completeEventAction(identity: SessionIdentity, eventIdInput: string, actionIdInput: string) {
+    const eventId = this.id(eventIdInput); const actionId = this.id(actionIdInput);
+    return this.withTenant(identity, async (tx) => {
+      await this.eventExists(tx, eventId);
+      const changed = await tx.safetyEventAction.updateMany({ where: { id: actionId, eventId, completedAt: null }, data: { completedAt: new Date() } });
+      if (changed.count !== 1) throw new ConflictException('Ação não encontrada ou já concluída.');
+      const action = await tx.safetyEventAction.findFirstOrThrow({ where: { id: actionId } });
+      await this.record(tx, identity, 'safety_event.action_completed', 'safety_event_action', actionId, { eventId });
+      return action;
+    });
+  }
+
+  public transitionEvent(identity: SessionIdentity, eventIdInput: string, input: unknown) {
+    const eventId = this.id(eventIdInput); const data = this.parse(eventTransitionSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const current = await tx.safetyEvent.findFirst({ where: { id: eventId }, select: { id: true, status: true } });
+      if (!current) throw new NotFoundException('Evento não encontrado.');
+      if (!this.eventTransitionAllowed(current.status, data.status)) throw new BadRequestException('Transição de evento inválida.');
+      if (data.status === 'CLOSED') {
+        const incomplete = await tx.safetyEventAction.count({ where: { eventId, completedAt: null } });
+        if (incomplete > 0) throw new BadRequestException('Conclua todas as ações antes de fechar o evento.');
+      }
+      const result = await tx.safetyEvent.updateMany({ where: { id: eventId, version: data.expectedVersion }, data: { status: data.status, version: { increment: 1 } } });
+      if (result.count !== 1) throw new ConflictException('Este evento foi alterado por outra pessoa.');
+      const event = await tx.safetyEvent.findFirstOrThrow({ where: { id: eventId } });
+      await this.record(tx, identity, 'safety_event.status_changed', 'safety_event', eventId, { status: data.status, version: event.version });
+      return event;
+    });
+  }
+
+  public listChanges(identity: SessionIdentity) {
+    return this.withTenant(identity, (tx) => tx.changeRequest.findMany({ include: { risks: { orderBy: { position: 'asc' } } }, orderBy: { updatedAt: 'desc' } }));
+  }
+
+  public createChange(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(createChangeSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const change = await tx.changeRequest.create({ data: { organizationId: identity.organization.id, ...data } });
+      await this.record(tx, identity, 'change.created', 'change', change.id, { code: change.publicCode });
+      return change;
+    });
+  }
+
+  public addChangeRisk(identity: SessionIdentity, changeIdInput: string, input: unknown) {
+    const changeId = this.id(changeIdInput); const data = this.parse(riskSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      await this.changeExists(tx, changeId);
+      const risk = await tx.changeRisk.create({ data: { organizationId: identity.organization.id, changeId, ...data } });
+      await this.record(tx, identity, 'change.risk_created', 'change_risk', risk.id, { changeId, score: risk.probability * risk.severity });
+      return { ...risk, score: risk.probability * risk.severity };
+    });
+  }
+
+  public transitionChange(identity: SessionIdentity, changeIdInput: string, input: unknown) {
+    const changeId = this.id(changeIdInput); const data = this.parse(changeTransitionSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const current = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { id: true, status: true } });
+      if (!current) throw new NotFoundException('Mudança não encontrada.');
+      if (!this.changeTransitionAllowed(current.status, data.status)) throw new BadRequestException('Transição de mudança inválida.');
+      if (data.status === 'APPROVED' && await tx.changeRisk.count({ where: { changeId } }) === 0) throw new BadRequestException('Adicione ao menos um risco antes da aprovação.');
+      const step = data.status === 'IN_REVIEW' ? 2 : data.status === 'APPROVED' ? 3 : data.status === 'IMPLEMENTING' ? 4 : data.status === 'COMPLETED' ? 6 : 1;
+      const result = await tx.changeRequest.updateMany({ where: { id: changeId, version: data.expectedVersion }, data: { status: data.status, currentStep: step, version: { increment: 1 } } });
+      if (result.count !== 1) throw new ConflictException('Esta mudança foi alterada por outra pessoa.');
+      const change = await tx.changeRequest.findFirstOrThrow({ where: { id: changeId } });
+      await this.record(tx, identity, 'change.status_changed', 'change', changeId, { status: data.status, version: change.version });
+      return change;
+    });
+  }
+
+  public listCards(identity: SessionIdentity) {
+    return this.withTenant(identity, (tx) => tx.bashCard.findMany({ include: { comments: { orderBy: { createdAt: 'asc' } } }, orderBy: [{ stage: 'asc' }, { position: 'asc' }] }));
+  }
+
+  public createCard(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(createCardSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const last = await tx.bashCard.findFirst({ where: { stage: 'BACKLOG' }, select: { position: true }, orderBy: { position: 'desc' } });
+      const card = await tx.bashCard.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, position: (last?.position.toNumber() ?? 0) + 1, ...data } });
+      await this.record(tx, identity, 'bash_card.created', 'bash_card', card.id, { stage: card.stage });
+      return card;
+    });
+  }
+
+  public addCardComment(identity: SessionIdentity, cardIdInput: string, input: unknown) {
+    const cardId = this.id(cardIdInput); const data = this.parse(commentSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      await this.cardExists(tx, cardId);
+      const comment = await tx.bashComment.create({ data: { organizationId: identity.organization.id, cardId, authorId: identity.user.id, authorName: identity.user.email, ...data } });
+      await this.record(tx, identity, 'bash_card.comment_created', 'bash_comment', comment.id, { cardId });
+      return comment;
+    });
+  }
+
+  public moveCard(identity: SessionIdentity, cardIdInput: string, input: unknown) {
+    const cardId = this.id(cardIdInput); const data = this.parse(moveCardSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      await this.cardExists(tx, cardId);
+      const moved = await tx.bashCard.updateMany({ where: { id: cardId, version: data.expectedVersion }, data: { stage: data.stage, position: new Prisma.Decimal(data.position), version: { increment: 1 } } });
+      if (moved.count !== 1) throw new ConflictException('Este cartão foi alterado por outra pessoa.');
+      const card = await tx.bashCard.findFirstOrThrow({ where: { id: cardId } });
+      await this.record(tx, identity, 'bash_card.moved', 'bash_card', cardId, { stage: data.stage, position: data.position, version: card.version });
+      return card;
+    });
+  }
+
+  public listHht(identity: SessionIdentity) {
+    return this.withTenant(identity, async (tx) => {
+      const [companies, reports, windows] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] })]);
+      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows };
+    });
+  }
+
+  public createHhtCompany(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(createCompanySchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const company = await tx.hhtCompany.create({ data: { organizationId: identity.organization.id, ...data } });
+      await this.record(tx, identity, 'hht_company.created', 'hht_company', company.id, { site: company.site });
+      return company;
+    });
+  }
+
+  public upsertHhtReport(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(reportSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.hhtCompany.findFirst({ where: { id: data.companyId }, select: { id: true } })) throw new NotFoundException('Empresa HHT não encontrada.');
+      const window = await tx.hhtReportWindow.findFirst({ where: { year: data.year, month: data.month } });
+      const now = new Date();
+      if (!window || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
+      const existing = await tx.hhtReport.findFirst({ where: { companyId: data.companyId, year: data.year, month: data.month } });
+      if (existing?.status === 'LOCKED') throw new ConflictException('Este período HHT está bloqueado.');
+      const report = await tx.hhtReport.upsert({ where: { companyId_year_month: { companyId: data.companyId, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: data });
+      await this.record(tx, identity, existing ? 'hht_report.updated' : 'hht_report.created', 'hht_report', report.id, { year: report.year, month: report.month });
+      return { ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) };
+    });
+  }
+
+  public setHhtReportStatus(identity: SessionIdentity, reportIdInput: string, input: unknown) {
+    const reportId = this.id(reportIdInput); const data = this.parse(reportStatusSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const current = await tx.hhtReport.findFirst({ where: { id: reportId } });
+      if (!current) throw new NotFoundException('Relatório HHT não encontrado.');
+      if (current.status === 'LOCKED') throw new ConflictException('Este período HHT já está bloqueado.');
+      if (data.status === 'LOCKED' && current.status !== 'SUBMITTED') throw new BadRequestException('Envie o relatório antes de bloqueá-lo.');
+      const report = await tx.hhtReport.update({ where: { id: reportId }, data: { status: data.status as HhtReportStatus, submittedAt: data.status === 'SUBMITTED' ? new Date() : current.submittedAt } });
+      await this.record(tx, identity, 'hht_report.status_changed', 'hht_report', reportId, { status: data.status });
+      return report;
+    });
+  }
+
+  public upsertHhtWindow(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(windowSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const window = await tx.hhtReportWindow.upsert({ where: { organizationId_year_month: { organizationId: identity.organization.id, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: data });
+      await this.record(tx, identity, 'hht_window.upserted', 'hht_window', window.id, { year: window.year, month: window.month });
+      return window;
+    });
+  }
+
+  public listDashboards(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.dashboard.findMany({ orderBy: { updatedAt: 'desc' } })); }
+
+  public createDashboard(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(dashboardSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const dashboard = await tx.dashboard.create({ data: { organizationId: identity.organization.id, title: data.title, description: data.description, widgets: data.widgets as Prisma.InputJsonValue } });
+      await this.record(tx, identity, 'dashboard.created', 'dashboard', dashboard.id, {});
+      return dashboard;
+    });
+  }
+
+  public updateDashboard(identity: SessionIdentity, dashboardIdInput: string, input: unknown) {
+    const dashboardId = this.id(dashboardIdInput); const data = this.parse(dashboardUpdateSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true } })) throw new NotFoundException('Painel não encontrado.');
+      const { expectedVersion: version, ...change } = data;
+      const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version }, data: { ...this.dashboardData(change), version: { increment: 1 } } });
+      if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
+      const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId } });
+      await this.record(tx, identity, 'dashboard.updated', 'dashboard', dashboardId, { version: dashboard.version });
+      return dashboard;
+    });
+  }
+
+  public publishDashboard(identity: SessionIdentity, dashboardIdInput: string, input: unknown) {
+    const dashboardId = this.id(dashboardIdInput); const data = this.parse(dashboardPublishSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.dashboard.findFirst({ where: { id: dashboardId }, select: { id: true } })) throw new NotFoundException('Painel não encontrado.');
+      const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version: data.expectedVersion }, data: { published: data.published, version: { increment: 1 } } });
+      if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
+      const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId } });
+      await this.record(tx, identity, data.published ? 'dashboard.published' : 'dashboard.unpublished', 'dashboard', dashboardId, { version: dashboard.version });
+      return dashboard;
+    });
+  }
+
+  public listTv(identity: SessionIdentity) {
+    return this.withTenant(identity, async (tx) => ({
+      displays: await tx.tvDisplay.findMany({ include: { dashboard: { select: { title: true, published: true } } }, orderBy: { name: 'asc' } }),
+      playlists: await tx.tvPlaylist.findMany({ orderBy: { name: 'asc' } })
+    }));
+  }
+
+  public createTvDisplay(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(tvDisplaySchema, input);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.dashboard.findFirst({ where: { id: data.dashboardId, published: true }, select: { id: true } })) throw new BadRequestException('Publique o painel antes de disponibilizá-lo na TV.');
+      const display = await tx.tvDisplay.create({ data: { organizationId: identity.organization.id, ...data } });
+      await this.record(tx, identity, 'tv_display.created', 'tv_display', display.id, { dashboardId: display.dashboardId });
+      return display;
+    });
+  }
+
+  public createTvPlaylist(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(tvPlaylistSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const displays = await tx.tvDisplay.findMany({ where: { id: { in: data.displayIds }, active: true }, select: { id: true } });
+      if (displays.length !== data.displayIds.length) throw new BadRequestException('A playlist contém uma tela indisponível ou de outra organização.');
+      const playlist = await tx.tvPlaylist.create({ data: { organizationId: identity.organization.id, name: data.name, intervalSeconds: data.intervalSeconds ?? 30, items: data.displayIds.map((displayId, position) => ({ displayId, position })) as Prisma.InputJsonValue } });
+      await this.record(tx, identity, 'tv_playlist.created', 'tv_playlist', playlist.id, { displays: data.displayIds.length });
+      return playlist;
+    });
+  }
+
+  public listIntegrations(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.integration.findMany({ orderBy: { name: 'asc' } })); }
+
+  public createIntegration(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(integrationSchema, input); this.assertNonSecretConfig(data.config);
+    return this.withTenant(identity, async (tx) => {
+      const integration = await tx.integration.create({ data: { organizationId: identity.organization.id, name: data.name, type: data.type as IntegrationType, status: (data.status ?? 'DISABLED') as IntegrationStatus, config: data.config as Prisma.InputJsonValue } });
+      await this.record(tx, identity, 'integration.created', 'integration', integration.id, { type: integration.type, status: integration.status });
+      return integration;
+    });
+  }
+
+  public updateIntegration(identity: SessionIdentity, integrationIdInput: string, input: unknown) {
+    const integrationId = this.id(integrationIdInput); const data = this.parse(integrationUpdateSchema, input);
+    if (data.config) this.assertNonSecretConfig(data.config);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true } })) throw new NotFoundException('Integração não encontrada.');
+      const integration = await tx.integration.update({ where: { id: integrationId }, data: { ...(data.name === undefined ? {} : { name: data.name }), ...(data.status === undefined ? {} : { status: data.status as IntegrationStatus }), ...(data.config === undefined ? {} : { config: data.config as Prisma.InputJsonValue }) } });
+      await this.record(tx, identity, 'integration.updated', 'integration', integrationId, { status: integration.status });
+      return integration;
+    });
+  }
+
+  public createFileIntent(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(fileIntentSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const storageKey = `${identity.organization.id}/${crypto.randomUUID()}`;
+      const asset = await tx.fileAsset.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, storageKey, ...data } });
+      await this.record(tx, identity, 'file_asset.intent_created', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
+      return { asset, upload: { supported: false, reason: 'Configure um adaptador de armazenamento de objetos antes de enviar arquivos.' } };
+    });
+  }
+
+  public listFiles(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.fileAsset.findMany({ orderBy: { createdAt: 'desc' } })); }
+
+  private dashboardData(data: { title?: string; description?: string | null; widgets?: Array<{ type: string; title: string; config: Record<string, unknown> }> }): { title?: string; description?: string | null; widgets?: Prisma.InputJsonValue } {
+    return { ...(data.title === undefined ? {} : { title: data.title }), ...(data.description === undefined ? {} : { description: data.description }), ...(data.widgets === undefined ? {} : { widgets: data.widgets as Prisma.InputJsonValue }) };
+  }
+
+  private eventTransitionAllowed(from: SafetyEventStatus, to: SafetyEventStatus): boolean {
+    const allowed: Record<SafetyEventStatus, readonly SafetyEventStatus[]> = { DRAFT: ['OPEN'], OPEN: ['IN_REVIEW', 'RESOLVED'], IN_REVIEW: ['OPEN', 'RESOLVED'], RESOLVED: ['OPEN', 'CLOSED'], CLOSED: [] };
+    return allowed[from].includes(to);
+  }
+
+  private changeTransitionAllowed(from: ChangeStatus, to: ChangeStatus): boolean {
+    const allowed: Record<ChangeStatus, readonly ChangeStatus[]> = { DRAFT: ['IN_REVIEW', 'REJECTED'], IN_REVIEW: ['DRAFT', 'APPROVED', 'REJECTED'], APPROVED: ['IMPLEMENTING'], IMPLEMENTING: ['COMPLETED', 'IN_REVIEW'], COMPLETED: [], REJECTED: [] };
+    return allowed[from].includes(to);
+  }
+
+  private async eventExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.safetyEvent.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Evento não encontrado.'); }
+  private async changeExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.changeRequest.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Mudança não encontrada.'); }
+  private async cardExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.bashCard.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Cartão não encontrado.'); }
+  private async record(tx: TenantTransaction, identity: SessionIdentity, action: string, resourceType: string, resourceId: string, metadata: Record<string, unknown>): Promise<void> {
+    await Promise.all([
+      tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action, resourceType, resourceId, metadata: metadata as Prisma.InputJsonValue } }),
+      tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: resourceId, eventType: action, payload: metadata as Prisma.InputJsonValue } })
+    ]);
+  }
+  private withTenant<T>(identity: SessionIdentity, work: (tx: TenantTransaction) => Promise<T>): Promise<T> { return this.tenants.withTenantTransaction({ tenantId: identity.organization.id, tenantSlug: identity.organization.slug, membershipId: identity.membership.id, actorId: identity.user.id }, work); }
+  private id(value: string): string { const parsed = uuid.safeParse(value); if (!parsed.success) throw new BadRequestException('Identificador inválido.'); return parsed.data; }
+  private parse<T>(schema: z.ZodType<T>, input: unknown): T { const parsed = schema.safeParse(input); if (!parsed.success) throw new BadRequestException(parsed.error.issues[0]?.message ?? 'Dados inválidos.'); return parsed.data; }
+  private assertNonSecretConfig(config: Record<string, unknown>): void {
+    const forbidden = /(?:secret|token|password|authorization|api[_-]?key)/i;
+    const inspect = (value: unknown): void => {
+      if (Array.isArray(value)) { value.forEach(inspect); return; }
+      if (!value || typeof value !== 'object') return;
+      for (const [key, nested] of Object.entries(value)) {
+        if (forbidden.test(key)) throw new BadRequestException('Segredos não podem ser armazenados nesta configuração. Use o cofre do runtime.');
+        inspect(nested);
+      }
+    };
+    inspect(config);
+  }
+}
