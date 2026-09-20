@@ -1,6 +1,7 @@
 import { Building2, CheckCircle2, ClipboardList, FileText, LayoutDashboard, LogOut, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { resolveSubmissionCursorPage } from './submission-pagination.js';
+import { DashboardShell } from './dashboard-shell.js';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
@@ -34,6 +35,7 @@ export function App(): React.JSX.Element {
   const [invitationToken] = useState(() => new URLSearchParams(window.location.search).get('invite'));
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('home');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [forms, setForms] = useState<FormSummary[]>([]);
   const [selectedForm, setSelectedForm] = useState<FormSummary | null>(null);
   const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
@@ -259,7 +261,7 @@ export function App(): React.JSX.Element {
   if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
 
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
-  if (mode === 'signed-in' && identity) return <main className="shell"><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
+  if (mode === 'signed-in' && identity) return <DashboardShell collapsed={sidebarCollapsed} identity={identity} onLogout={() => void logout()} onNavigate={setWorkspaceView} onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)} pending={pending} view={workspaceView}><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
     <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div>
     <nav className="workspace-nav" aria-label="Navegação do workspace">{([['home', 'Visão geral'], ['forms', 'Formulários'], ['events', 'Eventos'], ['changes', 'Mudanças'], ['bash', 'BASH'], ['hht', 'HHT'], ['dashboards', 'Painéis'], ['tv', 'TV'], ['integrations', 'Integrações'], ['classifications', 'Listas'], ['files', 'Arquivos'], ['organization', 'Organização']] as Array<[WorkspaceView, string]>).map(([view, label]) => <button key={view} className="workspace-nav-item" aria-current={workspaceView === view ? 'page' : undefined} type="button" onClick={() => setWorkspaceView(view)}>{view === 'home' ? <LayoutDashboard aria-hidden="true" /> : view === 'forms' || view === 'files' ? <FileText aria-hidden="true" /> : <Settings2 aria-hidden="true" />} {label}</button>)}</nav>
     {workspaceView === 'home' ? <>
@@ -281,7 +283,7 @@ export function App(): React.JSX.Element {
       {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <section className="admin-section" aria-labelledby="members-title"><h2 id="members-title">Membros</h2><p className="section-note">Alterações usam o contexto da organização ativa. A própria membership não pode ser alterada nesta tela.</p><form className="inline-form" onSubmit={createInvitation}><label>E-mail do novo membro<input name="email" type="email" required placeholder="pessoa@empresa.com" /></label><label>Papel<select name="role" defaultValue="MEMBER"><option value="OWNER" disabled={identity.membership.role !== 'OWNER'}>OWNER</option><option value="ADMIN" disabled={identity.membership.role !== 'OWNER'}>ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select></label><button className="primary-button compact" type="submit" disabled={pending}>Gerar convite</button></form>{invitationUrl && <p className="invitation-link">Convite válido por 7 dias: <code>{invitationUrl}</code></p>}{invitations.length > 0 && <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-row" key={invitation.id}><span>{invitation.email} · {invitation.role}</span><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void revokeInvitation(invitation.id)}>Revogar</button></div>)}</div>}<div className="member-list">{members.map((member) => <form className="member-row" key={member.id} onSubmit={(event) => void updateMember(event, member.id)}><span>{member.email}</span><select name="role" defaultValue={member.role} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="OWNER">OWNER</option><option value="ADMIN">ADMIN</option><option value="MEMBER">MEMBER</option><option value="VIEWER">VIEWER</option></select><select name="status" defaultValue={member.status} disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}><option value="ACTIVE">Ativo</option><option value="SUSPENDED">Suspenso</option></select><button className="secondary-button compact" type="submit" disabled={pending || member.id === identity.membership.id || (identity.membership.role === 'ADMIN' && member.role === 'OWNER')}>Salvar</button></form>)}</div></section>}
     </> : workspaceView === 'events' ? <EventsModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'changes' ? <ChangesModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'bash' ? <BashModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'hht' ? <HhtModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : workspaceView === 'tv' ? <TvModulePage canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} /> : <OperationalModulePage view={workspaceView} canManage={identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN'} />}
     <button className="secondary-button" type="button" onClick={() => void logout()} disabled={pending}><LogOut aria-hidden="true" /> Sair</button>
-  </section></main>;
+  </section></DashboardShell>;
 
   if (mode === 'change-password') return <main className="shell"><section className="panel" aria-labelledby="title">
     <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div>
