@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import { CapabilityGuard } from '../identity/capability.guard.js';
 import { RequiredCapabilities } from '../identity/required-capabilities.decorator.js';
 import { SessionContextGuard, type AuthenticatedRequest } from '../identity/session-context.guard.js';
@@ -81,6 +82,19 @@ export class OperationsController {
   public files(@Req() request: AuthenticatedRequest) { return this.operations.listFiles(request.identity).then((files) => ({ files })); }
   @Post('files/intents') @RequiredCapabilities('operations.manage')
   public createFileIntent(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createFileIntent(request.identity, input); }
+  @Post('files/:fileId/complete') @RequiredCapabilities('operations.manage')
+  public completeFileUpload(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string) { return this.operations.completeFileUpload(request.identity, fileId).then((file) => ({ file })); }
+  @Post('files/:fileId/content') @RequiredCapabilities('operations.manage')
+  public uploadFileContent(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string, @Body() content: Uint8Array) { return this.operations.uploadFileContent(request.identity, fileId, content).then((file) => ({ file })); }
+  @Get('files/:fileId/download') @RequiredCapabilities('operations.view')
+  public fileDownload(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string, @Res({ passthrough: true }) reply: FastifyReply) {
+    return this.operations.openFileDownload(request.identity, fileId).then((download) => {
+      reply.header('content-type', download.contentType ?? 'application/octet-stream');
+      if (download.contentLength !== undefined) reply.header('content-length', download.contentLength);
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`);
+      return download.body;
+    });
+  }
 
   @Get('operations/outbox/dead-letter') @RequiredCapabilities('operations.view')
   public deadLetters(@Req() request: AuthenticatedRequest) { return this.operations.listDeadLetters(request.identity).then((events) => ({ events })); }

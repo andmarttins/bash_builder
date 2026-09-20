@@ -37,6 +37,20 @@ Cadastre os valores de `.env.example` na interface Environment do serviço Compo
 - `MIGRATOR_DATABASE_URL`: URL interna de `app_migrator`. Ela é usada somente por `migrate` e possui `CREATE` de schema para aplicar migrations.
 - `DATABASE_URL`: URL interna de `app_runtime`, usada somente pela API e limitada por RLS ao tenant da sessão.
 - `WORKER_DATABASE_URL`: URL interna de `app_worker`, usada somente pelo worker. Esta role não é proprietária, não tem `BYPASSRLS` e só pode acessar a fila por procedimentos armazenados; não reutilize `DATABASE_URL`.
+
+## Armazenamento de objetos privado
+
+O serviço S3 compatível deve permanecer sem domínio público. A API recebe os bytes autenticados e os encaminha para o endpoint interno; por isso não há CORS de navegador nem URL S3 exposta ao cliente. Para ativar uploads, configure na aplicação **os cinco valores** abaixo usando o endpoint interno do serviço, sem salvá-los no Git:
+
+```env
+S3_ENDPOINT=http://<host-interno>:9000
+S3_REGION=us-east-1
+S3_BUCKET=builder-assets
+S3_ACCESS_KEY_ID=<credencial-de-runtime>
+S3_SECRET_ACCESS_KEY=<segredo-de-runtime>
+```
+
+Se algum deles ficar vazio, a API preserva os arquivos como pendentes e informa que o adaptador não está configurado; ela nunca grava credenciais em `integrations.config`.
 - `REDIS_URL`: URL interna **autenticada** (`redis://` ou `rediss://`) do `builder-redis`, usada pela API. Nunca aponte para um endpoint público. A configuração da API rejeita URL sem senha ou com protocolo diferente.
 - `BOOTSTRAP_TOKEN`: segredo aleatório de ao menos 32 caracteres, obrigatório em produção. Ele é enviado uma única vez, no formulário de primeira configuração, e impede que o primeiro visitante público assuma a conta OWNER. Cadastre-o como secret; não use URL, senha de banco ou token reaproveitado.
 

@@ -117,4 +117,38 @@ describe('calculateHhtRates', () => {
 
     await expect(service.upsertHhtReport(identity, { companyId: eventId, year: 2026, month: 9, hhtWorked: 100, hhtMeal: 10, workforce: 4, lostDays: 0, lti: 0 })).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('returns a proxied upload intent only when the private object-storage adapter is configured', async () => {
+    const asset = { id: eventId, organizationId: identity.organization.id, storageKey: `${identity.organization.id}/random`, contentType: 'application/pdf', byteSize: 42 };
+    const tx = { fileAsset: { create: vi.fn().mockResolvedValue(asset) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true) };
+
+    await expect(new OperationsService(tenants as never, storage as never).createFileIntent(identity, { originalName: 'report.pdf', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64) })).resolves.toEqual(expect.objectContaining({ upload: expect.objectContaining({ supported: true, method: 'POST', url: `/v1/files/${eventId}/content` }) }));
+  });
+
+  it('verifies an uploaded file before changing its tenant-scoped status to READY', async () => {
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64), status: 'PENDING' };
+    const ready = { ...pending, status: 'READY' };
+    const tx = {
+      fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(ready) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), verifyObject: vi.fn().mockResolvedValue(true) };
+
+    await expect(new OperationsService(tenants as never, storage as never).completeFileUpload(identity, eventId)).resolves.toEqual(ready);
+    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith({ where: { id: eventId, status: 'PENDING' }, data: { status: 'READY' } });
+    expect(storage.verifyObject).toHaveBeenCalledWith({ key: 'tenant/key', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64) });
+  });
+
+  it('rejects proxied bytes whose checksum differs from the original intent', async () => {
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: 3, checksum: 'a'.repeat(64), status: 'PENDING' };
+    const tx = { fileAsset: { findFirst: vi.fn().mockResolvedValue(pending) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn() };
+
+    await expect(new OperationsService(tenants as never, storage as never).uploadFileContent(identity, eventId, Buffer.from('bad'))).rejects.toBeInstanceOf(BadRequestException);
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
 });

@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { ChangeStatus, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
+import { ObjectStorageService } from '../platform/storage/object-storage.service.js';
 import { TenantTransactionService, type TenantTransaction } from '../platform/tenant/tenant-transaction.service.js';
 
 const uuid = z.uuid();
@@ -38,7 +40,8 @@ const tvDisplaySchema = z.object({ name: text(2, 160), dashboardId: uuid, refres
 const tvPlaylistSchema = z.object({ name: text(2, 160), intervalSeconds: z.number().int().min(5).max(3600).optional(), displayIds: z.array(uuid).min(1).max(30) });
 const integrationSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}) });
 const integrationUpdateSchema = integrationSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined, 'Informe alguma alteração.');
-const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: text(3, 160), byteSize: z.number().int().nonnegative().max(100 * 1024 * 1024), checksum: z.string().trim().min(16).max(128).optional() });
+const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
+const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.enum(allowedFileTypes), byteSize: z.number().int().positive().max(10 * 1024 * 1024), checksum: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Informe o SHA-256 hexadecimal do arquivo.') });
 
 type HhtRate = { trifr: number; ltifr: number; ltisr: number };
 
@@ -53,7 +56,7 @@ export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; 
 
 @Injectable()
 export class OperationsService {
-  public constructor(private readonly tenants: TenantTransactionService) {}
+  public constructor(private readonly tenants: TenantTransactionService, private readonly storage: ObjectStorageService = new ObjectStorageService()) {}
 
   public listClassifications(identity: SessionIdentity, category?: string) {
     return this.withTenant(identity, (tx) => tx.classificationItem.findMany({ where: category ? { category } : undefined, orderBy: [{ category: 'asc' }, { position: 'asc' }, { label: 'asc' }] }));
@@ -370,11 +373,61 @@ export class OperationsService {
       const storageKey = `${identity.organization.id}/${crypto.randomUUID()}`;
       const asset = await tx.fileAsset.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, storageKey, ...data } });
       await this.record(tx, identity, 'file_asset.intent_created', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
-      return { asset, upload: { supported: false, reason: 'Configure um adaptador de armazenamento de objetos antes de enviar arquivos.' } };
+      if (!this.storage.isConfigured()) return { asset, upload: { supported: false, reason: 'Configure um adaptador de armazenamento de objetos antes de enviar arquivos.' } };
+      return { asset, upload: { supported: true, method: 'POST', url: `/v1/files/${asset.id}/content`, contentType: asset.contentType, byteSize: asset.byteSize } };
     });
   }
 
   public listFiles(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.fileAsset.findMany({ orderBy: { createdAt: 'desc' } })); }
+
+  public completeFileUpload(identity: SessionIdentity, assetIdInput: string) {
+    const assetId = this.id(assetIdInput);
+    return this.withTenant(identity, async (tx) => {
+      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const asset = await tx.fileAsset.findFirst({ where: { id: assetId } });
+      if (!asset) throw new NotFoundException('Arquivo não encontrado.');
+      if (asset.status !== 'PENDING') throw new ConflictException('Este arquivo não está aguardando confirmação de envio.');
+      if (!await this.storage.verifyObject({ key: asset.storageKey, contentType: asset.contentType, byteSize: asset.byteSize, checksum: asset.checksum })) {
+        throw new BadRequestException('O arquivo enviado não corresponde ao tamanho ou tipo informado.');
+      }
+      const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'PENDING' }, data: { status: 'READY' } });
+      if (updated.count !== 1) throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
+      const readyAsset = await tx.fileAsset.findFirstOrThrow({ where: { id: asset.id } });
+      await this.record(tx, identity, 'file_asset.ready', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
+      return readyAsset;
+    });
+  }
+
+  public uploadFileContent(identity: SessionIdentity, assetIdInput: string, content: Uint8Array) {
+    const assetId = this.id(assetIdInput);
+    return this.withTenant(identity, async (tx) => {
+      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const asset = await tx.fileAsset.findFirst({ where: { id: assetId } });
+      if (!asset) throw new NotFoundException('Arquivo não encontrado.');
+      if (asset.status !== 'PENDING') throw new ConflictException('Este arquivo não está aguardando envio.');
+      if (content.byteLength !== asset.byteSize) throw new BadRequestException('O tamanho do arquivo recebido é diferente do informado.');
+      const checksum = createHash('sha256').update(content).digest('hex');
+      if (checksum !== asset.checksum) throw new BadRequestException('O SHA-256 do arquivo recebido é diferente do informado.');
+      await this.storage.putObject({ key: asset.storageKey, contentType: asset.contentType, bytes: content, checksum });
+      const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'PENDING' }, data: { status: 'READY' } });
+      if (updated.count !== 1) throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
+      const readyAsset = await tx.fileAsset.findFirstOrThrow({ where: { id: asset.id } });
+      await this.record(tx, identity, 'file_asset.ready', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
+      return readyAsset;
+    });
+  }
+
+  public openFileDownload(identity: SessionIdentity, assetIdInput: string) {
+    const assetId = this.id(assetIdInput);
+    return this.withTenant(identity, async (tx) => {
+      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const asset = await tx.fileAsset.findFirst({ where: { id: assetId, status: 'READY' } });
+      if (!asset) throw new NotFoundException('Arquivo pronto para download não encontrado.');
+      const download = await this.storage.openDownload(asset.storageKey, this.safeFilename(asset.originalName));
+      await this.record(tx, identity, 'file_asset.download_prepared', 'file_asset', asset.id, {});
+      return { ...download, filename: this.safeFilename(asset.originalName) };
+    });
+  }
 
   public listDeadLetters(identity: SessionIdentity) {
     return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, lastError: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
@@ -392,6 +445,12 @@ export class OperationsService {
 
   private dashboardData(data: { title?: string; description?: string | null; widgets?: Array<{ type: string; title: string; config: Record<string, unknown> }> }): { title?: string; description?: string | null; widgets?: Prisma.InputJsonValue } {
     return { ...(data.title === undefined ? {} : { title: data.title }), ...(data.description === undefined ? {} : { description: data.description }), ...(data.widgets === undefined ? {} : { widgets: data.widgets as Prisma.InputJsonValue }) };
+  }
+
+  private safeFilename(value: string): string {
+    const printable = Array.from(value.normalize('NFKC'), (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? '_' : character).join('');
+    const sanitized = printable.replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 180);
+    return sanitized || 'arquivo';
   }
 
   private eventTransitionAllowed(from: SafetyEventStatus, to: SafetyEventStatus): boolean {

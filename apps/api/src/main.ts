@@ -17,7 +17,7 @@ async function bootstrap(): Promise<void> {
   const config = getApiRuntimeConfig();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true, bodyLimit: 2 * 1024 * 1024 }),
+    new FastifyAdapter({ trustProxy: true, bodyLimit: 12 * 1024 * 1024 }),
     { bufferLogs: true }
   );
 
@@ -29,6 +29,8 @@ async function bootstrap(): Promise<void> {
     origin: origins.length === 0 ? false : origins,
     credentials: true
   });
+  // MinIO remains private; binary uploads are proxied through the authenticated API.
+  app.getHttpAdapter().getInstance().addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
   app.getHttpAdapter().getInstance().addHook('onRequest', async (request: FastifyRequest) => {
     if (!isTrustedMutationOrigin(request.method, request.url, request.headers.origin, origins)) {
       throw new ForbiddenException('Untrusted request origin.');

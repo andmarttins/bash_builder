@@ -18,6 +18,7 @@ import { FormsController, PublicFormsController } from './forms/forms.controller
 import { FormsService } from './forms/forms.service.js';
 import { FormValidationService } from './forms/form-validation.service.js';
 import { PublicFormAccessService } from './platform/public-access/public-form-access.service.js';
+import { ObjectStorageService } from './platform/storage/object-storage.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
 
@@ -38,6 +39,7 @@ import { OperationsService } from './operations/operations.service.js';
     FormValidationService,
     FormsService,
     PublicFormAccessService,
+    ObjectStorageService,
     OperationsService
   ]
 })
