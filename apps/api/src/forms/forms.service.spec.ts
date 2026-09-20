@@ -168,7 +168,7 @@ describe('FormsService', () => {
     const exported = await service.exportSubmissions(identity, formId, { status: 'RECEIVED' });
     expect(exported).toMatchObject({ filename: 'inspecao-diaria-respostas.csv', count: 1 });
     expect(exported.csv).toContain('""note""');
-    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { formId, status: 'RECEIVED' }, take: 10001 }));
+    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { formId, status: 'RECEIVED' }, take: 100 }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submissions.exported' }) }));
   });
 

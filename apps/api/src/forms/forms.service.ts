@@ -200,19 +200,27 @@ export class FormsService {
       const form = await tx.form.findFirst({ where: { id }, select: { id: true, title: true } });
       if (!form) throw new NotFoundException('Formulário não encontrado.');
       const where: Prisma.FormSubmissionWhereInput = { formId: id, ...(filters.status === undefined ? {} : { status: filters.status }), ...(filters.from === undefined && filters.to === undefined ? {} : { submittedAt: { ...(filters.from === undefined ? {} : { gte: filters.from }), ...(filters.to === undefined ? {} : { lte: filters.to }) } }) };
-      const rows = await tx.formSubmission.findMany({ where, select: { id: true, status: true, submittedAt: true, answers: true }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: 10_001 });
-      if (rows.length > 10_000) throw new BadRequestException('A exportação excede 10.000 respostas. Restrinja o período ou o status.');
       const escape = (value: unknown) => { const cell = String(value ?? ''); return `"${(/^[=+\-@]/.test(cell) ? `'${cell}` : cell).replaceAll('"', '""')}"`; };
-      const header = '\ufeffid,status,enviado_em,respostas_json\n'; const lines: string[] = []; let bytes = Buffer.byteLength(header, 'utf8');
-      for (const row of rows) {
-        const line = `${[row.id, row.status, row.submittedAt.toISOString(), JSON.stringify(row.answers)].map(escape).join(',')}\n`;
-        const lineBytes = Buffer.byteLength(line, 'utf8');
-        if (bytes + lineBytes > 10 * 1024 * 1024) throw new PayloadTooLargeException('A exportação excede 10 MiB. Restrinja o período ou o status.');
-        lines.push(line); bytes += lineBytes;
-      }
+      const header = '\ufeffid,status,enviado_em,respostas_json\n'; const lines: string[] = []; let bytes = Buffer.byteLength(header, 'utf8'); let count = 0;
+      let cursor: { submittedAt: Date; id: string } | undefined;
+      do {
+        const pageWhere: Prisma.FormSubmissionWhereInput = cursor === undefined ? where : { ...where, OR: [{ submittedAt: { lt: cursor.submittedAt } }, { submittedAt: cursor.submittedAt, id: { lt: cursor.id } }] };
+        const page = await tx.formSubmission.findMany({ where: pageWhere, select: { id: true, status: true, submittedAt: true, answers: true }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: 100 });
+        if (page.length === 0) break;
+        for (const row of page) {
+          count += 1;
+          if (count > 10_000) throw new BadRequestException('A exportação excede 10.000 respostas. Restrinja o período ou o status.');
+          const line = `${[row.id, row.status, row.submittedAt.toISOString(), JSON.stringify(row.answers)].map(escape).join(',')}\n`;
+          const lineBytes = Buffer.byteLength(line, 'utf8');
+          if (bytes + lineBytes > 10 * 1024 * 1024) throw new PayloadTooLargeException('A exportação excede 10 MiB. Restrinja o período ou o status.');
+          lines.push(line); bytes += lineBytes;
+        }
+        const last = page.at(-1)!; cursor = { submittedAt: last.submittedAt, id: last.id };
+        if (page.length < 100) break;
+      } while (cursor !== undefined);
       const csv = header + lines.join('');
-      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submissions.exported', resourceType: 'form', resourceId: id, metadata: { count: rows.length, status: filters.status ?? null, from: filters.from?.toISOString() ?? null, to: filters.to?.toISOString() ?? null } } });
-      return { filename: `${this.exportFilename(form.title)}-respostas.csv`, contentType: 'text/csv; charset=utf-8', csv, count: rows.length };
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submissions.exported', resourceType: 'form', resourceId: id, metadata: { count, status: filters.status ?? null, from: filters.from?.toISOString() ?? null, to: filters.to?.toISOString() ?? null } } });
+      return { filename: `${this.exportFilename(form.title)}-respostas.csv`, contentType: 'text/csv; charset=utf-8', csv, count };
     });
   }
 
