@@ -381,6 +381,7 @@ model FormSubmission {
   form           Form                 @relation(fields: [formId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@index([formId, submittedAt(sort: Desc), id(sort: Desc)])
+  @@index([formId, id(sort: Desc)])
   @@map("form_submissions")
 }
 

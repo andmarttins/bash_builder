@@ -168,8 +168,8 @@ describe('FormsService', () => {
     const exported = await service.exportSubmissions(identity, formId, { status: 'RECEIVED' });
     expect(exported).toMatchObject({ filename: 'inspecao-diaria-respostas.csv', count: 1 });
     expect(exported.csv).toContain('""note""');
-    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { formId, status: 'RECEIVED' }, take: 100 }));
-    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submissions.exported' }) }));
+    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ formId, status: 'RECEIVED' }), orderBy: { id: 'desc' }, take: 100 }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submissions.exported', metadata: expect.objectContaining({ asOf: expect.any(String) }) }) }));
   });
 
   it('refuses an oversized export before writing an audit record', async () => {
@@ -178,6 +178,16 @@ describe('FormsService', () => {
     const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
     await expect(service.exportSubmissions(identity, formId, {})).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('uses a UUID keyset and a fixed upper time boundary across export pages', async () => {
+    const first = Array.from({ length: 100 }, (_, index) => ({ id: `a0eebc99-9c0b-4ef8-bb6d-${String(100 + index).padStart(12, '0')}`, status: 'RECEIVED', submittedAt: new Date('2026-09-20T00:00:00.000Z'), answers: {} }));
+    const second = { id: 'a0eebc99-9c0b-4ef8-bb6d-000000000001', status: 'RECEIVED', submittedAt: new Date('2026-09-20T00:00:00.000Z'), answers: {} };
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, title: 'Teste' }) }, formSubmission: { findMany: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce([second]) }, auditLog: { create: vi.fn() } };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+    await expect(service.exportSubmissions(identity, formId, { from: '2026-01-01T00:00:00.000Z' })).resolves.toMatchObject({ count: 101 });
+    expect(tx.formSubmission.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: expect.objectContaining({ id: { lt: first.at(-1)!.id } }), orderBy: { id: 'desc' } }));
+    expect(tx.formSubmission.findMany.mock.calls[0]![0].where.submittedAt.lte).toBeInstanceOf(Date);
   });
 
   it('stops before retaining a CSV line that would exceed the byte limit', async () => {
