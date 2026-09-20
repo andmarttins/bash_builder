@@ -30,6 +30,9 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect(requiredExtensions.rows).toEqual([{ extname: 'citext' }, { extname: 'pgcrypto' }]);
     await bootstrap.query('DELETE FROM "auth_sessions"');
     await bootstrap.query('DELETE FROM "organization_invitations"');
+    await bootstrap.query('DELETE FROM "form_submissions"');
+    await bootstrap.query('DELETE FROM "form_fields"');
+    await bootstrap.query('DELETE FROM "forms"');
     await bootstrap.query('DELETE FROM "memberships"');
     await bootstrap.query('DELETE FROM "identity_users"');
     await bootstrap.query('DELETE FROM "organizations"');
@@ -67,6 +70,38 @@ describeIntegration('PostgreSQL row-level security', () => {
 
   it('does not grant the runtime role access to identity hashes', async () => {
     await expect(runtime.query('SELECT password_hash FROM "identity_users"')).rejects.toThrow(/permission denied/i);
+  });
+
+  it('isolates form aggregates, prevents cross-tenant references, and permits only published public submission', async () => {
+    const formA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a61';
+    const formB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a62';
+    const publicA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a63';
+    await bootstrap.query(
+      'INSERT INTO "forms" (id, organization_id, public_id, title, status, updated_at) VALUES ($1, $2, $3, $4, \'PUBLISHED\', NOW()), ($5, $6, $7, $8, \'DRAFT\', NOW())',
+      [formA, tenantA, publicA, 'Public A', formB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a64', 'Draft B']
+    );
+    await bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', 0, NOW())', [tenantA, formA, 'title', 'Title']);
+    await expect(bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', 0, NOW())', [tenantB, formA, 'forbidden', 'Forbidden',])).rejects.toThrow(/foreign key/i);
+
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "forms" ORDER BY id')).rows).toEqual([{ id: formA }]);
+      await expect(runtime.query('INSERT INTO "forms" (organization_id, title, updated_at) VALUES ($1, $2, NOW())', [tenantB, 'Cross tenant'])).rejects.toThrow(/row-level security/i);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
+
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.public_form_id', $1, true)", [publicA]);
+      expect((await runtime.query('SELECT id FROM "forms"')).rows).toEqual([{ id: formA }]);
+      expect((await runtime.query('SELECT key FROM "form_fields"')).rows).toEqual([{ key: 'title' }]);
+      await runtime.query('INSERT INTO "form_submissions" (organization_id, form_id, form_version, form_snapshot, answers, updated_at) VALUES ($1, $2, 1, $3, $4, NOW())', [tenantA, formA, JSON.stringify({ version: 1, fields: [{ key: 'title' }] }), JSON.stringify({ title: 'Public response' })]);
+      expect((await runtime.query('SELECT id FROM "form_submissions"')).rows).toEqual([]);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
   });
 
   it('uses narrowly scoped identity procedures without granting table access', async () => {

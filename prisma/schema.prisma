@@ -31,6 +31,29 @@ enum OutboxStatus {
   FAILED
 }
 
+enum FormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum FormFieldType {
+  SHORT_TEXT
+  LONG_TEXT
+  NUMBER
+  DATE
+  SELECT
+  MULTI_SELECT
+  CHECKBOX
+}
+
+enum FormSubmissionStatus {
+  RECEIVED
+  IN_REVIEW
+  RESOLVED
+  REJECTED
+}
+
 model Organization {
   id          String             @id @default(uuid()) @db.Uuid
   slug        String             @unique @db.VarChar(63)
@@ -42,6 +65,9 @@ model Organization {
   settings    TenantSetting[]
   auditLogs   AuditLog[]
   outbox      OutboxEvent[]
+  forms       Form[]
+  formFields  FormField[]
+  formSubmissions FormSubmission[]
 
   @@map("organizations")
 }
@@ -159,4 +185,61 @@ model OutboxEvent {
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([status, availableAt])
   @@map("outbox_events")
+}
+
+model Form {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  publicId       String       @unique @default(uuid()) @map("public_id") @db.Uuid
+  title          String       @db.VarChar(160)
+  description    String?      @db.Text
+  status         FormStatus   @default(DRAFT)
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  fields         FormField[]
+  submissions    FormSubmission[]
+
+  @@index([organizationId, status, updatedAt(sort: Desc)])
+  @@unique([id, organizationId])
+  @@map("forms")
+}
+
+model FormField {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  formId         String        @map("form_id") @db.Uuid
+  key            String        @db.VarChar(80)
+  label          String        @db.VarChar(160)
+  type           FormFieldType
+  required       Boolean       @default(false)
+  options        Json          @default("[]")
+  position       Int
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  form           Form          @relation(fields: [formId, organizationId], references: [id, organizationId], onDelete: Cascade)
+
+  @@unique([formId, key])
+  @@unique([formId, position])
+  @@map("form_fields")
+}
+
+model FormSubmission {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  formId         String               @map("form_id") @db.Uuid
+  formVersion    Int                  @map("form_version")
+  formSnapshot   Json                 @map("form_snapshot")
+  answers        Json
+  status         FormSubmissionStatus @default(RECEIVED)
+  submittedAt    DateTime             @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  form           Form                 @relation(fields: [formId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@index([organizationId, formId, submittedAt(sort: Desc)])
+  @@map("form_submissions")
 }

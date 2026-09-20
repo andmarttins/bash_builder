@@ -1,12 +1,13 @@
-import { Building2, CheckCircle2, ClipboardList, LayoutDashboard, LogOut, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
+import { Building2, CheckCircle2, ClipboardList, FileText, LayoutDashboard, LogOut, Settings2, ShieldCheck, UsersRound } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
-type WorkspaceView = 'home' | 'organization';
+type WorkspaceView = 'home' | 'forms' | 'organization';
 type Organization = { id: string; name: string; slug: string; membership: { id: string; role: string } };
 type Member = { id: string; userId: string; email: string; role: string; status: string; createdAt: string };
 type Invitation = { id: string; email: string; role: string; expiresAt: string; createdAt: string };
+type FormSummary = { id: string; publicId: string; title: string; description: string | null; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; version: number; fields: Array<{ key: string }> };
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, credentials: 'include', headers: { 'content-type': 'application/json', ...options?.headers } });
@@ -26,6 +27,7 @@ export function App(): React.JSX.Element {
   const [invitationToken] = useState(() => new URLSearchParams(window.location.search).get('invite'));
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('home');
+  const [forms, setForms] = useState<FormSummary[]>([]);
 
   useEffect(() => { void (async () => {
     if (invitationToken) { setMode('invite'); return; }
@@ -51,6 +53,12 @@ export function App(): React.JSX.Element {
       } else { setMembers([]); setInvitations([]); }
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar a administração da organização.'); }
   })(); }, [identity, mode]);
+
+  useEffect(() => { void (async () => {
+    if (mode !== 'signed-in' || !identity || workspaceView !== 'forms') return;
+    try { setForms((await api<{ forms: FormSummary[] }>('/v1/forms')).forms); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível carregar os formulários.'); }
+  })(); }, [identity, mode, workspaceView]);
 
   async function submitBootstrap(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); const values = new FormData(event.currentTarget);
@@ -139,15 +147,29 @@ export function App(): React.JSX.Element {
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível revogar o convite.'); }
     finally { setPending(false); }
   }
+  async function createForm(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault(); const values = new FormData(event.currentTarget);
+    setPending(true); setError(null);
+    try {
+      await api('/v1/forms', { method: 'POST', body: JSON.stringify({ title: values.get('title'), description: values.get('description') || undefined, fields: [{ key: 'descricao', label: 'Descrição', type: 'LONG_TEXT', required: true, options: [] }] }) });
+      event.currentTarget.reset(); setForms((await api<{ forms: FormSummary[] }>('/v1/forms')).forms);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível criar o formulário.'); }
+    finally { setPending(false); }
+  }
 
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
   if (mode === 'signed-in' && identity) return <main className="shell"><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
     <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div>
-    <nav className="workspace-nav" aria-label="Navegação do workspace"><button className="workspace-nav-item" aria-current={workspaceView === 'home' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('home')}><LayoutDashboard aria-hidden="true" /> Visão geral</button><button className="workspace-nav-item" aria-current={workspaceView === 'organization' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('organization')}><Settings2 aria-hidden="true" /> Organização</button></nav>
+    <nav className="workspace-nav" aria-label="Navegação do workspace"><button className="workspace-nav-item" aria-current={workspaceView === 'home' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('home')}><LayoutDashboard aria-hidden="true" /> Visão geral</button><button className="workspace-nav-item" aria-current={workspaceView === 'forms' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('forms')}><FileText aria-hidden="true" /> Formulários</button><button className="workspace-nav-item" aria-current={workspaceView === 'organization' ? 'page' : undefined} type="button" onClick={() => setWorkspaceView('organization')}><Settings2 aria-hidden="true" /> Organização</button></nav>
     {workspaceView === 'home' ? <>
       <p className="eyebrow">Workspace</p><h1 id="dashboard-title">Visão geral da empresa</h1><p className="description">Olá, {identity.organization.name}. Acompanhe a organização ativa e avance pela configuração dos módulos empresariais.</p>
-      <section className="overview-grid" aria-label="Resumo da empresa"><article className="overview-card"><Building2 aria-hidden="true" /><span>Organização ativa</span><strong>{identity.organization.name}</strong><small>{identity.organization.slug}</small></article><article className="overview-card"><UsersRound aria-hidden="true" /><span>Seu acesso</span><strong>{identity.membership.role}</strong><small>{identity.access.isPlatformAdmin ? 'Administrador da plataforma' : 'Membro da organização'}</small></article><article className="overview-card"><ClipboardList aria-hidden="true" /><span>Próxima etapa</span><strong>Configurar módulos</strong><small>Formulários, BASH, HHT e painéis entram por entregas isoladas.</small></article></section>
-      <section className="admin-section" aria-labelledby="start-title"><h2 id="start-title">Comece por aqui</h2><p className="section-note">Gerencie membros, convites e outras organizações na área de Organização. As páginas operacionais aparecerão aqui conforme os módulos forem entregues com isolamento multi-tenant.</p><button className="primary-button compact" type="button" onClick={() => setWorkspaceView('organization')}><Settings2 aria-hidden="true" /> Abrir administração da organização</button></section>
+      <section className="overview-grid" aria-label="Resumo da empresa"><article className="overview-card"><Building2 aria-hidden="true" /><span>Organização ativa</span><strong>{identity.organization.name}</strong><small>{identity.organization.slug}</small></article><article className="overview-card"><UsersRound aria-hidden="true" /><span>Seu acesso</span><strong>{identity.membership.role}</strong><small>{identity.access.isPlatformAdmin ? 'Administrador da plataforma' : 'Membro da organização'}</small></article><article className="overview-card"><ClipboardList aria-hidden="true" /><span>Próxima etapa</span><strong>Configurar módulos</strong><small>Formulários já estão disponíveis; os demais entram por entregas isoladas.</small></article></section>
+      <section className="admin-section" aria-labelledby="start-title"><h2 id="start-title">Comece por aqui</h2><p className="section-note">Crie e publique formulários, ou gerencie membros, convites e outras organizações.</p><button className="primary-button compact" type="button" onClick={() => setWorkspaceView('forms')}><FileText aria-hidden="true" /> Abrir formulários</button></section>
+    </> : workspaceView === 'forms' ? <>
+      <p className="eyebrow">Módulo empresarial</p><h1 id="dashboard-title">Formulários</h1><p className="description">Crie formulários isolados por empresa. Cada criação recebe um campo inicial obrigatório, que pode ser configurado pela API nesta primeira entrega.</p>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      {(identity.membership.role === 'OWNER' || identity.membership.role === 'ADMIN') && <form className="inline-form admin-section" onSubmit={createForm}><label>Título<input name="title" required minLength={2} maxLength={160} placeholder="Inspeção de segurança" /></label><label>Descrição<input name="description" maxLength={10000} placeholder="Opcional" /></label><button className="primary-button compact" type="submit" disabled={pending}>Criar formulário</button></form>}
+      <section className="admin-section" aria-labelledby="forms-title"><h2 id="forms-title">Formulários da organização</h2>{forms.length === 0 ? <p className="section-note">Ainda não há formulários nesta empresa.</p> : <div className="form-list">{forms.map((form) => <article className="form-row" key={form.id}><FileText aria-hidden="true" /><div><strong>{form.title}</strong><small>{form.status} · versão {form.version} · {form.fields.length} campo(s)</small></div><code>{form.publicId}</code></article>)}</div>}</section>
     </> : <>
       <div className="success-icon"><CheckCircle2 aria-hidden="true" /></div><p className="eyebrow">Administração</p><h1 id="dashboard-title">Organização e acesso</h1><p className="description">Gerencie o contexto ativo, membros e convites sem sair do workspace.</p>
       <dl className="identity-card"><div><dt>Conta</dt><dd>{identity.user.email}</dd></div><div><dt>Organização</dt><dd>{identity.organization.slug}</dd></div><div><dt>Permissão</dt><dd>{identity.access.isPlatformAdmin ? 'SUPERADMIN · ' : ''}{identity.membership.role}</dd></div></dl>
