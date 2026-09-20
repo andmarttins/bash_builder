@@ -756,6 +756,10 @@ model FileAsset {
   checksum       String?         @db.VarChar(128)
   status         FileAssetStatus @default(PENDING)
   createdById    String?         @map("created_by_id") @db.Uuid
+  uploadExpiresAt DateTime?      @map("upload_expires_at") @db.Timestamptz(6)
+  processingLeaseExpiresAt DateTime? @map("processing_lease_expires_at") @db.Timestamptz(6)
+  scannedAt      DateTime?       @map("scanned_at") @db.Timestamptz(6)
+  storageCleanupAt DateTime?     @map("storage_cleanup_at") @db.Timestamptz(6)
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -764,5 +768,7 @@ model FileAsset {
   @@unique([id, organizationId])
   @@unique([organizationId, storageKey])
   @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([status, uploadExpiresAt])
+  @@index([status, processingLeaseExpiresAt])
   @@map("file_assets")
 }

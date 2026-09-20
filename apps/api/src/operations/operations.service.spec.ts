@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { calculateHhtRates, OperationsService } from './operations.service.js';
@@ -221,33 +222,169 @@ describe('calculateHhtRates', () => {
     const tx = { fileAsset: { create: vi.fn().mockResolvedValue(asset) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const storage = { isConfigured: vi.fn().mockReturnValue(true) };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true) };
 
-    await expect(new OperationsService(tenants as never, storage as never).createFileIntent(identity, { originalName: 'report.pdf', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64) })).resolves.toEqual(expect.objectContaining({ upload: expect.objectContaining({ supported: true, method: 'POST', url: `/v1/files/${eventId}/content` }) }));
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).createFileIntent(identity, { originalName: 'report.pdf', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64) })).resolves.toEqual(expect.objectContaining({ upload: expect.objectContaining({ supported: true, method: 'POST', url: `/v1/files/${eventId}/content` }) }));
   });
 
-  it('verifies an uploaded file before changing its tenant-scoped status to READY', async () => {
-    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64), status: 'PENDING' };
+  it('does not create pending file records while private object storage is unavailable', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const storage = { isConfigured: vi.fn().mockReturnValue(false) };
+    expect(() => new OperationsService(tenants as never, storage as never).createFileIntent(identity, { originalName: 'report.pdf', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64) })).toThrow(ServiceUnavailableException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('publishes only non-sensitive upload capabilities to the authenticated UI', () => {
+    const storage = { isConfigured: vi.fn().mockReturnValue(true) };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true) };
+    expect(new OperationsService({} as never, storage as never, scanner as never).fileUploadConfiguration()).toEqual({ upload: expect.objectContaining({ supported: true, maxByteSize: 10 * 1024 * 1024, contentTypes: expect.arrayContaining(['application/pdf']) }) });
+  });
+
+  it('rejects a malformed non-binary upload body before it reaches tenant storage', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true) };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true) };
+
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('quarantines, scans, and stores a valid upload before marking it READY', async () => {
+    const content = Buffer.from('%PDF-1.7');
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
     const ready = { ...pending, status: 'READY' };
     const tx = {
       fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(ready) },
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
-    const storage = { isConfigured: vi.fn().mockReturnValue(true), verifyObject: vi.fn().mockResolvedValue(true) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn().mockResolvedValue(undefined) };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn().mockResolvedValue('CLEAN') };
 
-    await expect(new OperationsService(tenants as never, storage as never).completeFileUpload(identity, eventId)).resolves.toEqual(ready);
-    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith({ where: { id: eventId, status: 'PENDING' }, data: { status: 'READY' } });
-    expect(storage.verifyObject).toHaveBeenCalledWith({ key: 'tenant/key', contentType: 'application/pdf', byteSize: 42, checksum: 'a'.repeat(64) });
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).resolves.toEqual(ready);
+    expect(scanner.scan).toHaveBeenCalledWith(content);
+    expect(storage.putObject).toHaveBeenCalledWith({ key: 'tenant/key', contentType: 'application/pdf', bytes: content, checksum: pending.checksum });
+    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, status: 'QUARANTINED' }, data: expect.objectContaining({ status: 'READY', scannedAt: expect.any(Date) }) }));
   });
 
   it('rejects proxied bytes whose checksum differs from the original intent', async () => {
-    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: 3, checksum: 'a'.repeat(64), status: 'PENDING' };
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: 3, checksum: 'a'.repeat(64), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
     const tx = { fileAsset: { findFirst: vi.fn().mockResolvedValue(pending) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn() };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn() };
 
-    await expect(new OperationsService(tenants as never, storage as never).uploadFileContent(identity, eventId, Buffer.from('bad'))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, Buffer.from('bad'))).rejects.toBeInstanceOf(BadRequestException);
     expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it('rejects a spoofed content type before it reaches the scanner or storage', async () => {
+    const content = Buffer.from('not a PDF');
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
+    const tx = { fileAsset: { findFirst: vi.fn().mockResolvedValue(pending) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn() };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn() };
+
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).rejects.toBeInstanceOf(BadRequestException);
+    expect(scanner.scan).not.toHaveBeenCalled(); expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it('rejects malware in quarantine without persisting its bytes', async () => {
+    const content = Buffer.from('%PDF-1.7');
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
+    const tx = {
+      fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn() };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn().mockResolvedValue('INFECTED') };
+
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).rejects.toBeInstanceOf(BadRequestException);
+    expect(storage.putObject).not.toHaveBeenCalled();
+    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, status: 'QUARANTINED' }, data: expect.objectContaining({ status: 'REJECTED', scannedAt: expect.any(Date) }) }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'file_asset.rejected' }) }));
+  });
+
+  it('commits the malware rejection before returning the HTTP error', async () => {
+    const content = Buffer.from('%PDF-1.7');
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), uploadExpiresAt: new Date(Date.now() + 60_000) };
+    let committedStatus = 'PENDING';
+    // This transaction double commits its staged state only when `work` resolves.
+    // It catches the regression where throwing in the malware branch rolls the
+    // REJECTED update back together with the HTTP error.
+    const tenants = {
+      withTenantTransaction: vi.fn(async (_context, work) => {
+        let stagedStatus = committedStatus;
+        const tx = {
+          fileAsset: {
+            findFirst: vi.fn().mockImplementation(async () => ({ ...pending, status: stagedStatus })),
+            updateMany: vi.fn().mockImplementation(async ({ where, data }) => {
+              if (where.status !== stagedStatus) return { count: 0 };
+              stagedStatus = data.status;
+              return { count: 1 };
+            })
+          },
+          auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+        };
+        const result = await work(tx);
+        committedStatus = stagedStatus;
+        return result;
+      })
+    };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn() };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn().mockResolvedValue('INFECTED') };
+
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).rejects.toBeInstanceOf(BadRequestException);
+    expect(committedStatus).toBe('REJECTED');
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it('compensates a private object when cancellation wins while an upload is scanning', async () => {
+    const content = Buffer.from('%PDF-1.7');
+    const baseAsset = { id: eventId, storageKey: 'tenant/racing-file', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), uploadExpiresAt: new Date(Date.now() + 60_000), storageCleanupAt: null };
+    let committed = { ...baseAsset, status: 'PENDING' };
+    const matchesStatus = (condition: unknown, status: string) => typeof condition === 'string'
+      ? condition === status
+      : Array.isArray((condition as { in?: string[] } | undefined)?.in) && (condition as { in: string[] }).in.includes(status);
+    const tenants = {
+      withTenantTransaction: vi.fn(async (_context, work) => {
+        let staged = { ...committed };
+        const tx = {
+          fileAsset: {
+            findFirst: vi.fn().mockImplementation(async () => ({ ...staged })),
+            findFirstOrThrow: vi.fn().mockImplementation(async () => ({ ...staged })),
+            updateMany: vi.fn().mockImplementation(async ({ where, data }) => {
+              if (where.id !== staged.id || (where.status !== undefined && !matchesStatus(where.status, staged.status))) return { count: 0 };
+              staged = { ...staged, ...data };
+              return { count: 1 };
+            })
+          },
+          auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+        };
+        const result = await work(tx);
+        committed = staged;
+        return result;
+      })
+    };
+    let releaseScan!: (result: 'CLEAN') => void;
+    let signalScanStarted!: () => void;
+    const scanStarted = new Promise<void>((resolve) => { signalScanStarted = resolve; });
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn(async () => { signalScanStarted(); return new Promise<'CLEAN'>((release) => { releaseScan = release; }); }) };
+    const privateObjects = new Set<string>();
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn(async ({ key }: { key: string }) => { privateObjects.add(key); }), deleteObject: vi.fn(async (key: string) => { privateObjects.delete(key); }) };
+    const service = new OperationsService(tenants as never, storage as never, scanner as never);
+
+    const upload = service.uploadFileContent(identity, eventId, content);
+    await scanStarted;
+    await expect(service.cancelFileUpload(identity, eventId)).resolves.toMatchObject({ status: 'REJECTED' });
+    expect(committed.storageCleanupAt).toBeInstanceOf(Date);
+    releaseScan('CLEAN');
+
+    await expect(upload).rejects.toBeInstanceOf(ConflictException);
+    expect(privateObjects).toEqual(new Set());
+    expect(committed).toMatchObject({ status: 'REJECTED', storageCleanupAt: expect.any(Date) });
   });
 
   it('creates a one-time dashboard publication token, records its lifecycle, and never puts the token in the event payload', async () => {

@@ -1,8 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
+import { assertFileContentMatchesType } from '../platform/storage/file-content-validation.js';
+import { MalwareScannerService } from '../platform/storage/malware-scanner.service.js';
 import { ObjectStorageService } from '../platform/storage/object-storage.service.js';
 import { TenantTransactionService, type TenantTransaction } from '../platform/tenant/tenant-transaction.service.js';
 
@@ -84,7 +86,7 @@ export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; 
 
 @Injectable()
 export class OperationsService {
-  public constructor(private readonly tenants: TenantTransactionService, private readonly storage: ObjectStorageService = new ObjectStorageService()) {}
+  public constructor(private readonly tenants: TenantTransactionService, private readonly storage: ObjectStorageService = new ObjectStorageService(), private readonly scanner: MalwareScannerService = new MalwareScannerService()) {}
 
   public listClassifications(identity: SessionIdentity, category?: string) {
     return this.withTenant(identity, (tx) => tx.classificationItem.findMany({ where: category ? { category } : undefined, orderBy: [{ category: 'asc' }, { position: 'asc' }, { label: 'asc' }] }));
@@ -625,54 +627,99 @@ export class OperationsService {
     });
   }
 
+  public fileUploadConfiguration() {
+    return { upload: { supported: this.fileUploadsEnabled(), maxByteSize: 10 * 1024 * 1024, contentTypes: allowedFileTypes } };
+  }
+
   public createFileIntent(identity: SessionIdentity, input: unknown) {
     const data = this.parse(fileIntentSchema, input);
+    if (!this.fileUploadsEnabled()) throw new ServiceUnavailableException('O armazenamento privado ou o scanner de arquivos ainda não está configurado.');
     return this.withTenant(identity, async (tx) => {
       const storageKey = `${identity.organization.id}/${crypto.randomUUID()}`;
-      const asset = await tx.fileAsset.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, storageKey, ...data } });
+      const asset = await tx.fileAsset.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, storageKey, uploadExpiresAt: new Date(Date.now() + 30 * 60_000), ...data } });
       await this.record(tx, identity, 'file_asset.intent_created', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
-      if (!this.storage.isConfigured()) return { asset, upload: { supported: false, reason: 'Configure um adaptador de armazenamento de objetos antes de enviar arquivos.' } };
       return { asset, upload: { supported: true, method: 'POST', url: `/v1/files/${asset.id}/content`, contentType: asset.contentType, byteSize: asset.byteSize } };
     });
   }
 
   public listFiles(identity: SessionIdentity) { return this.withTenant(identity, (tx) => tx.fileAsset.findMany({ orderBy: { createdAt: 'desc' } })); }
 
-  public completeFileUpload(identity: SessionIdentity, assetIdInput: string) {
+  public async uploadFileContent(identity: SessionIdentity, assetIdInput: string, content: unknown) {
     const assetId = this.id(assetIdInput);
-    return this.withTenant(identity, async (tx) => {
-      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
-      const asset = await tx.fileAsset.findFirst({ where: { id: assetId } });
-      if (!asset) throw new NotFoundException('Arquivo não encontrado.');
-      if (asset.status !== 'PENDING') throw new ConflictException('Este arquivo não está aguardando confirmação de envio.');
-      if (!await this.storage.verifyObject({ key: asset.storageKey, contentType: asset.contentType, byteSize: asset.byteSize, checksum: asset.checksum })) {
-        throw new BadRequestException('O arquivo enviado não corresponde ao tamanho ou tipo informado.');
-      }
-      const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'PENDING' }, data: { status: 'READY' } });
-      if (updated.count !== 1) throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
-      const readyAsset = await tx.fileAsset.findFirstOrThrow({ where: { id: asset.id } });
-      await this.record(tx, identity, 'file_asset.ready', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
-      return readyAsset;
-    });
-  }
+    if (!(content instanceof Uint8Array)) throw new BadRequestException('Envie o conteúdo binário do arquivo.');
+    if (!this.fileUploadsEnabled()) throw new ServiceUnavailableException('O armazenamento privado ou o scanner de arquivos ainda não está configurado.');
+    const checksum = createHash('sha256').update(content).digest('hex');
 
-  public uploadFileContent(identity: SessionIdentity, assetIdInput: string, content: Uint8Array) {
-    const assetId = this.id(assetIdInput);
-    return this.withTenant(identity, async (tx) => {
-      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+    // Keep database transactions short: neither ClamAV nor S3 I/O may hold a
+    // tenant transaction open. The PENDING -> QUARANTINED transition reserves
+    // this intent, and every later transition uses compare-and-set semantics.
+    const asset = await this.withTenant(identity, async (tx) => {
       const asset = await tx.fileAsset.findFirst({ where: { id: assetId } });
       if (!asset) throw new NotFoundException('Arquivo não encontrado.');
       if (asset.status !== 'PENDING') throw new ConflictException('Este arquivo não está aguardando envio.');
+      if (!asset.uploadExpiresAt || asset.uploadExpiresAt <= new Date()) throw new ConflictException('Esta intenção de upload expirou. Crie uma nova tentativa.');
       if (content.byteLength !== asset.byteSize) throw new BadRequestException('O tamanho do arquivo recebido é diferente do informado.');
-      const checksum = createHash('sha256').update(content).digest('hex');
       if (checksum !== asset.checksum) throw new BadRequestException('O SHA-256 do arquivo recebido é diferente do informado.');
-      await this.storage.putObject({ key: asset.storageKey, contentType: asset.contentType, bytes: content, checksum });
-      const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'PENDING' }, data: { status: 'READY' } });
-      if (updated.count !== 1) throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
+      assertFileContentMatchesType(asset.contentType, content);
+      const quarantined = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'PENDING', uploadExpiresAt: { gt: new Date() } }, data: { status: 'QUARANTINED', processingLeaseExpiresAt: new Date(Date.now() + 15 * 60_000) } });
+      if (quarantined.count !== 1) throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
+      return asset;
+    });
+
+    let scan: 'CLEAN' | 'INFECTED';
+    try { scan = await this.scanner.scan(content); }
+    catch (error) {
+      await this.resetQuarantinedUpload(identity, asset.id);
+      throw error;
+    }
+    if (scan === 'INFECTED') {
+      const rejected = await this.withTenant(identity, async (tx) => {
+        const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'QUARANTINED' }, data: { status: 'REJECTED', uploadExpiresAt: null, processingLeaseExpiresAt: null, scannedAt: new Date() } });
+        if (updated.count !== 1) throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
+        await this.record(tx, identity, 'file_asset.rejected', 'file_asset', asset.id, { reason: 'malware_detected' });
+        return true;
+      });
+      // The transaction above has committed before the HTTP error is produced.
+      // This prevents an infected file from being silently returned to PENDING.
+      if (rejected) throw new BadRequestException('O arquivo foi rejeitado pela verificação de segurança.');
+    }
+    try { await this.storage.putObject({ key: asset.storageKey, contentType: asset.contentType, bytes: content, checksum }); }
+    catch (error) {
+      await this.resetQuarantinedUpload(identity, asset.id);
+      throw error;
+    }
+
+    const readyAsset = await this.withTenant(identity, async (tx) => {
+      const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'QUARANTINED' }, data: { status: 'READY', uploadExpiresAt: null, processingLeaseExpiresAt: null, scannedAt: new Date() } });
+      if (updated.count !== 1) return null;
       const readyAsset = await tx.fileAsset.findFirstOrThrow({ where: { id: asset.id } });
       await this.record(tx, identity, 'file_asset.ready', 'file_asset', asset.id, { contentType: asset.contentType, byteSize: asset.byteSize });
       return readyAsset;
     });
+    if (!readyAsset) {
+      // A cancellation or expiry may have won while the private object was
+      // being written. This is intentionally outside the transaction.
+      await this.cleanupRejectedObject(identity, asset.id, asset.storageKey);
+      throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
+    }
+    return readyAsset;
+  }
+
+  public async cancelFileUpload(identity: SessionIdentity, assetIdInput: string) {
+    const assetId = this.id(assetIdInput);
+    const cancelled = await this.withTenant(identity, async (tx) => {
+      const asset = await tx.fileAsset.findFirst({ where: { id: assetId, status: { in: ['PENDING', 'QUARANTINED'] } } });
+      if (!asset) throw new NotFoundException('Upload pendente não encontrado.');
+      // Commit the compare-and-set first. Object deletion is deliberately
+      // outside this transaction so an S3 delay never holds a tenant lock.
+      const cancelled = await tx.fileAsset.updateMany({ where: { id: asset.id, status: { in: ['PENDING', 'QUARANTINED'] } }, data: { status: 'REJECTED', uploadExpiresAt: null, storageCleanupAt: null } });
+      if (cancelled.count !== 1) throw new ConflictException('Este upload foi alterado por outra solicitação. Atualize a página.');
+      const result = await tx.fileAsset.findFirstOrThrow({ where: { id: asset.id } });
+      await this.record(tx, identity, 'file_asset.upload_cancelled', 'file_asset', asset.id, {});
+      return { asset, result };
+    });
+    await this.cleanupRejectedObject(identity, cancelled.asset.id, cancelled.asset.storageKey);
+    return cancelled.result;
   }
 
   public openFileDownload(identity: SessionIdentity, assetIdInput: string) {
@@ -790,6 +837,29 @@ export class OperationsService {
       tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: resourceId, eventType: action, payload: metadata as Prisma.InputJsonValue } })
     ]);
   }
+  private async resetQuarantinedUpload(identity: SessionIdentity, assetId: string): Promise<void> {
+    await this.withTenant(identity, async (tx) => {
+      await tx.fileAsset.updateMany({ where: { id: assetId, status: 'QUARANTINED' }, data: { status: 'PENDING', processingLeaseExpiresAt: null } });
+    });
+  }
+  private async cleanupRejectedObject(identity: SessionIdentity, assetId: string, storageKey: string): Promise<void> {
+    // A previous cleanup might have run before an in-flight S3 put completed.
+    // Resetting this marker on a rejected row makes that rare interleaving
+    // retryable instead of permanently orphaning an object.
+    await this.withTenant(identity, async (tx) => {
+      await tx.fileAsset.updateMany({ where: { id: assetId, status: 'REJECTED' }, data: { storageCleanupAt: null } });
+    });
+    if (!this.storage.isConfigured()) return;
+    try {
+      await this.storage.deleteObject(storageKey);
+      await this.withTenant(identity, async (tx) => {
+        await tx.fileAsset.updateMany({ where: { id: assetId, status: 'REJECTED', storageCleanupAt: null }, data: { storageCleanupAt: new Date() } });
+      });
+    } catch {
+      // The database marker stays null, so the bounded scheduled cleanup can
+      // retry later without exposing an object or turning the cancellation back.
+    }
+  }
   private withTenant<T>(identity: SessionIdentity, work: (tx: TenantTransaction) => Promise<T>): Promise<T> { return this.tenants.withTenantTransaction({ tenantId: identity.organization.id, tenantSlug: identity.organization.slug, membershipId: identity.membership.id, actorId: identity.user.id }, work); }
   private id(value: string): string { const parsed = uuid.safeParse(value); if (!parsed.success) throw new BadRequestException('Identificador inválido.'); return parsed.data; }
   private parse<T>(schema: z.ZodType<T>, input: unknown): T { const parsed = schema.safeParse(input); if (!parsed.success) throw new BadRequestException(parsed.error.issues[0]?.message ?? 'Dados inválidos.'); return parsed.data; }
@@ -816,4 +886,5 @@ export class OperationsService {
     const value = process.env[secretRef];
     return typeof value === 'string' && value.trim().length > 0;
   }
+  private fileUploadsEnabled(): boolean { return this.storage.isConfigured() && this.scanner.isConfigured(); }
 }

@@ -107,14 +107,16 @@ export class OperationsController {
   @Post('integrations/:integrationId/configuration/check') @RequiredCapabilities('integrations.manage')
   public checkIntegrationConfiguration(@Req() request: AuthenticatedRequest, @Param('integrationId') integrationId: string) { return this.operations.checkIntegrationConfiguration(request.identity, integrationId); }
 
+  @Get('files/configuration') @RequiredCapabilities('operations.view')
+  public fileUploadConfiguration() { return this.operations.fileUploadConfiguration(); }
   @Get('files') @RequiredCapabilities('operations.view')
   public files(@Req() request: AuthenticatedRequest) { return this.operations.listFiles(request.identity).then((files) => ({ files })); }
   @Post('files/intents') @RequiredCapabilities('operations.manage')
   public createFileIntent(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createFileIntent(request.identity, input); }
-  @Post('files/:fileId/complete') @RequiredCapabilities('operations.manage')
-  public completeFileUpload(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string) { return this.operations.completeFileUpload(request.identity, fileId).then((file) => ({ file })); }
   @Post('files/:fileId/content') @RequiredCapabilities('operations.manage')
   public uploadFileContent(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string, @Body() content: Uint8Array) { return this.operations.uploadFileContent(request.identity, fileId, content).then((file) => ({ file })); }
+  @Post('files/:fileId/cancel') @RequiredCapabilities('operations.manage')
+  public cancelFileUpload(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string) { return this.operations.cancelFileUpload(request.identity, fileId).then((file) => ({ file })); }
   @Get('files/:fileId/download') @RequiredCapabilities('operations.view')
   public fileDownload(@Req() request: AuthenticatedRequest, @Param('fileId') fileId: string, @Res({ passthrough: true }) reply: FastifyReply) {
     return this.operations.openFileDownload(request.identity, fileId).then((download) => {

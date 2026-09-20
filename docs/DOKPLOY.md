@@ -11,7 +11,7 @@ Use três serviços independentes no mesmo ambiente. A aplicação usa duas rede
 | --- | --- | --- | --- |
 | `builder-postgres` | Database / PostgreSQL 18 | dados, RLS e migrations | nenhuma |
 | `builder-redis` | Redis | cache e coordenação distribuída | nenhuma |
-| `Builder Solutions Platform` | Compose | `db-bootstrap`, `migrate`, API, worker, web e Redpanda | somente `web:80` |
+| `Builder Solutions Platform` | Compose | `db-bootstrap`, `migrate`, API, worker, web, Redpanda e ClamAV | somente `web:80` |
 
 Os Dockerfiles da aplicação ficam em `infra/docker/`. PostgreSQL e Redis não fazem parte do `docker-compose.yml`: o Compose acessa-os somente pelas Internal Connection URLs exibidas pelo Dokploy. O arquivo anexa somente os consumidores de dados a `dokploy-network`; confirme no **Preview Compose** e nos detalhes de Connection que as duas Database services, `db-bootstrap`, `migrate`, API e worker aparecem nessa rede. Isso permite backup, atualização e rotação de credenciais de dados sem recriar os containers da aplicação.
 
@@ -40,7 +40,7 @@ Cadastre os valores de `.env.example` na interface Environment do serviço Compo
 
 ## Armazenamento de objetos privado
 
-O serviço S3 compatível deve permanecer sem domínio público. A API recebe os bytes autenticados e os encaminha para o endpoint interno; por isso não há CORS de navegador nem URL S3 exposta ao cliente. Para ativar uploads, configure na aplicação **os cinco valores** abaixo usando o endpoint interno do serviço, sem salvá-los no Git:
+O serviço S3 compatível deve permanecer sem domínio público. A API recebe os bytes autenticados e os encaminha para o endpoint interno; por isso não há CORS de navegador nem URL S3 exposta ao cliente. O Compose também sobe o ClamAV exclusivamente na rede privada; a API só marca um arquivo como pronto após validação estrutural, checksum e resposta limpa do scanner. Para ativar uploads, configure na aplicação **os cinco valores** abaixo usando o endpoint interno do serviço, sem salvá-los no Git:
 
 ```env
 S3_ENDPOINT=http://<host-interno>:9000
@@ -50,7 +50,7 @@ S3_ACCESS_KEY_ID=<credencial-de-runtime>
 S3_SECRET_ACCESS_KEY=<segredo-de-runtime>
 ```
 
-Se algum deles ficar vazio, a API preserva os arquivos como pendentes e informa que o adaptador não está configurado; ela nunca grava credenciais em `integrations.config`.
+Se algum deles ficar vazio, a API não aceita novas intenções de upload e a tela Arquivos mostra que o armazenamento está pendente; assim não são criados registros órfãos. Intenções expiram em 30 minutos e podem ser canceladas pela pessoa administradora; o processo da API também expira periodicamente tentativas abandonadas e remove objetos privados retornados pelo procedimento limitado do banco. Ela nunca grava credenciais em `integrations.config`.
 - `REDIS_URL`: URL interna **autenticada** (`redis://` ou `rediss://`) do `builder-redis`, usada pela API. Nunca aponte para um endpoint público. A configuração da API rejeita URL sem senha ou com protocolo diferente.
 - `BOOTSTRAP_TOKEN`: segredo aleatório de ao menos 32 caracteres, obrigatório em produção. Ele é enviado uma única vez, no formulário de primeira configuração, e impede que o primeiro visitante público assuma a conta OWNER. Cadastre-o como secret; não use URL, senha de banco ou token reaproveitado.
 - `CURSOR_SIGNING_SECRET`: segredo diferente de ao menos 32 caracteres, obrigatório em produção. Ele assina cursores de paginação de respostas de formulários e não deve ser reutilizado para bootstrap, banco, Redis ou outro propósito.

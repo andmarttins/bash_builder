@@ -25,6 +25,8 @@ import { PublicDashboardAccessService } from './platform/public-access/public-da
 import { PublicTvDisplayAccessService } from './platform/public-access/public-tv-display-access.service.js';
 import { PublicTvPlaylistAccessService } from './platform/public-access/public-tv-playlist-access.service.js';
 import { ObjectStorageService } from './platform/storage/object-storage.service.js';
+import { MalwareScannerService } from './platform/storage/malware-scanner.service.js';
+import { FileUploadCleanupService } from './platform/storage/file-upload-cleanup.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
 import { PublicDashboardsController } from './operations/public-dashboards.controller.js';
@@ -56,6 +58,8 @@ import { NotificationsService } from './notifications/notifications.service.js';
     PublicTvDisplayAccessService,
     PublicTvPlaylistAccessService,
     ObjectStorageService,
+    MalwareScannerService,
+    FileUploadCleanupService,
     OperationsService,
     NotificationsService
   ]

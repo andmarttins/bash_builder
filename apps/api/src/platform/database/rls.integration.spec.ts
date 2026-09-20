@@ -101,6 +101,31 @@ describeIntegration('PostgreSQL row-level security', () => {
     }
   });
 
+  it('isolates file assets while allowing only the bounded cleanup procedure to cross tenant rows', async () => {
+    const fileA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81';
+    const fileB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';
+    await bootstrap.query(
+      `INSERT INTO "file_assets" (id, organization_id, storage_key, original_name, content_type, byte_size, status, upload_expires_at, updated_at)
+       VALUES ($1, $2, $3, 'a.pdf', 'application/pdf', 1, 'PENDING', NOW() - INTERVAL '1 minute', NOW()),
+              ($4, $5, $6, 'b.pdf', 'application/pdf', 1, 'PENDING', NOW() - INTERVAL '1 minute', NOW())`,
+      [fileA, tenantA, 'tenant-a/expired-file', fileB, tenantB, 'tenant-b/expired-file']
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "file_assets" ORDER BY id')).rows).toEqual([{ id: fileA }]);
+      // app_runtime can execute the bounded SECURITY DEFINER procedure, but
+      // cannot otherwise enumerate the other tenant's file row through RLS.
+      const expired = await runtime.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id');
+      expect(expired.rows.filter((row) => row.id === fileA || row.id === fileB)).toEqual([{ id: fileA }, { id: fileB }]);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
+    expect((await bootstrap.query('SELECT id, status::text FROM "file_assets" WHERE id IN ($1, $2) ORDER BY id', [fileA, fileB])).rows).toEqual([
+      { id: fileA, status: 'PENDING' }, { id: fileB, status: 'PENDING' }
+    ]);
+  });
+
   it('does not grant the runtime role access to identity hashes', async () => {
     await expect(runtime.query('SELECT password_hash FROM "identity_users"')).rejects.toThrow(/permission denied/i);
   });
