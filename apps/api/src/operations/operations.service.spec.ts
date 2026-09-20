@@ -1,4 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { calculateHhtRates, OperationsService } from './operations.service.js';
 
@@ -53,5 +54,36 @@ describe('calculateHhtRates', () => {
 
     await expect(service.transitionChange(identity, changeId, { status: 'APPROVED', expectedVersion: 2 })).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.changeRisk.count).toHaveBeenCalledWith({ where: { changeId } });
+  });
+
+  it('places a moved BASH card between its destination neighbors under the board lock', async () => {
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      bashCard: {
+        findFirst: vi.fn().mockResolvedValue({ id: eventId, stage: 'BACKLOG' }),
+        findMany: vi.fn().mockResolvedValue([{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', position: new Prisma.Decimal(1) }, { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17', position: new Prisma.Decimal(2) }]),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, stage: 'DESIGN', position: new Prisma.Decimal('1.5'), version: 2 })
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+      outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new OperationsService(tenants as never);
+
+    await service.moveCard(identity, eventId, { stage: 'DESIGN', position: 1, expectedVersion: 1 });
+    const update = tx.bashCard.updateMany.mock.calls[0]?.[0] as { data: { position: Prisma.Decimal; stage: string } };
+    expect(update.data.stage).toBe('DESIGN');
+    expect(update.data.position.toString()).toBe('1.5');
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a stale HHT status transition instead of overwriting a newer report', async () => {
+    const tx = { hhtReport: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'DRAFT', submittedAt: null }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new OperationsService(tenants as never);
+
+    await expect(service.setHhtReportStatus(identity, eventId, { status: 'SUBMITTED', expectedVersion: 1 })).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.hhtReport.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1, status: 'DRAFT' } }));
   });
 });

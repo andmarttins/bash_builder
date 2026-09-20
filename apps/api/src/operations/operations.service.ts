@@ -29,7 +29,7 @@ const commentSchema = z.object({ content: text(1, 10_000) });
 const moveCardSchema = z.object({ stage: z.enum(bashStages), position: z.number().finite().nonnegative(), expectedVersion });
 const createCompanySchema = z.object({ name: text(2, 200), document: optionalText(32), site: text(2, 120), coordination: optionalText(160) });
 const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative() });
-const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), });
+const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
 const dashboardSchema = z.object({ title: text(2, 160), description: optionalText(10_000), widgets: z.array(z.object({ type: text(2, 80), title: text(2, 160), config: z.record(z.string(), z.unknown()).default({}) })).max(24).default([]) });
 const dashboardUpdateSchema = dashboardSchema.partial().extend({ expectedVersion }).refine((input) => input.title !== undefined || input.description !== undefined || input.widgets !== undefined, 'Informe alguma alteração.');
@@ -167,6 +167,7 @@ export class OperationsService {
   public createCard(identity: SessionIdentity, input: unknown) {
     const data = this.parse(createCardSchema, input);
     return this.withTenant(identity, async (tx) => {
+      await this.lockBoardStage(tx, identity.organization.id, 'BACKLOG');
       const last = await tx.bashCard.findFirst({ where: { stage: 'BACKLOG' }, select: { position: true }, orderBy: { position: 'desc' } });
       const card = await tx.bashCard.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, position: (last?.position.toNumber() ?? 0) + 1, ...data } });
       await this.record(tx, identity, 'bash_card.created', 'bash_card', card.id, { stage: card.stage });
@@ -187,8 +188,15 @@ export class OperationsService {
   public moveCard(identity: SessionIdentity, cardIdInput: string, input: unknown) {
     const cardId = this.id(cardIdInput); const data = this.parse(moveCardSchema, input);
     return this.withTenant(identity, async (tx) => {
-      await this.cardExists(tx, cardId);
-      const moved = await tx.bashCard.updateMany({ where: { id: cardId, version: data.expectedVersion }, data: { stage: data.stage, position: new Prisma.Decimal(data.position), version: { increment: 1 } } });
+      const current = await tx.bashCard.findFirst({ where: { id: cardId }, select: { id: true, stage: true } });
+      if (!current) throw new NotFoundException('Cartão não encontrado.');
+      for (const stage of [...new Set([current.stage, data.stage])].sort()) await this.lockBoardStage(tx, identity.organization.id, stage);
+      const cards = await tx.bashCard.findMany({ where: { stage: data.stage, NOT: { id: cardId } }, select: { id: true, position: true }, orderBy: { position: 'asc' } });
+      const index = Math.min(Math.floor(data.position), cards.length);
+      const before = index > 0 ? cards[index - 1]?.position : undefined;
+      const after = cards[index]?.position;
+      const position = before === undefined ? (after === undefined ? new Prisma.Decimal(1) : after.minus(1)) : after === undefined ? before.plus(1) : before.plus(after).dividedBy(2);
+      const moved = await tx.bashCard.updateMany({ where: { id: cardId, version: data.expectedVersion }, data: { stage: data.stage, position, version: { increment: 1 } } });
       if (moved.count !== 1) throw new ConflictException('Este cartão foi alterado por outra pessoa.');
       const card = await tx.bashCard.findFirstOrThrow({ where: { id: cardId } });
       await this.record(tx, identity, 'bash_card.moved', 'bash_card', cardId, { stage: data.stage, position: data.position, version: card.version });
@@ -221,7 +229,7 @@ export class OperationsService {
       if (!window || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
       const existing = await tx.hhtReport.findFirst({ where: { companyId: data.companyId, year: data.year, month: data.month } });
       if (existing?.status === 'LOCKED') throw new ConflictException('Este período HHT está bloqueado.');
-      const report = await tx.hhtReport.upsert({ where: { companyId_year_month: { companyId: data.companyId, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: data });
+      const report = await tx.hhtReport.upsert({ where: { companyId_year_month: { companyId: data.companyId, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: { ...data, version: { increment: 1 } } });
       await this.record(tx, identity, existing ? 'hht_report.updated' : 'hht_report.created', 'hht_report', report.id, { year: report.year, month: report.month });
       return { ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) };
     });
@@ -234,7 +242,9 @@ export class OperationsService {
       if (!current) throw new NotFoundException('Relatório HHT não encontrado.');
       if (current.status === 'LOCKED') throw new ConflictException('Este período HHT já está bloqueado.');
       if (data.status === 'LOCKED' && current.status !== 'SUBMITTED') throw new BadRequestException('Envie o relatório antes de bloqueá-lo.');
-      const report = await tx.hhtReport.update({ where: { id: reportId }, data: { status: data.status as HhtReportStatus, submittedAt: data.status === 'SUBMITTED' ? new Date() : current.submittedAt } });
+      const changed = await tx.hhtReport.updateMany({ where: { id: reportId, version: data.expectedVersion, status: current.status }, data: { status: data.status as HhtReportStatus, submittedAt: data.status === 'SUBMITTED' ? new Date() : current.submittedAt, version: { increment: 1 } } });
+      if (changed.count !== 1) throw new ConflictException('Este relatório HHT foi alterado por outra pessoa. Atualize a página antes de tentar novamente.');
+      const report = await tx.hhtReport.findFirstOrThrow({ where: { id: reportId } });
       await this.record(tx, identity, 'hht_report.status_changed', 'hht_report', reportId, { status: data.status });
       return report;
     });
@@ -373,6 +383,10 @@ export class OperationsService {
   private changeTransitionAllowed(from: ChangeStatus, to: ChangeStatus): boolean {
     const allowed: Record<ChangeStatus, readonly ChangeStatus[]> = { DRAFT: ['IN_REVIEW', 'REJECTED'], IN_REVIEW: ['DRAFT', 'APPROVED', 'REJECTED'], APPROVED: ['IMPLEMENTING'], IMPLEMENTING: ['COMPLETED', 'IN_REVIEW'], COMPLETED: [], REJECTED: [] };
     return allowed[from].includes(to);
+  }
+
+  private async lockBoardStage(tx: TenantTransaction, organizationId: string, stage: string): Promise<void> {
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`${organizationId}:${stage}`}))`);
   }
 
   private async eventExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.safetyEvent.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Evento não encontrado.'); }
