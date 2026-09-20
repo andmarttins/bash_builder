@@ -21,7 +21,8 @@ const integrationStatuses = ['DISABLED', 'ACTIVE', 'ERROR'] as const;
 const createClassificationSchema = z.object({ category: text(2, 80), label: text(2, 160), value: text(1, 120), position: z.number().int().nonnegative().optional() });
 const createEventSchema = z.object({
   code: text(2, 32).regex(/^[A-Z0-9][A-Z0-9-]*$/i, 'Código do evento inválido.'), title: text(2, 200), description: optionalText(10_000), occurredAt: z.coerce.date(),
-  site: optionalText(160), area: optionalText(160), origin: text(2, 80), actualClass: optionalText(120), potentialClass: optionalText(120), reporterName: optionalText(160), reporterEmail: z.string().email().max(320).optional().nullable()
+  site: optionalText(160), area: optionalText(160), origin: text(2, 80), actualClass: optionalText(120), potentialClass: optionalText(120), reporterName: optionalText(160), reporterEmail: z.string().email().max(320).optional().nullable(),
+  slaHours: z.number().int().min(1).max(720).optional().nullable()
 });
 const eventActionSchema = z.object({ title: text(2, 200), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
 const eventTransitionSchema = z.object({ status: z.enum(eventStatuses), expectedVersion });
@@ -122,8 +123,10 @@ export class OperationsService {
   public createEvent(identity: SessionIdentity, input: unknown) {
     const data = this.parse(createEventSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const event = await tx.safetyEvent.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, ...data } });
-      await this.record(tx, identity, 'safety_event.created', 'safety_event', event.id, { code: event.code });
+      const { slaHours, ...eventData } = data;
+      const slaDueAt = slaHours ? new Date(eventData.occurredAt.getTime() + slaHours * 60 * 60 * 1_000) : null;
+      const event = await tx.safetyEvent.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, slaDueAt, ...eventData } });
+      await this.record(tx, identity, 'safety_event.created', 'safety_event', event.id, { code: event.code, slaHours: slaHours ?? null, slaDueAt: slaDueAt?.toISOString() ?? null });
       return event;
     });
   }

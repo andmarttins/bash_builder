@@ -463,6 +463,38 @@ describeIntegration('PostgreSQL row-level security', () => {
     await expect(worker.query('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [0, 24])).rejects.toThrow(/invalid change deadline limits/i);
   });
 
+  it('delivers only active-tenant safety-event SLA alerts and revalidates an event closed after selection', async () => {
+    const creatorA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c11';
+    const adminA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c12';
+    const creatorB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c13';
+    const inactiveA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c14';
+    const eventA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c15';
+    const eventB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c16';
+    const resolved = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c17';
+    const race = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380c18';
+    await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW()), ($3, $4, TRUE, NOW()), ($5, $6, TRUE, NOW()), ($7, $8, TRUE, NOW())', [creatorA, 'sla-creator-a@example.test', adminA, 'sla-admin-a@example.test', creatorB, 'sla-creator-b@example.test', inactiveA, 'sla-inactive-a@example.test']);
+    await bootstrap.query('INSERT INTO "memberships" (organization_id, identity_user_id, role, status, updated_at) VALUES ($1, $2, \'MEMBER\', \'ACTIVE\', NOW()), ($1, $3, \'ADMIN\', \'ACTIVE\', NOW()), ($1, $4, \'OWNER\', \'SUSPENDED\', NOW()), ($5, $6, \'OWNER\', \'ACTIVE\', NOW())', [tenantA, creatorA, adminA, inactiveA, tenantB, creatorB]);
+    await bootstrap.query('INSERT INTO "safety_events" (id, organization_id, code, title, occurred_at, origin, status, sla_due_at, created_by_id, updated_at) VALUES ($1, $2, \'EVT-SLA-A\', \'Tenant A\', NOW(), \'TEST\', \'OPEN\', NOW() + INTERVAL \'1 hour\', $3, NOW()), ($4, $5, \'EVT-SLA-B\', \'Tenant B\', NOW(), \'TEST\', \'IN_REVIEW\', NOW() - INTERVAL \'1 hour\', $6, NOW()), ($7, $2, \'EVT-SLA-C\', \'Resolved\', NOW(), \'TEST\', \'RESOLVED\', NOW() - INTERVAL \'1 hour\', $3, NOW()), ($8, $2, \'EVT-SLA-D\', \'Race\', NOW(), \'TEST\', \'OPEN\', NOW() + INTERVAL \'1 hour\', $3, NOW())', [eventA, tenantA, creatorA, eventB, tenantB, creatorB, resolved, race]);
+    const query = 'SELECT * FROM app.list_safety_event_sla_notifications($1, $2)';
+    const notifications = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown> }>(query, [25, 24])).rows;
+    const notificationA = notifications.find((notification) => notification.aggregate_id === eventA)!;
+    const notificationB = notifications.find((notification) => notification.aggregate_id === eventB)!;
+    const notificationRace = notifications.find((notification) => notification.aggregate_id === race)!;
+    expect(notificationA).toEqual(expect.objectContaining({ organization_id: tenantA, event_type: 'safety_event.sla_reminder' }));
+    expect(notificationB).toEqual(expect.objectContaining({ organization_id: tenantB, event_type: 'safety_event.sla_escalated' }));
+    expect(notifications.some((notification) => notification.aggregate_id === resolved)).toBe(false);
+    const deliveryQuery = 'SELECT app.deliver_safety_event_sla_notifications($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb) AS delivered';
+    expect((await worker.query<{ delivered: number }>(deliveryQuery, [notificationA.event_id, notificationA.organization_id, notificationA.aggregate_id, notificationA.event_type, JSON.stringify(notificationA.payload)])).rows).toEqual([{ delivered: 2 }]);
+    expect((await bootstrap.query<{ identity_user_id: string }>('SELECT identity_user_id FROM "user_notifications" WHERE event_id = $1 ORDER BY identity_user_id', [notificationA.event_id])).rows).toEqual([{ identity_user_id: creatorA }, { identity_user_id: adminA }].sort((left, right) => left.identity_user_id.localeCompare(right.identity_user_id)));
+    expect((await worker.query<{ delivered: number }>(deliveryQuery, [notificationB.event_id, notificationB.organization_id, notificationB.aggregate_id, notificationB.event_type, JSON.stringify(notificationB.payload)])).rows).toEqual([{ delivered: 1 }]);
+    expect((await worker.query<{ delivered: number }>(deliveryQuery, [notificationB.event_id, notificationB.organization_id, notificationB.aggregate_id, notificationB.event_type, JSON.stringify(notificationB.payload)])).rows).toEqual([{ delivered: 0 }]);
+    await bootstrap.query("UPDATE \"safety_events\" SET status = 'RESOLVED' WHERE id = $1", [race]);
+    expect((await worker.query<{ delivered: number }>(deliveryQuery, [notificationRace.event_id, notificationRace.organization_id, notificationRace.aggregate_id, notificationRace.event_type, JSON.stringify(notificationRace.payload)])).rows).toEqual([{ delivered: 0 }]);
+    await expect(runtime.query(query, [25, 24])).rejects.toThrow(/permission denied/i);
+    await expect(runtime.query(deliveryQuery, [notificationA.event_id, notificationA.organization_id, notificationA.aggregate_id, notificationA.event_type, JSON.stringify(notificationA.payload)])).rejects.toThrow(/permission denied/i);
+    await expect(worker.query('SELECT * FROM app.list_safety_event_sla_notifications($1, $2)', [0, 24])).rejects.toThrow(/invalid safety event SLA limits/i);
+  });
+
   it('claims, retries, publishes and de-duplicates outbox events through narrow worker procedures', async () => {
     const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81';
     const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';

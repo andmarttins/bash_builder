@@ -417,6 +417,7 @@ model SafetyEvent {
   potentialClass     String?           @map("potential_class") @db.VarChar(120)
   reporterName       String?           @map("reporter_name") @db.VarChar(160)
   reporterEmail      String?           @map("reporter_email") @db.VarChar(320)
+  slaDueAt           DateTime?         @map("sla_due_at") @db.Timestamptz(6)
   createdById        String?           @map("created_by_id") @db.Uuid
   version            Int               @default(1)
   createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)

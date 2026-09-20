@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { TenantTransactionService, type TenantTransaction } from '../platform/tenant/tenant-transaction.service.js';
 
-const notificationTargetSchema = z.enum(['changes']);
+const notificationTargetSchema = z.enum(['changes', 'events']);
 
 @Injectable()
 export class NotificationsService {

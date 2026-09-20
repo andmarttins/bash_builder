@@ -48,6 +48,24 @@ describe('calculateHhtRates', () => {
     expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'safety_event.status_changed', aggregateId: eventId }) }));
   });
 
+  it('derives a bounded event SLA deadline and does not persist the input-only duration', async () => {
+    const occurredAt = '2026-09-20T12:00:00.000Z';
+    const created = { id: eventId, code: 'EVT-SLA' };
+    const tx = {
+      safetyEvent: { create: vi.fn().mockResolvedValue(created) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new OperationsService(tenants as never);
+
+    await expect(service.createEvent(identity, { code: 'EVT-SLA', title: 'Evento com SLA', origin: 'MANUAL', occurredAt, slaHours: 24 })).resolves.toEqual(created);
+    expect(tx.safetyEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ slaDueAt: new Date('2026-09-21T12:00:00.000Z') }) }));
+    expect(tx.safetyEvent.create.mock.calls[0]?.[0].data).not.toHaveProperty('slaHours');
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ metadata: expect.objectContaining({ slaHours: 24, slaDueAt: '2026-09-21T12:00:00.000Z' }) }) }));
+    expect(() => service.createEvent(identity, { code: 'EVT-BAD', title: 'Evento inválido', origin: 'MANUAL', occurredAt, slaHours: 0 })).toThrow(BadRequestException);
+    expect(() => service.createEvent(identity, { code: 'EVT-BAD', title: 'Evento inválido', origin: 'MANUAL', occurredAt, slaHours: 721 })).toThrow(BadRequestException);
+  });
+
   it('does not approve a change while an approval decision is pending', async () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },

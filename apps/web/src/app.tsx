@@ -3239,6 +3239,9 @@ function EventsModulePage({
           site: values.get("site") || null,
           area: values.get("area") || null,
           description: values.get("description") || null,
+          slaHours: values.get("slaHours")
+            ? Number(values.get("slaHours"))
+            : null,
         }),
       });
       event.currentTarget.reset();
@@ -3385,6 +3388,17 @@ function EventsModulePage({
             <input name="area" maxLength={160} />
           </label>
           <label>
+            SLA (horas)
+            <input
+              name="slaHours"
+              type="number"
+              min={1}
+              max={720}
+              step={1}
+              placeholder="Opcional"
+            />
+          </label>
+          <label>
             Descrição
             <textarea name="description" maxLength={10000} />
           </label>
@@ -3428,6 +3442,8 @@ function EventsModulePage({
                       {stringValue(safetyEvent.site) ?? "Sem unidade"} ·{" "}
                       {actions.filter((action) => !action.completedAt).length}{" "}
                       ação(ões) pendente(s)
+                      {stringValue(safetyEvent.slaDueAt) &&
+                        ` · SLA ${new Date(stringValue(safetyEvent.slaDueAt)!).toLocaleString("pt-BR")}`}
                     </small>
                     {actions.length > 0 && (
                       <ul className="nested-list">
