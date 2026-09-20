@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { calculateHhtRates, OperationsService } from './operations.service.js';
@@ -47,13 +47,111 @@ describe('calculateHhtRates', () => {
     expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'safety_event.status_changed', aggregateId: eventId }) }));
   });
 
+  it('does not approve a change while an approval decision is pending', async () => {
+    const tx = {
+      changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },
+      changeRisk: { count: vi.fn().mockResolvedValue(1) },
+      changeApproval: { findMany: vi.fn().mockResolvedValue([{ decision: 'PENDING' }]) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).transitionChange(identity, changeId, { status: 'APPROVED', expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.changeApproval.findMany).toHaveBeenCalledWith({ where: { changeId }, select: { decision: true } });
+  });
+
+  it('returns a conflict instead of an internal error for a duplicated change code', async () => {
+    const duplicate = new Prisma.PrismaClientKnownRequestError('duplicate', { code: 'P2002', clientVersion: '6.19.3' });
+    const tx = { changeRequest: { create: vi.fn().mockRejectedValue(duplicate) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).createChange(identity, { publicCode: 'MUD-1', title: 'Mudança de teste' })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('requires the designated approver to record an approval decision', async () => {
+    const tx = {
+      changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },
+      changeApproval: { findFirst: vi.fn().mockResolvedValue({ approverUserId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16' }) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).decideChangeApproval(identity, changeId, eventId, { decision: 'APPROVED', expectedVersion: 1 })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('records an approver decision with optimistic concurrency and an outbox event', async () => {
+    const decided = { id: eventId, decision: 'APPROVED', version: 2 };
+    const tx = {
+      changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },
+      changeApproval: { findFirst: vi.fn().mockResolvedValue({ approverUserId: identity.user.id }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(decided) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).decideChangeApproval(identity, changeId, eventId, { decision: 'APPROVED', expectedVersion: 1 })).resolves.toEqual(decided);
+    expect(tx.changeApproval.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, changeId, decision: 'PENDING', version: 1 } }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'change.approval_decided' }) }));
+  });
+
+  it('only lets a manager request approval from another active organization member', async () => {
+    const tx = {
+      changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5, createdById: identity.user.id }) },
+      membership: { findFirst: vi.fn().mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', identityUserId: identity.user.id, role: 'OWNER' }) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).addChangeApproval(identity, changeId, { approverName: 'Owner', approverEmail: identity.user.email })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.membership.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organizationId: identity.organization.id, status: 'ACTIVE' }) }));
+  });
+
+  it('links only a ready tenant file as evidence and emits an audit event', async () => {
+    const evidence = { id: eventId, file: { originalName: 'rollback.pdf' } };
+    const tx = {
+      changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId }) },
+      fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
+      changeEvidence: { create: vi.fn().mockResolvedValue(evidence) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).addChangeEvidence(identity, changeId, { fileId: eventId, category: 'Plano de retorno' })).resolves.toEqual(evidence);
+    expect(tx.fileAsset.findFirst).toHaveBeenCalledWith({ where: { id: eventId, status: 'READY' }, select: { id: true } });
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'change.evidence_linked' }) }));
+  });
+
   it('does not approve a change request without a registered risk', async () => {
-    const tx = { changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW' }) }, changeRisk: { count: vi.fn().mockResolvedValue(0) } };
+    const tx = { changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) }, changeRisk: { count: vi.fn().mockResolvedValue(0) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const service = new OperationsService(tenants as never);
 
     await expect(service.transitionChange(identity, changeId, { status: 'APPROVED', expectedVersion: 2 })).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.changeRisk.count).toHaveBeenCalledWith({ where: { changeId } });
+  });
+
+  it('moves a change through a numbered workflow step atomically', async () => {
+    const completed = { id: changeId, status: 'DRAFT', currentStep: 2, version: 2 };
+    const tx = {
+      changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'DRAFT', currentStep: 1 }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(completed) },
+      changeWorkflowStep: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).completeChangeWorkflowStep(identity, changeId, '1', { notes: 'Informações gerais validadas.', data: { scope: 'Trocar o equipamento de proteção.', requester: 'Coordenação de segurança.' }, expectedVersion: 1 })).resolves.toEqual(completed);
+    expect(tx.changeWorkflowStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { changeId, step: 'GENERAL_INFORMATION', status: 'PENDING' } }));
+    expect(tx.changeRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ currentStep: 2, status: 'DRAFT' }) }));
+  });
+
+  it('does not let an old approved record bypass incomplete workflow steps', async () => {
+    const tx = { changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'APPROVED', currentStep: 3 }) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).transitionChange(identity, changeId, { status: 'IMPLEMENTING', expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('requires a risk before completing the risk-assessment workflow step', async () => {
+    const tx = { changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'DRAFT', currentStep: 4 }) }, changeRisk: { count: vi.fn().mockResolvedValue(0) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).completeChangeWorkflowStep(identity, changeId, '4', { notes: 'Avaliação registrada com aceite residual.', data: { residualRiskAcceptance: 'Aceite formal do risco residual.' }, expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('places a moved BASH card between its destination neighbors under the board lock', async () => {

@@ -27,11 +27,30 @@ export class OperationsController {
   public transitionEvent(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string, @Body() input: unknown) { return this.operations.transitionEvent(request.identity, eventId, input).then((event) => ({ event })); }
 
   @Get('changes') @RequiredCapabilities('changes.view')
-  public changes(@Req() request: AuthenticatedRequest) { return this.operations.listChanges(request.identity).then((changes) => ({ changes })); }
+  public changes(@Req() request: AuthenticatedRequest, @Query() query: unknown) { return this.operations.listChanges(request.identity, query); }
+  @Get('changes/:changeId') @RequiredCapabilities('changes.view')
+  public change(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string) { return this.operations.getChange(request.identity, changeId); }
   @Post('changes') @RequiredCapabilities('changes.manage')
   public createChange(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createChange(request.identity, input).then((change) => ({ change })); }
   @Post('changes/:changeId/risks') @RequiredCapabilities('changes.manage')
   public addChangeRisk(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Body() input: unknown) { return this.operations.addChangeRisk(request.identity, changeId, input).then((risk) => ({ risk })); }
+  @Post('changes/:changeId/approvals') @RequiredCapabilities('changes.manage')
+  public addChangeApproval(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Body() input: unknown) { return this.operations.addChangeApproval(request.identity, changeId, input).then((approval) => ({ approval })); }
+  @Post('changes/:changeId/approvals/:approvalId/decision') @RequiredCapabilities('changes.approve')
+  public decideChangeApproval(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Param('approvalId') approvalId: string, @Body() input: unknown) { return this.operations.decideChangeApproval(request.identity, changeId, approvalId, input).then((approval) => ({ approval })); }
+  @Post('changes/:changeId/evidence') @RequiredCapabilities('changes.manage')
+  public addChangeEvidence(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Body() input: unknown) { return this.operations.addChangeEvidence(request.identity, changeId, input).then((evidence) => ({ evidence })); }
+  @Get('changes/:changeId/evidence/:evidenceId/download') @RequiredCapabilities('changes.view')
+  public changeEvidenceDownload(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Param('evidenceId') evidenceId: string, @Res({ passthrough: true }) reply: FastifyReply) {
+    return this.operations.openChangeEvidenceDownload(request.identity, changeId, evidenceId).then((download) => {
+      reply.header('content-type', download.contentType ?? 'application/octet-stream');
+      if (download.contentLength !== undefined) reply.header('content-length', download.contentLength);
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`);
+      return download.body;
+    });
+  }
+  @Post('changes/:changeId/steps/:step/complete') @RequiredCapabilities('changes.manage')
+  public completeChangeWorkflowStep(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Param('step') step: string, @Body() input: unknown) { return this.operations.completeChangeWorkflowStep(request.identity, changeId, step, input).then((change) => ({ change })); }
   @Post('changes/:changeId/status') @RequiredCapabilities('changes.manage')
   public transitionChange(@Req() request: AuthenticatedRequest, @Param('changeId') changeId: string, @Body() input: unknown) { return this.operations.transitionChange(request.identity, changeId, input).then((change) => ({ change })); }
 

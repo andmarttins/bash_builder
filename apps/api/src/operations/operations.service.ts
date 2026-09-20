@@ -1,6 +1,6 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { ChangeStatus, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
+import { ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { ObjectStorageService } from '../platform/storage/object-storage.service.js';
@@ -25,6 +25,11 @@ const eventActionSchema = z.object({ title: text(2, 200), owner: optionalText(16
 const eventTransitionSchema = z.object({ status: z.enum(eventStatuses), expectedVersion });
 const createChangeSchema = z.object({ publicCode: text(2, 32).regex(/^[A-Z0-9][A-Z0-9-]*$/i, 'Código da mudança inválido.'), title: text(2, 200), description: optionalText(10_000), requestedBy: optionalText(160), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
 const riskSchema = z.object({ hazard: text(2, 300), consequence: optionalText(10_000), probability: z.number().int().min(1).max(5), severity: z.number().int().min(1).max(5), controls: optionalText(10_000), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable(), position: z.number().int().nonnegative().optional() });
+const approvalSchema = z.object({ approverName: text(2, 160), approverEmail: z.string().trim().toLowerCase().email().max(320), role: optionalText(120) });
+const approvalDecisionSchema = z.object({ decision: z.enum(['APPROVED', 'REJECTED']), comment: optionalText(10_000), expectedVersion }).superRefine((input, context) => { if (input.decision === 'REJECTED' && !input.comment) context.addIssue({ code: 'custom', path: ['comment'], message: 'Informe o motivo da reprovação.' }); });
+const evidenceSchema = z.object({ fileId: uuid, category: optionalText(80), description: optionalText(10_000) });
+const workflowStepSchema = z.object({ notes: text(10, 10_000), data: z.record(z.string(), z.string().trim().max(10_000)).default({}), expectedVersion });
+const changeListQuerySchema = z.object({ status: z.enum(changeStatuses).optional(), search: z.string().trim().max(200).optional(), page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25) });
 const changeTransitionSchema = z.object({ status: z.enum(changeStatuses), expectedVersion });
 const createCardSchema = z.object({ title: text(2, 200), description: z.string().trim().max(10_000).optional(), client: optionalText(160), criticality: text(2, 32).optional(), assignedTo: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
 const commentSchema = z.object({ content: text(1, 10_000) });
@@ -124,14 +129,38 @@ export class OperationsService {
     });
   }
 
-  public listChanges(identity: SessionIdentity) {
-    return this.withTenant(identity, (tx) => tx.changeRequest.findMany({ include: { risks: { orderBy: { position: 'asc' } } }, orderBy: { updatedAt: 'desc' } }));
+  public listChanges(identity: SessionIdentity, input?: unknown) {
+    const query = this.parse(changeListQuerySchema, input ?? {});
+    const where = { ...(query.status ? { status: query.status } : {}), ...(query.search ? { OR: [{ publicCode: { contains: query.search, mode: 'insensitive' as const } }, { title: { contains: query.search, mode: 'insensitive' as const } }] } : {}) };
+    return this.withTenant(identity, async (tx) => {
+      const [changes, total] = await Promise.all([
+        tx.changeRequest.findMany({ where, include: { risks: { orderBy: { position: 'asc' } }, approvals: { orderBy: { createdAt: 'asc' } }, evidence: { include: { file: true }, orderBy: { createdAt: 'desc' } }, workflowSteps: { orderBy: { step: 'asc' } } }, orderBy: { updatedAt: 'desc' }, skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+        tx.changeRequest.count({ where })
+      ]);
+      return { changes, pagination: { page: query.page, pageSize: query.pageSize, total } };
+    });
+  }
+
+  public getChange(identity: SessionIdentity, changeIdInput: string) {
+    const changeId = this.id(changeIdInput);
+    return this.withTenant(identity, async (tx) => {
+      const change = await tx.changeRequest.findFirst({ where: { id: changeId }, include: { risks: { orderBy: { position: 'asc' } }, approvals: { orderBy: { createdAt: 'asc' } }, evidence: { include: { file: true }, orderBy: { createdAt: 'desc' } }, workflowSteps: { orderBy: { step: 'asc' } } } });
+      if (!change) throw new NotFoundException('Mudança não encontrada.');
+      const history = await tx.auditLog.findMany({ where: { resourceId: changeId }, orderBy: { occurredAt: 'desc' }, take: 100 });
+      return { change, history };
+    });
   }
 
   public createChange(identity: SessionIdentity, input: unknown) {
     const data = this.parse(createChangeSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const change = await tx.changeRequest.create({ data: { organizationId: identity.organization.id, ...data } });
+      let change;
+      try {
+        change = await tx.changeRequest.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, ...data, workflowSteps: { create: Object.values(ChangeWorkflowStepName).map((step) => ({ organizationId: identity.organization.id, step })) } } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Já existe uma mudança com este código nesta organização.');
+        throw error;
+      }
       await this.record(tx, identity, 'change.created', 'change', change.id, { code: change.publicCode });
       return change;
     });
@@ -140,21 +169,116 @@ export class OperationsService {
   public addChangeRisk(identity: SessionIdentity, changeIdInput: string, input: unknown) {
     const changeId = this.id(changeIdInput); const data = this.parse(riskSchema, input);
     return this.withTenant(identity, async (tx) => {
-      await this.changeExists(tx, changeId);
+      const change = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { status: true } });
+      if (!change) throw new NotFoundException('Mudança não encontrada.');
+      if (change.status !== 'DRAFT' && change.status !== 'IN_REVIEW') throw new BadRequestException('Riscos só podem ser alterados antes da aprovação.');
       const risk = await tx.changeRisk.create({ data: { organizationId: identity.organization.id, changeId, ...data } });
       await this.record(tx, identity, 'change.risk_created', 'change_risk', risk.id, { changeId, score: risk.probability * risk.severity });
       return { ...risk, score: risk.probability * risk.severity };
     });
   }
 
+  public addChangeApproval(identity: SessionIdentity, changeIdInput: string, input: unknown) {
+    const changeId = this.id(changeIdInput); const data = this.parse(approvalSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const change = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { status: true, currentStep: true, createdById: true } });
+      if (!change) throw new NotFoundException('Mudança não encontrada.');
+      if (change.status !== 'IN_REVIEW' || change.currentStep !== 5) throw new BadRequestException('Aprovadores só podem ser definidos durante a etapa formal de revisão.');
+      const approver = await tx.membership.findFirst({ where: { organizationId: identity.organization.id, status: 'ACTIVE', identityUser: { email: data.approverEmail, active: true } }, select: { id: true, identityUserId: true, role: true } });
+      if (!approver) throw new BadRequestException('O aprovador deve ser um membro ativo desta organização.');
+      if (approver.identityUserId === identity.user.id) throw new ForbiddenException('Quem solicita uma aprovação não pode decidir a própria solicitação.');
+      if (change.createdById === approver.identityUserId) throw new ForbiddenException('A pessoa que criou a mudança não pode ser seu aprovador.');
+      const approval = await tx.changeApproval.create({ data: { organizationId: identity.organization.id, changeId, approverUserId: approver.identityUserId, approverMembershipId: approver.id, approverMembershipRole: approver.role, ...data } });
+      await this.record(tx, identity, 'change.approval_requested', 'change_approval', approval.id, { changeId, approverEmail: approval.approverEmail });
+      return approval;
+    });
+  }
+
+  public decideChangeApproval(identity: SessionIdentity, changeIdInput: string, approvalIdInput: string, input: unknown) {
+    const changeId = this.id(changeIdInput); const approvalId = this.id(approvalIdInput); const data = this.parse(approvalDecisionSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const change = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { status: true } });
+      if (!change) throw new NotFoundException('Mudança não encontrada.');
+      if (change.status !== 'IN_REVIEW') throw new BadRequestException('Decisões só podem ser registradas durante a revisão.');
+      const pendingApproval = await tx.changeApproval.findFirst({ where: { id: approvalId, changeId }, select: { approverUserId: true } });
+      if (!pendingApproval) throw new NotFoundException('Aprovação não encontrada.');
+      if (pendingApproval.approverUserId !== identity.user.id) throw new ForbiddenException('A decisão deve ser registrada pelo aprovador designado.');
+      const result = await tx.changeApproval.updateMany({ where: { id: approvalId, changeId, decision: 'PENDING', version: data.expectedVersion }, data: { decision: data.decision, comment: data.comment, decidedAt: new Date(), version: { increment: 1 } } });
+      if (result.count !== 1) throw new ConflictException('Aprovação não encontrada, já decidida ou alterada por outra pessoa.');
+      const approval = await tx.changeApproval.findFirstOrThrow({ where: { id: approvalId } });
+      await this.record(tx, identity, 'change.approval_decided', 'change_approval', approvalId, { changeId, decision: approval.decision, version: approval.version });
+      return approval;
+    });
+  }
+
+  public addChangeEvidence(identity: SessionIdentity, changeIdInput: string, input: unknown) {
+    const changeId = this.id(changeIdInput); const data = this.parse(evidenceSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.changeRequest.findFirst({ where: { id: changeId }, select: { id: true } })) throw new NotFoundException('Mudança não encontrada.');
+      if (!await tx.fileAsset.findFirst({ where: { id: data.fileId, status: 'READY' }, select: { id: true } })) throw new NotFoundException('Arquivo pronto não encontrado nesta organização.');
+      let evidence;
+      try {
+        evidence = await tx.changeEvidence.create({ data: { organizationId: identity.organization.id, changeId, ...data }, include: { file: true } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Este arquivo já está vinculado à mudança.');
+        throw error;
+      }
+      await this.record(tx, identity, 'change.evidence_linked', 'change_evidence', evidence.id, { changeId, fileId: data.fileId });
+      return evidence;
+    });
+  }
+
+  public completeChangeWorkflowStep(identity: SessionIdentity, changeIdInput: string, stepInput: string, input: unknown) {
+    const changeId = this.id(changeIdInput); const stepNumber = Number(stepInput); const data = this.parse(workflowStepSchema, input);
+    if (!Number.isInteger(stepNumber) || stepNumber < 1 || stepNumber > 6) throw new BadRequestException('Etapa de mudança inválida.');
+    if (stepNumber === 5) throw new BadRequestException('A etapa de aprovação é concluída pelas decisões formais dos aprovadores.');
+    return this.withTenant(identity, async (tx) => {
+      const change = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { status: true, currentStep: true } });
+      if (!change) throw new NotFoundException('Mudança não encontrada.');
+      if (change.currentStep !== stepNumber) throw new BadRequestException('Conclua as etapas anteriores antes de avançar.');
+      if ((stepNumber < 5 && change.status !== 'DRAFT') || (stepNumber === 6 && change.status !== 'IMPLEMENTING')) throw new BadRequestException('A etapa não pode ser concluída no estado atual da mudança.');
+      if (stepNumber === 4 && await tx.changeRisk.count({ where: { changeId } }) === 0) throw new BadRequestException('Registre ao menos um risco antes de concluir a avaliação de riscos.');
+      const requiredFields: Record<number, readonly string[]> = { 1: ['scope', 'requester'], 2: ['trigger', 'impact'], 3: ['implementationPlan', 'rollbackPlan'], 4: ['residualRiskAcceptance'], 6: ['verificationResult', 'closureDecision'] };
+      const missingField = requiredFields[stepNumber]?.find((field) => !data.data[field]?.trim());
+      if (missingField) throw new BadRequestException(`Informe o campo obrigatório da etapa: ${missingField}.`);
+      const step = Object.values(ChangeWorkflowStepName)[stepNumber - 1]!;
+      const marked = await tx.changeWorkflowStep.updateMany({ where: { changeId, step, status: 'PENDING' }, data: { status: 'COMPLETED', notes: data.notes, data: data.data, completedAt: new Date(), completedById: identity.user.id } });
+      if (marked.count !== 1) throw new ConflictException('Esta etapa já foi concluída ou alterada por outra pessoa.');
+      const nextStatus = stepNumber === 4 ? 'IN_REVIEW' : stepNumber === 6 ? 'COMPLETED' : 'DRAFT';
+      const nextStep = stepNumber === 6 ? 6 : stepNumber + 1;
+      const updated = await tx.changeRequest.updateMany({ where: { id: changeId, version: data.expectedVersion }, data: { status: nextStatus, currentStep: nextStep, version: { increment: 1 } } });
+      if (updated.count !== 1) throw new ConflictException('Esta mudança foi alterada por outra pessoa.');
+      const completed = await tx.changeRequest.findFirstOrThrow({ where: { id: changeId } });
+      await this.record(tx, identity, 'change.workflow_step_completed', 'change_workflow_step', changeId, { step, version: completed.version });
+      return completed;
+    });
+  }
+
   public transitionChange(identity: SessionIdentity, changeIdInput: string, input: unknown) {
     const changeId = this.id(changeIdInput); const data = this.parse(changeTransitionSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const current = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { id: true, status: true } });
+      const current = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { id: true, status: true, currentStep: true } });
       if (!current) throw new NotFoundException('Mudança não encontrada.');
       if (!this.changeTransitionAllowed(current.status, data.status)) throw new BadRequestException('Transição de mudança inválida.');
-      if (data.status === 'APPROVED' && await tx.changeRisk.count({ where: { changeId } }) === 0) throw new BadRequestException('Adicione ao menos um risco antes da aprovação.');
-      const step = data.status === 'IN_REVIEW' ? 2 : data.status === 'APPROVED' ? 3 : data.status === 'IMPLEMENTING' ? 4 : data.status === 'COMPLETED' ? 6 : 1;
+      if (data.status === 'IN_REVIEW') throw new BadRequestException('A etapa de revisão começa somente após concluir a avaliação de riscos.');
+      if (data.status === 'COMPLETED') throw new BadRequestException('O encerramento exige a conclusão da etapa de verificação.');
+      if (data.status === 'IMPLEMENTING') {
+        if (current.currentStep !== 6) throw new BadRequestException('A implementação só pode começar após a aprovação formal.');
+        if (await tx.changeWorkflowStep.count({ where: { changeId, status: 'COMPLETED' } }) < 5) throw new BadRequestException('As etapas de preparação e aprovação precisam estar concluídas antes da implementação.');
+      }
+      let step = current.currentStep;
+      if (data.status === 'APPROVED') {
+        if (current.currentStep !== 5) throw new BadRequestException('Conclua as quatro etapas de preparação antes da aprovação formal.');
+        if (await tx.changeRisk.count({ where: { changeId } }) === 0) throw new BadRequestException('Adicione ao menos um risco antes da aprovação.');
+        const approvals = await tx.changeApproval.findMany({ where: { changeId }, select: { decision: true } });
+        if (approvals.length === 0) throw new BadRequestException('Defina ao menos um aprovador antes da aprovação.');
+        if (approvals.some((approval) => approval.decision === 'PENDING')) throw new BadRequestException('Aguarde as decisões de todos os aprovadores.');
+        if (approvals.some((approval) => approval.decision === 'REJECTED')) throw new BadRequestException('Há uma reprovação registrada para esta mudança.');
+        const approvalStep = await tx.changeWorkflowStep.updateMany({ where: { changeId, step: 'APPROVAL', status: 'PENDING' }, data: { status: 'COMPLETED', notes: 'Aprovação formal concluída com todas as decisões aprovadas.', completedAt: new Date(), completedById: identity.user.id } });
+        if (approvalStep.count !== 1) throw new ConflictException('A etapa de aprovação já foi alterada por outra pessoa.');
+        step = 6;
+      }
+      if (data.status === 'IMPLEMENTING') step = 6;
       const result = await tx.changeRequest.updateMany({ where: { id: changeId, version: data.expectedVersion }, data: { status: data.status, currentStep: step, version: { increment: 1 } } });
       if (result.count !== 1) throw new ConflictException('Esta mudança foi alterada por outra pessoa.');
       const change = await tx.changeRequest.findFirstOrThrow({ where: { id: changeId } });
@@ -429,6 +553,18 @@ export class OperationsService {
     });
   }
 
+  public openChangeEvidenceDownload(identity: SessionIdentity, changeIdInput: string, evidenceIdInput: string) {
+    const changeId = this.id(changeIdInput); const evidenceId = this.id(evidenceIdInput);
+    return this.withTenant(identity, async (tx) => {
+      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const evidence = await tx.changeEvidence.findFirst({ where: { id: evidenceId, changeId }, include: { file: true } });
+      if (!evidence || evidence.file.status !== 'READY') throw new NotFoundException('Evidência pronta para download não encontrada.');
+      const download = await this.storage.openDownload(evidence.file.storageKey, this.safeFilename(evidence.file.originalName));
+      await this.record(tx, identity, 'change.evidence_download_prepared', 'change_evidence', evidence.id, { changeId, fileId: evidence.fileId });
+      return { ...download, filename: this.safeFilename(evidence.file.originalName) };
+    });
+  }
+
   public listDeadLetters(identity: SessionIdentity) {
     return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, lastError: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
   }
@@ -459,7 +595,7 @@ export class OperationsService {
   }
 
   private changeTransitionAllowed(from: ChangeStatus, to: ChangeStatus): boolean {
-    const allowed: Record<ChangeStatus, readonly ChangeStatus[]> = { DRAFT: ['IN_REVIEW', 'REJECTED'], IN_REVIEW: ['DRAFT', 'APPROVED', 'REJECTED'], APPROVED: ['IMPLEMENTING'], IMPLEMENTING: ['COMPLETED', 'IN_REVIEW'], COMPLETED: [], REJECTED: [] };
+    const allowed: Record<ChangeStatus, readonly ChangeStatus[]> = { DRAFT: ['REJECTED'], IN_REVIEW: ['APPROVED', 'REJECTED'], APPROVED: ['IMPLEMENTING'], IMPLEMENTING: [], COMPLETED: [], REJECTED: [] };
     return allowed[from].includes(to);
   }
 

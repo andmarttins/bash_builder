@@ -42,6 +42,9 @@ describeIntegration('PostgreSQL row-level security', () => {
     await bootstrap.query('DELETE FROM "organization_invitations"');
     await bootstrap.query('DELETE FROM "safety_event_actions"');
     await bootstrap.query('DELETE FROM "safety_events"');
+    await bootstrap.query('DELETE FROM "change_evidence"');
+    await bootstrap.query('DELETE FROM "change_approvals"');
+    await bootstrap.query('DELETE FROM "change_workflow_steps"');
     await bootstrap.query('DELETE FROM "change_risks"');
     await bootstrap.query('DELETE FROM "change_requests"');
     await bootstrap.query('DELETE FROM "bash_comments"');
@@ -196,7 +199,7 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
-    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections'];
+    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
       "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1::text[]) ORDER BY tablename",
       [tableNames]
@@ -223,6 +226,81 @@ describeIntegration('PostgreSQL row-level security', () => {
     }
   });
 
+  it('isolates approval, evidence, and workflow records between change tenants', async () => {
+    const userA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a91';
+    const userB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a92';
+    const membershipA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a93';
+    const membershipB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a94';
+    const changeA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a95';
+    const changeB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a96';
+    const approvalA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a97';
+    const evidenceA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a98';
+    const fileA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99';
+    const approvalB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380b01';
+    const evidenceB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380b02';
+    const fileB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380b03';
+    await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW()), ($3, $4, TRUE, NOW())', [userA, 'approval-a@example.test', userB, 'approval-b@example.test']);
+    await bootstrap.query('INSERT INTO "memberships" (id, organization_id, identity_user_id, role, status, updated_at) VALUES ($1, $2, $3, \'MEMBER\', \'ACTIVE\', NOW()), ($4, $5, $6, \'MEMBER\', \'ACTIVE\', NOW())', [membershipA, tenantA, userA, membershipB, tenantB, userB]);
+    await bootstrap.query('INSERT INTO "change_requests" (id, organization_id, public_code, title, created_by_id, due_at, updated_at) VALUES ($1, $2, \'MUD-A\', \'A\', $3, NOW() + INTERVAL \'1 hour\', NOW()), ($4, $5, \'MUD-B\', \'B\', $6, NOW() + INTERVAL \'1 hour\', NOW())', [changeA, tenantA, userA, changeB, tenantB, userB]);
+    await bootstrap.query('INSERT INTO "file_assets" (id, organization_id, storage_key, original_name, content_type, byte_size, status, updated_at) VALUES ($1, $2, \'tenant-a/evidence.pdf\', \'evidence.pdf\', \'application/pdf\', 1, \'READY\', NOW())', [fileA, tenantA]);
+    await bootstrap.query('INSERT INTO "file_assets" (id, organization_id, storage_key, original_name, content_type, byte_size, status, updated_at) VALUES ($1, $2, \'tenant-b/evidence.pdf\', \'evidence.pdf\', \'application/pdf\', 1, \'READY\', NOW())', [fileB, tenantB]);
+    await bootstrap.query('INSERT INTO "change_approvals" (id, organization_id, change_id, approver_name, approver_email, approver_user_id, approver_membership_id, approver_membership_role, updated_at) VALUES ($1, $2, $3, \'Member A\', \'approval-a@example.test\', $4, $5, \'MEMBER\', NOW())', [approvalA, tenantA, changeA, userA, membershipA]);
+    await bootstrap.query('INSERT INTO "change_approvals" (id, organization_id, change_id, approver_name, approver_email, approver_user_id, approver_membership_id, approver_membership_role, updated_at) VALUES ($1, $2, $3, \'Member B\', \'approval-b@example.test\', $4, $5, \'MEMBER\', NOW())', [approvalB, tenantB, changeB, userB, membershipB]);
+    await bootstrap.query('INSERT INTO "change_evidence" (id, organization_id, change_id, file_id) VALUES ($1, $2, $3, $4)', [evidenceA, tenantA, changeA, fileA]);
+    await bootstrap.query('INSERT INTO "change_evidence" (id, organization_id, change_id, file_id) VALUES ($1, $2, $3, $4)', [evidenceB, tenantB, changeB, fileB]);
+    await bootstrap.query('INSERT INTO "change_workflow_steps" (organization_id, change_id, step, updated_at) VALUES ($1, $2, \'GENERAL_INFORMATION\', NOW())', [tenantA, changeA]);
+    await bootstrap.query('INSERT INTO "change_workflow_steps" (organization_id, change_id, step, updated_at) VALUES ($1, $2, \'GENERAL_INFORMATION\', NOW())', [tenantB, changeB]);
+
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "change_approvals"')).rows).toEqual([{ id: approvalA }]);
+      expect((await runtime.query('SELECT id FROM "change_evidence"')).rows).toEqual([{ id: evidenceA }]);
+      expect((await runtime.query('SELECT change_id FROM "change_workflow_steps"')).rows).toEqual([{ change_id: changeA }]);
+      expect((await runtime.query('UPDATE "change_requests" SET title = \'forbidden\' WHERE id = $1 RETURNING id', [changeB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "change_approvals" SET comment = \'forbidden\' WHERE id = $1 RETURNING id', [approvalB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "change_evidence" SET category = \'forbidden\' WHERE id = $1 RETURNING id', [evidenceB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "change_workflow_steps" SET notes = \'forbidden\' WHERE change_id = $1 RETURNING id', [changeB])).rows).toEqual([]);
+      expect((await runtime.query('DELETE FROM "change_approvals" WHERE id = $1 RETURNING id', [approvalB])).rows).toEqual([]);
+      expect((await runtime.query('DELETE FROM "change_evidence" WHERE id = $1 RETURNING id', [evidenceB])).rows).toEqual([]);
+      expect((await runtime.query('DELETE FROM "change_workflow_steps" WHERE change_id = $1 RETURNING id', [changeB])).rows).toEqual([]);
+      await expect(runtime.query('INSERT INTO "change_approvals" (organization_id, change_id, approver_name, approver_email, approver_user_id, approver_membership_id, approver_membership_role, updated_at) VALUES ($1, $2, \'blocked\', \'approval-b@example.test\', $3, $4, \'MEMBER\', NOW())', [tenantB, changeB, userB, membershipB])).rejects.toThrow(/row-level security/i);
+      await expect(runtime.query('INSERT INTO "change_evidence" (organization_id, change_id, file_id) VALUES ($1, $2, $3)', [tenantB, changeB, fileB])).rejects.toThrow(/row-level security/i);
+      await expect(runtime.query('INSERT INTO "change_workflow_steps" (organization_id, change_id, step, updated_at) VALUES ($1, $2, \'TRIGGERS\', NOW())', [tenantB, changeB])).rejects.toThrow(/row-level security/i);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
+  });
+
+  it('lists each due change once per São Paulo day through the worker-only deadline procedure', async () => {
+    const notifications = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown>; occurred_at: Date }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
+    const tenantANotification = notifications.find((notification) => notification.organization_id === tenantA);
+    const tenantBNotification = notifications.find((notification) => notification.organization_id === tenantB);
+    expect(tenantANotification).toEqual(expect.objectContaining({ aggregate_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a95', event_type: 'change.deadline_reminder' }));
+    expect(tenantBNotification).toEqual(expect.objectContaining({ aggregate_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a96', event_type: 'change.deadline_reminder' }));
+    await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantANotification!.event_id, tenantANotification!.organization_id, 'change-deadline-monitor-v1', tenantANotification!.event_type, tenantANotification!.aggregate_id, JSON.stringify(tenantANotification!.payload), tenantANotification!.occurred_at]);
+    await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantBNotification!.event_id, tenantBNotification!.organization_id, 'change-deadline-monitor-v1', tenantBNotification!.event_type, tenantBNotification!.aggregate_id, JSON.stringify(tenantBNotification!.payload), tenantBNotification!.occurred_at]);
+    const afterProjection = (await worker.query<{ event_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
+    expect(afterProjection.some((notification) => notification.event_id === tenantANotification!.event_id)).toBe(false);
+    await bootstrap.query("INSERT INTO \"change_requests\" (organization_id, public_code, title, due_at, updated_at) SELECT $1, 'BATCH-' || sequence, 'Batch due change', NOW() + INTERVAL '1 hour', NOW() FROM generate_series(1, 26) AS sequence", [tenantA]);
+    const firstBatch = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown>; occurred_at: Date }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
+    expect(firstBatch).toHaveLength(25);
+    expect(firstBatch.every((notification) => String(notification.payload.publicCode).startsWith('BATCH-'))).toBe(true);
+    for (const notification of firstBatch) await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [notification.event_id, notification.organization_id, 'change-deadline-monitor-v1', notification.event_type, notification.aggregate_id, JSON.stringify(notification.payload), notification.occurred_at]);
+    const secondBatch = (await worker.query<{ event_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
+    expect(secondBatch.length).toBeGreaterThan(0);
+    expect(secondBatch.some((notification) => firstBatch.some((first) => first.event_id === notification.event_id))).toBe(false);
+    const baseline = (await worker.query<{ now: Date }>('SELECT NOW() AS now')).rows[0]!.now;
+    const dayFixture = (await bootstrap.query<{ id: string }>('INSERT INTO "change_requests" (organization_id, public_code, title, due_at, updated_at) VALUES ($1, \'DAY-FIXTURE\', \'Daily reminder\', $2, NOW()) RETURNING id', [tenantA, new Date(baseline.getTime() + 25 * 60 * 60 * 1_000)])).rows[0]!;
+    const sameDay = (await worker.query<{ event_id: string; aggregate_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2, $3::timestamptz)', [100, 48, baseline])).rows.find((notification) => notification.aggregate_id === dayFixture.id)!;
+    const sameDayAgain = (await worker.query<{ event_id: string; aggregate_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2, $3::timestamptz)', [100, 48, baseline])).rows.find((notification) => notification.aggregate_id === dayFixture.id)!;
+    const nextDay = (await worker.query<{ event_id: string; aggregate_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2, $3::timestamptz)', [100, 48, new Date(baseline.getTime() + 24 * 60 * 60 * 1_000)])).rows.find((notification) => notification.aggregate_id === dayFixture.id)!;
+    expect(sameDay.event_id).toBe(sameDayAgain.event_id);
+    expect(nextDay.event_id).not.toBe(sameDay.event_id);
+    await expect(runtime.query('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rejects.toThrow(/permission denied/i);
+    await expect(worker.query('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [0, 24])).rejects.toThrow(/invalid change deadline limits/i);
+  });
+
   it('claims, retries, publishes and de-duplicates outbox events through narrow worker procedures', async () => {
     const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81';
     const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';
@@ -246,6 +324,9 @@ describeIntegration('PostgreSQL row-level security', () => {
     );
     expect(permissions.rows).toEqual([{ worker: true, runtime: false, legacy_failure: false }]);
     await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
+    const deadlinePermissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.list_change_deadline_notifications(integer,integer,timestamp with time zone)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.list_change_deadline_notifications(integer,integer,timestamp with time zone)', 'EXECUTE') AS runtime");
+    expect(deadlinePermissions.rows).toEqual([{ worker: true, runtime: false }]);
+    await expect(worker.query('SELECT id FROM "change_requests"')).rejects.toThrow(/permission denied/i);
   });
 
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {

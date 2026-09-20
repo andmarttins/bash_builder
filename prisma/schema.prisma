@@ -72,6 +72,26 @@ enum ChangeStatus {
   REJECTED
 }
 
+enum ChangeApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ChangeWorkflowStepName {
+  GENERAL_INFORMATION
+  TRIGGERS
+  IMPLEMENTATION_PLAN
+  RISK_ASSESSMENT
+  APPROVAL
+  VERIFICATION
+}
+
+enum ChangeWorkflowStepStatus {
+  PENDING
+  COMPLETED
+}
+
 enum BashStage {
   BACKLOG
   DESIGN
@@ -128,6 +148,9 @@ model Organization {
   safetyEventActions SafetyEventAction[]
   changes ChangeRequest[]
   changeRisks ChangeRisk[]
+  changeApprovals ChangeApproval[]
+  changeEvidence ChangeEvidence[]
+  changeWorkflowSteps ChangeWorkflowStep[]
   bashCards BashCard[]
   bashComments BashComment[]
   hhtCompanies HhtCompany[]
@@ -154,6 +177,9 @@ model IdentityUser {
   memberships  Membership[]
   sessions     AuthSession[]
   invitationsCreated OrganizationInvitation[] @relation("InvitationsCreatedBy")
+  changesCreated ChangeRequest[] @relation("ChangesCreatedBy")
+  changeApprovals ChangeApproval[] @relation("ChangeApprovalApprover")
+  changeWorkflowStepsCompleted ChangeWorkflowStep[] @relation("ChangeWorkflowStepsCompletedBy")
 
   @@map("identity_users")
 }
@@ -201,6 +227,7 @@ model Membership {
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   identityUser   IdentityUser     @relation(fields: [identityUserId], references: [id], onDelete: Restrict)
+  changeApprovals ChangeApproval[] @relation("ChangeApprovalMembership")
 
   @@unique([organizationId, identityUserId])
   @@index([identityUserId, status])
@@ -404,6 +431,7 @@ model ChangeRequest {
   description    String?      @db.Text
   status         ChangeStatus @default(DRAFT)
   currentStep    Int          @default(1) @map("current_step")
+  createdById    String?      @map("created_by_id") @db.Uuid
   requestedBy    String?      @map("requested_by") @db.VarChar(160)
   owner          String?      @db.VarChar(160)
   dueAt          DateTime?    @map("due_at") @db.Timestamptz(6)
@@ -411,7 +439,11 @@ model ChangeRequest {
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy      IdentityUser? @relation("ChangesCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   risks          ChangeRisk[]
+  approvals      ChangeApproval[]
+  evidence       ChangeEvidence[]
+  workflowSteps  ChangeWorkflowStep[]
 
   @@unique([organizationId, publicCode])
   @@unique([id, organizationId])
@@ -438,6 +470,73 @@ model ChangeRisk {
 
   @@index([organizationId, changeId, position])
   @@map("change_risks")
+}
+
+model ChangeApproval {
+  id             String                 @id @default(uuid()) @db.Uuid
+  organizationId String                 @map("organization_id") @db.Uuid
+  changeId       String                 @map("change_id") @db.Uuid
+  approverName   String                 @map("approver_name") @db.VarChar(160)
+  approverEmail  String                 @map("approver_email") @db.VarChar(320)
+  approverUserId String                 @map("approver_user_id") @db.Uuid
+  approverMembershipId String            @map("approver_membership_id") @db.Uuid
+  approverMembershipRole MembershipRole  @map("approver_membership_role")
+  role           String?                @db.VarChar(120)
+  decision       ChangeApprovalDecision @default(PENDING)
+  comment        String?                @db.Text
+  decidedAt      DateTime?              @map("decided_at") @db.Timestamptz(6)
+  version        Int                    @default(1)
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  change         ChangeRequest          @relation(fields: [changeId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  approverUser   IdentityUser           @relation("ChangeApprovalApprover", fields: [approverUserId], references: [id], onDelete: Restrict)
+  approverMembership Membership         @relation("ChangeApprovalMembership", fields: [approverMembershipId], references: [id], onDelete: Restrict)
+
+  @@unique([changeId, approverUserId])
+  @@unique([id, organizationId])
+  @@index([organizationId, changeId, decision])
+  @@map("change_approvals")
+}
+
+model ChangeEvidence {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  changeId       String       @map("change_id") @db.Uuid
+  fileId         String       @map("file_id") @db.Uuid
+  category       String?      @db.VarChar(80)
+  description    String?      @db.Text
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  change         ChangeRequest @relation(fields: [changeId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  file           FileAsset    @relation(fields: [fileId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@unique([changeId, fileId])
+  @@unique([id, organizationId])
+  @@index([organizationId, changeId, createdAt(sort: Desc)])
+  @@map("change_evidence")
+}
+
+model ChangeWorkflowStep {
+  id             String                   @id @default(uuid()) @db.Uuid
+  organizationId String                   @map("organization_id") @db.Uuid
+  changeId       String                   @map("change_id") @db.Uuid
+  step           ChangeWorkflowStepName
+  status         ChangeWorkflowStepStatus @default(PENDING)
+  notes          String?                  @db.Text
+  data           Json                     @default("{}")
+  completedAt    DateTime?                @map("completed_at") @db.Timestamptz(6)
+  completedById  String?                  @map("completed_by_id") @db.Uuid
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  change         ChangeRequest            @relation(fields: [changeId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  completedBy    IdentityUser?            @relation("ChangeWorkflowStepsCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+
+  @@unique([changeId, step])
+  @@unique([id, organizationId])
+  @@index([organizationId, changeId, step])
+  @@map("change_workflow_steps")
 }
 
 model BashCard {
@@ -619,7 +718,9 @@ model FileAsset {
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  changeEvidence ChangeEvidence[]
 
+  @@unique([id, organizationId])
   @@unique([organizationId, storageKey])
   @@index([organizationId, status, createdAt(sort: Desc)])
   @@map("file_assets")

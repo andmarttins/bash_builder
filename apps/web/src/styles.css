@@ -55,6 +55,9 @@ button:disabled { cursor: wait; opacity: .65; }
 .event-detail { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
 .nested-list { display: grid; gap: .35rem; margin: .5rem 0 0; padding-left: 1.15rem; color: #cbd5e1; font-size: .82rem; }
 .nested-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+.subsection-title { margin: .9rem 0 0; color: #bae6fd; font-size: .86rem; }
+.approval-decision-form { width: 100%; }
+.workflow-steps { list-style-position: inside; padding-left: 0; }
 .compact-form { margin-top: .75rem; }
 .board { display: grid; grid-template-columns: repeat(5, minmax(14rem, 1fr)); gap: .75rem; overflow-x: auto; padding-bottom: .35rem; }
 .board-column { display: grid; align-content: start; gap: .55rem; min-height: 12rem; padding: .75rem; border: 1px solid #334155; border-radius: .75rem; background: #020617; }

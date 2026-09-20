@@ -69,8 +69,14 @@ const internalRoutes: RouteContract[] = [
   ,{ method: 'PATCH', url: '/v1/events/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/actions/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15/complete', payload: {}, expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/events/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', payload: {}, expectedStatus: 201 }
   ,{ method: 'GET', url: '/v1/changes', expectedStatus: 200 }
+  ,{ method: 'GET', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/changes', payload: {}, expectedStatus: 201 }
   ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/risks', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/approvals', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/approvals/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15/decision', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/evidence', payload: {}, expectedStatus: 201 }
+  ,{ method: 'GET', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/evidence/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15/download', expectedStatus: 200 }
+  ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/steps/1/complete', payload: {}, expectedStatus: 201 }
   ,{ method: 'POST', url: '/v1/changes/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/status', payload: {}, expectedStatus: 201 }
   ,{ method: 'GET', url: '/v1/bash/cards', expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/bash/cards', payload: {}, expectedStatus: 201 }
@@ -131,7 +137,7 @@ describe('internal API surface contract', () => {
     };
     const operations = {
       listClassifications: vi.fn().mockResolvedValue([]), createClassification: vi.fn().mockResolvedValue({}), listEvents: vi.fn().mockResolvedValue([]), createEvent: vi.fn().mockResolvedValue({}), addEventAction: vi.fn().mockResolvedValue({}), completeEventAction: vi.fn().mockResolvedValue({}), transitionEvent: vi.fn().mockResolvedValue({}),
-      listChanges: vi.fn().mockResolvedValue([]), createChange: vi.fn().mockResolvedValue({}), addChangeRisk: vi.fn().mockResolvedValue({}), transitionChange: vi.fn().mockResolvedValue({}), listCards: vi.fn().mockResolvedValue([]), createCard: vi.fn().mockResolvedValue({}), addCardComment: vi.fn().mockResolvedValue({}), moveCard: vi.fn().mockResolvedValue({}),
+      listChanges: vi.fn().mockResolvedValue({ changes: [], pagination: { page: 1, pageSize: 25, total: 0 } }), getChange: vi.fn().mockResolvedValue({ change: {}, history: [] }), createChange: vi.fn().mockResolvedValue({}), addChangeRisk: vi.fn().mockResolvedValue({}), addChangeApproval: vi.fn().mockResolvedValue({}), decideChangeApproval: vi.fn().mockResolvedValue({}), addChangeEvidence: vi.fn().mockResolvedValue({}), openChangeEvidenceDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), completeChangeWorkflowStep: vi.fn().mockResolvedValue({}), transitionChange: vi.fn().mockResolvedValue({}), listCards: vi.fn().mockResolvedValue([]), createCard: vi.fn().mockResolvedValue({}), addCardComment: vi.fn().mockResolvedValue({}), moveCard: vi.fn().mockResolvedValue({}),
       listHht: vi.fn().mockResolvedValue({ companies: [], reports: [], windows: [] }), createHhtCompany: vi.fn().mockResolvedValue({}), upsertHhtReport: vi.fn().mockResolvedValue({}), setHhtReportStatus: vi.fn().mockResolvedValue({}), upsertHhtWindow: vi.fn().mockResolvedValue({}),
       listDashboards: vi.fn().mockResolvedValue([]), createDashboard: vi.fn().mockResolvedValue({}), updateDashboard: vi.fn().mockResolvedValue({}), publishDashboard: vi.fn().mockResolvedValue({}), listTv: vi.fn().mockResolvedValue({ displays: [], playlists: [] }), createTvDisplay: vi.fn().mockResolvedValue({}), createTvPlaylist: vi.fn().mockResolvedValue({}), listIntegrations: vi.fn().mockResolvedValue([]), createIntegration: vi.fn().mockResolvedValue({}), updateIntegration: vi.fn().mockResolvedValue({}), listFiles: vi.fn().mockResolvedValue([]), createFileIntent: vi.fn().mockResolvedValue({}), completeFileUpload: vi.fn().mockResolvedValue({}), uploadFileContent: vi.fn().mockResolvedValue({}), openFileDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), listDeadLetters: vi.fn().mockResolvedValue([]), redriveDeadLetter: vi.fn().mockResolvedValue({})
     };
