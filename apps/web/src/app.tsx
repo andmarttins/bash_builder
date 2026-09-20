@@ -8,6 +8,7 @@ type Organization = { id: string; name: string; slug: string; membership: { id: 
 type Member = { id: string; userId: string; email: string; role: string; status: string; createdAt: string };
 type Invitation = { id: string; email: string; role: string; expiresAt: string; createdAt: string };
 type FormSummary = { id: string; publicId: string; title: string; description: string | null; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; version: number; fields: Array<{ key: string }> };
+type PublicForm = { id: string; publicId: string; title: string; description: string | null; fields: Array<{ key: string; label: string; type: 'SHORT_TEXT' | 'LONG_TEXT' | 'NUMBER' | 'DATE' | 'SELECT' | 'MULTI_SELECT' | 'CHECKBOX'; required: boolean; options: string[]; position: number }> };
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, credentials: 'include', headers: { 'content-type': 'application/json', ...options?.headers } });
@@ -17,6 +18,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export function App(): React.JSX.Element {
+  const publicFormId = /^\/f\/([0-9a-f-]{36})$/i.exec(window.location.pathname)?.[1];
   const [mode, setMode] = useState<AuthMode>('loading');
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +32,7 @@ export function App(): React.JSX.Element {
   const [forms, setForms] = useState<FormSummary[]>([]);
 
   useEffect(() => { void (async () => {
+    if (publicFormId) return;
     if (invitationToken) { setMode('invite'); return; }
     try {
       const [session, bootstrap] = await Promise.all([api<{ identity: Identity | null }>('/v1/auth/session'), api<{ bootstrapRequired: boolean }>('/v1/auth/bootstrap-status')]);
@@ -39,7 +42,7 @@ export function App(): React.JSX.Element {
         setMode(session.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in');
       } else setMode(bootstrap.bootstrapRequired ? 'bootstrap' : 'login');
     } catch { setError('Não foi possível conectar à plataforma. Atualize a página em alguns instantes.'); setMode('login'); }
-  })(); }, [invitationToken]);
+  })(); }, [invitationToken, publicFormId]);
 
   useEffect(() => { void (async () => {
     if (mode !== 'signed-in' || !identity) return;
@@ -157,6 +160,8 @@ export function App(): React.JSX.Element {
     finally { setPending(false); }
   }
 
+  if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
+
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
   if (mode === 'signed-in' && identity) return <main className="shell"><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
     <div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div>
@@ -207,4 +212,40 @@ export function App(): React.JSX.Element {
       <button className="primary-button" type="submit" disabled={pending}>{pending ? 'Processando…' : bootstrap ? 'Criar acesso seguro' : 'Entrar'}</button>
     </form><p className="security-note"><ShieldCheck aria-hidden="true" /> Sessões seguras, credenciais protegidas com Argon2id e isolamento por organização.</p>
   </section></main>;
+}
+
+function PublicFormPage({ publicId }: { publicId: string }): React.JSX.Element {
+  const [form, setForm] = useState<PublicForm | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => { void (async () => {
+    try { setForm((await api<{ form: PublicForm }>(`/v1/public/forms/${publicId}`)).form); }
+    catch { setError('Este formulário não está disponível.'); }
+  })(); }, [publicId]);
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!form) return;
+    const values = new FormData(event.currentTarget);
+    const answers = Object.fromEntries(form.fields.map((field) => {
+      const raw = values.get(field.key);
+      const selected = values.getAll(field.key);
+      const value = field.type === 'MULTI_SELECT' ? (selected.length === 0 ? undefined : selected)
+        : field.type === 'NUMBER' ? (raw === null || raw === '' ? undefined : Number(raw))
+          : field.type === 'CHECKBOX' ? raw === 'on'
+            : raw === '' ? undefined : raw;
+      return [field.key, value];
+    }));
+    setPending(true); setError(null);
+    try { await api(`/v1/public/forms/${publicId}/submissions`, { method: 'POST', body: JSON.stringify(answers) }); setSubmitted(true); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível enviar suas respostas.'); }
+    finally { setPending(false); }
+  }
+
+  if (!form && !error) return <main className="shell"><p className="loading">Carregando formulário…</p></main>;
+  if (!form) return <main className="shell"><section className="panel"><h1>Formulário indisponível</h1><p className="description">{error}</p></section></main>;
+  if (submitted) return <main className="shell"><section className="panel"><div className="success-icon"><CheckCircle2 aria-hidden="true" /></div><p className="eyebrow">Recebido</p><h1>Resposta enviada.</h1><p className="description">Obrigado por preencher este formulário.</p></section></main>;
+  return <main className="shell"><section className="panel" aria-labelledby="public-form-title"><div className="brand"><span className="icon"><Building2 aria-hidden="true" /></span><span>Builder Solutions</span></div><p className="eyebrow">Formulário</p><h1 id="public-form-title">{form.title}</h1>{form.description && <p className="description">{form.description}</p>}{error && <p className="form-error" role="alert">{error}</p>}<form className="auth-form" onSubmit={submit}>{form.fields.map((field) => <label key={field.key}>{field.label}{field.type === 'LONG_TEXT' ? <textarea name={field.key} required={field.required} maxLength={10000} /> : field.type === 'SELECT' ? <select name={field.key} required={field.required} defaultValue=""><option value="" disabled>Selecione</option>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'MULTI_SELECT' ? <select name={field.key} required={field.required} multiple>{field.options.map((option) => <option value={option} key={option}>{option}</option>)}</select> : field.type === 'CHECKBOX' ? <input name={field.key} type="checkbox" required={field.required} /> : <input name={field.key} type={field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text'} required={field.required} />}</label>)}<button className="primary-button" type="submit" disabled={pending}>{pending ? 'Enviando…' : 'Enviar resposta'}</button></form></section></main>;
 }
