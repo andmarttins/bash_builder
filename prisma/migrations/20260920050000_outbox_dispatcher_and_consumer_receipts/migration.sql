@@ -2,8 +2,8 @@
 -- runtime cannot enumerate tenant outbox rows outside its own tenant context.
 DROP POLICY "outbox_events_tenant_isolation" ON "outbox_events";
 CREATE POLICY "outbox_events_tenant_isolation" ON "outbox_events"
-  USING ("organization_id" = app.current_tenant_id() OR current_user = 'app_worker')
-  WITH CHECK ("organization_id" = app.current_tenant_id() OR current_user = 'app_worker');
+  USING ("organization_id" = app.current_tenant_id() OR current_user = 'app_migrator')
+  WITH CHECK ("organization_id" = app.current_tenant_id() OR current_user = 'app_migrator');
 
 CREATE TABLE "worker_event_receipts" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(), "organization_id" UUID NOT NULL,
@@ -19,12 +19,14 @@ CREATE INDEX "worker_event_receipts_organization_id_processed_at_idx" ON "worker
 ALTER TABLE "worker_event_receipts" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "worker_event_receipts" FORCE ROW LEVEL SECURITY;
 CREATE POLICY "worker_event_receipts_tenant_isolation" ON "worker_event_receipts"
-  USING ("organization_id" = app.current_tenant_id() OR current_user = 'app_worker')
-  WITH CHECK ("organization_id" = app.current_tenant_id() OR current_user = 'app_worker');
+  USING ("organization_id" = app.current_tenant_id() OR current_user = 'app_migrator')
+  WITH CHECK ("organization_id" = app.current_tenant_id() OR current_user = 'app_migrator');
 
 CREATE OR REPLACE FUNCTION app.claim_outbox_events(p_limit INTEGER, p_lease_seconds INTEGER)
 RETURNS TABLE (id UUID, organization_id UUID, aggregate_id UUID, event_type VARCHAR, schema_version INTEGER, payload JSONB, created_at TIMESTAMPTZ, attempt_count INTEGER)
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, public
 AS $$
 BEGIN
   IF p_limit < 1 OR p_limit > 100 OR p_lease_seconds < 5 OR p_lease_seconds > 900 THEN
@@ -52,6 +54,8 @@ $$;
 CREATE OR REPLACE FUNCTION app.mark_outbox_published(p_event_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, public
 AS $$
 DECLARE changed INTEGER;
 BEGIN
@@ -65,6 +69,8 @@ $$;
 CREATE OR REPLACE FUNCTION app.mark_outbox_failed(p_event_id UUID, p_retry_delay_seconds INTEGER)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, public
 AS $$
 DECLARE changed INTEGER;
 BEGIN
@@ -80,6 +86,8 @@ $$;
 CREATE OR REPLACE FUNCTION app.claim_worker_event_receipt(p_event_id UUID, p_organization_id UUID, p_consumer_name VARCHAR, p_lease_seconds INTEGER)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, public
 AS $$
 DECLARE inserted_id UUID;
 BEGIN
@@ -97,6 +105,8 @@ $$;
 CREATE OR REPLACE FUNCTION app.complete_worker_event_receipt(p_event_id UUID, p_consumer_name VARCHAR)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, public
 AS $$
 DECLARE changed INTEGER;
 BEGIN
@@ -110,6 +120,8 @@ $$;
 CREATE OR REPLACE FUNCTION app.fail_worker_event_receipt(p_event_id UUID, p_consumer_name VARCHAR)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = app, public
 AS $$
 DECLARE changed INTEGER;
 BEGIN
