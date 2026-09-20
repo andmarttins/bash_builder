@@ -10,4 +10,11 @@ describe('ChangeDeadlineMonitorService', () => {
     expect(database.query).toHaveBeenCalledWith('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24]);
     expect(database.recordDomainProjection).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'change.deadline_reminder', schemaVersion: 1 }), 'change-deadline-monitor-v1');
   });
+
+  it('contains an initial monitor failure instead of preventing worker startup', async () => {
+    const database = { query: vi.fn().mockRejectedValue(new Error('database temporarily unavailable')) };
+    const service = new ChangeDeadlineMonitorService(database as never);
+
+    await expect((service as never as { runScheduled(lookaheadHours: number): Promise<void> }).runScheduled(24)).resolves.toBeUndefined();
+  });
 });

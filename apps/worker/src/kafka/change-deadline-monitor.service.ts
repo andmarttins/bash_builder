@@ -15,7 +15,7 @@ export class ChangeDeadlineMonitorService implements OnModuleInit, OnModuleDestr
 
   public async onModuleInit(): Promise<void> {
     const config = getWorkerRuntimeConfig();
-    await this.runOnce(config.CHANGE_DEADLINE_LOOKAHEAD_HOURS);
+    await this.runScheduled(config.CHANGE_DEADLINE_LOOKAHEAD_HOURS);
     this.timer = setInterval(() => { void this.runScheduled(config.CHANGE_DEADLINE_LOOKAHEAD_HOURS); }, config.CHANGE_DEADLINE_POLL_INTERVAL_MS);
   }
 
