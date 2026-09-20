@@ -11,6 +11,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       APP_MIGRATOR_DB_PASSWORD: ${APP_MIGRATOR_DB_PASSWORD:?APP_MIGRATOR_DB_PASSWORD is required}
       APP_RUNTIME_DB_PASSWORD: ${APP_RUNTIME_DB_PASSWORD:?APP_RUNTIME_DB_PASSWORD is required}
+      APP_WORKER_DB_PASSWORD: ${APP_WORKER_DB_PASSWORD:?APP_WORKER_DB_PASSWORD is required}
     volumes:
       - ./infra/postgres/01-create-runtime-role.sh:/init.sh:ro
     command: ["sh", "/init.sh"]

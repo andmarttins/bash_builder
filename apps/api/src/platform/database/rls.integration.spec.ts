@@ -168,6 +168,14 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect((await worker.query<{ claimed: boolean }>('SELECT app.claim_worker_event_receipt($1::uuid, $2::uuid, $3, $4) AS claimed', [eventId, tenantA, 'test-consumer', 30])).rows).toEqual([{ claimed: false }]);
   });
 
+  it('grants worker queue procedures without direct queue table access', async () => {
+    const permissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>(
+      "SELECT has_function_privilege('app_worker', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS runtime"
+    );
+    expect(permissions.rows).toEqual([{ worker: true, runtime: false }]);
+    await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
+  });
+
   it('uses narrowly scoped identity procedures without granting table access', async () => {
     const before = await runtime.query<{ bootstrap_required: boolean }>('SELECT app.first_admin_required() AS bootstrap_required');
     expect(before.rows).toEqual([{ bootstrap_required: true }]);
