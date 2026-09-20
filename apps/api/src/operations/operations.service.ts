@@ -50,7 +50,13 @@ const tvDisplayPublishSchema = z.object({ published: z.boolean(), expectedVersio
   if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
   if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
 });
-const tvPlaylistSchema = z.object({ name: text(2, 160), intervalSeconds: z.number().int().min(5).max(3600).optional(), displayIds: z.array(uuid).min(1).max(30) });
+const tvPlaylistSchema = z.object({ name: text(2, 160), intervalSeconds: z.number().int().min(5).max(3600).optional(), displayIds: z.array(uuid).min(1).max(30) }).superRefine((input, context) => {
+  if (new Set(input.displayIds).size !== input.displayIds.length) context.addIssue({ code: 'custom', path: ['displayIds'], message: 'Uma tela pode aparecer apenas uma vez na playlist.' });
+});
+const tvPlaylistPublishSchema = z.object({ published: z.boolean(), expectedVersion, expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
+  if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
+  if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
+});
 const integrationSchema = z.object({ name: text(2, 160), type: z.enum(integrationTypes), status: z.enum(integrationStatuses).optional(), config: z.record(z.string(), z.unknown()).default({}) });
 const integrationUpdateSchema = integrationSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined, 'Informe alguma alteração.');
 const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
@@ -59,6 +65,7 @@ const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.e
 type HhtRate = { trifr: number; ltifr: number; ltisr: number };
 const dashboardSummarySelect = { id: true, title: true, description: true, widgets: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true } satisfies Prisma.DashboardSelect;
 const tvDisplaySummarySelect = { id: true, dashboardId: true, name: true, refreshSeconds: true, active: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true, dashboard: { select: { title: true } } } satisfies Prisma.TvDisplaySelect;
+const tvPlaylistSummarySelect = { id: true, name: true, active: true, intervalSeconds: true, items: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true } satisfies Prisma.TvPlaylistSelect;
 
 export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; lti: number }): HhtRate {
   if (input.hhtWorked <= 0) return { trifr: 0, ltifr: 0, ltisr: 0 };
@@ -436,7 +443,9 @@ export class OperationsService {
       const updated = await tx.dashboard.updateMany({ where: { id: dashboardId, version }, data: { ...this.dashboardData(change), version: { increment: 1 } } });
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
       if (existing.published && (change.widgets !== undefined || change.title !== undefined || change.description !== undefined)) {
+        const affectedDisplays = await tx.tvDisplay.findMany({ where: { dashboardId, published: true }, select: { id: true } });
         await tx.tvDisplay.updateMany({ where: { dashboardId, published: true }, data: { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } } });
+        await Promise.all(affectedDisplays.map((display) => this.invalidateTvPlaylistsForDisplay(tx, display.id)));
       }
       const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId }, select: dashboardSummarySelect });
       await this.record(tx, identity, 'dashboard.updated', 'dashboard', dashboardId, { version: dashboard.version });
@@ -458,7 +467,9 @@ export class OperationsService {
       if (updated.count !== 1) throw new ConflictException('Este painel foi alterado por outra pessoa.');
       // A TV snapshot is derived from this dashboard. Any dashboard publication
       // change invalidates it, forcing an explicit, auditable display re-publish.
+      const affectedDisplays = await tx.tvDisplay.findMany({ where: { dashboardId, published: true }, select: { id: true } });
       await tx.tvDisplay.updateMany({ where: { dashboardId, published: true }, data: { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } } });
+      await Promise.all(affectedDisplays.map((display) => this.invalidateTvPlaylistsForDisplay(tx, display.id)));
       const dashboard = await tx.dashboard.findFirstOrThrow({ where: { id: dashboardId }, select: dashboardSummarySelect });
       await this.record(tx, identity, data.published ? 'dashboard.publication_created' : 'dashboard.publication_revoked', 'dashboard', dashboardId, { version: dashboard.version, expiresAt: data.published ? (data.expiresAt?.toISOString() ?? null) : undefined });
       return { dashboard, publication: token ? { token, expiresAt: data.expiresAt ?? null } : null };
@@ -468,7 +479,7 @@ export class OperationsService {
   public listTv(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => ({
       displays: await tx.tvDisplay.findMany({ select: tvDisplaySummarySelect, orderBy: { name: 'asc' } }),
-      playlists: await tx.tvPlaylist.findMany({ orderBy: { name: 'asc' } })
+      playlists: await tx.tvPlaylist.findMany({ select: tvPlaylistSummarySelect, orderBy: { name: 'asc' } })
     }));
   }
 
@@ -493,6 +504,7 @@ export class OperationsService {
       if (updated.count !== 1) throw new ConflictException('Esta tela foi alterada por outra pessoa.');
       const display = await tx.tvDisplay.findFirst({ where: { id: displayId }, select: tvDisplaySummarySelect });
       if (!display) throw new NotFoundException('Tela de TV não encontrada.');
+      await this.invalidateTvPlaylistsForDisplay(tx, displayId);
       await this.record(tx, identity, 'tv_display.updated', 'tv_display', displayId, { version: display.version, active: display.active, publicationRevoked: change.active === false });
       return display;
     });
@@ -512,6 +524,7 @@ export class OperationsService {
         : { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } }
       });
       if (updated.count !== 1) throw new ConflictException('Esta tela foi alterada por outra pessoa.');
+      await this.invalidateTvPlaylistsForDisplay(tx, displayId);
       const result = await tx.tvDisplay.findFirstOrThrow({ where: { id: displayId }, select: tvDisplaySummarySelect });
       await this.record(tx, identity, data.published ? 'tv_display.publication_created' : 'tv_display.publication_revoked', 'tv_display', displayId, { version: result.version, expiresAt: data.published ? (effectiveExpiresAt?.toISOString() ?? null) : undefined });
       return { display: result, publication: token ? { token, expiresAt: effectiveExpiresAt } : null };
@@ -523,9 +536,32 @@ export class OperationsService {
     return this.withTenant(identity, async (tx) => {
       const displays = await tx.tvDisplay.findMany({ where: { id: { in: data.displayIds }, active: true }, select: { id: true } });
       if (displays.length !== data.displayIds.length) throw new BadRequestException('A playlist contém uma tela indisponível ou de outra organização.');
-      const playlist = await tx.tvPlaylist.create({ data: { organizationId: identity.organization.id, name: data.name, intervalSeconds: data.intervalSeconds ?? 30, items: data.displayIds.map((displayId, position) => ({ displayId, position })) as Prisma.InputJsonValue } });
+      const playlist = await tx.tvPlaylist.create({ data: { organizationId: identity.organization.id, name: data.name, intervalSeconds: data.intervalSeconds ?? 30, items: data.displayIds.map((displayId, position) => ({ displayId, position })) as Prisma.InputJsonValue }, select: tvPlaylistSummarySelect });
       await this.record(tx, identity, 'tv_playlist.created', 'tv_playlist', playlist.id, { displays: data.displayIds.length });
       return playlist;
+    });
+  }
+
+  public publishTvPlaylist(identity: SessionIdentity, playlistIdInput: string, input: unknown) {
+    const playlistId = this.id(playlistIdInput); const data = this.parse(tvPlaylistPublishSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const playlist = await tx.tvPlaylist.findFirst({ where: { id: playlistId }, select: { id: true, name: true, active: true, intervalSeconds: true, items: true } });
+      if (!playlist) throw new NotFoundException('Playlist não encontrada.');
+      const displayIds = this.playlistDisplayIds(playlist.items);
+      const displays = data.published ? await tx.tvDisplay.findMany({ where: { id: { in: displayIds }, active: true, published: true, publicRevokedAt: null, OR: [{ publicExpiresAt: null }, { publicExpiresAt: { gt: new Date() } }] }, select: { id: true, name: true, publicSnapshot: true, publicExpiresAt: true } }) : [];
+      if (data.published && (!playlist.active || displays.length !== displayIds.length)) throw new BadRequestException('A playlist exige telas ativas, publicadas e disponíveis.');
+      const byId = new Map(displays.map((display) => [display.id, display]));
+      const ordered = data.published ? displayIds.map((id) => byId.get(id)!).map((display) => ({ name: display.name, dashboard: this.sanitizeTvDisplaySnapshot(display.publicSnapshot) })) : [];
+      const effectiveExpiresAt = data.published ? displays.reduce<Date | null>((expiry, display) => this.earliestExpiry(expiry, display.publicExpiresAt), data.expiresAt ?? null) : null;
+      const token = data.published ? randomBytes(32).toString('base64url') : null;
+      const updated = await tx.tvPlaylist.updateMany({ where: { id: playlistId, version: data.expectedVersion }, data: data.published
+        ? { published: true, publicTokenHash: this.publicationTokenHash(token!), publicSnapshot: { title: playlist.name, intervalSeconds: playlist.intervalSeconds, displays: ordered } as Prisma.InputJsonValue, publicPublishedAt: new Date(), publicExpiresAt: effectiveExpiresAt, publicRevokedAt: null, version: { increment: 1 } }
+        : { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } }
+      });
+      if (updated.count !== 1) throw new ConflictException('Esta playlist foi alterada por outra pessoa.');
+      const result = await tx.tvPlaylist.findFirstOrThrow({ where: { id: playlistId }, select: tvPlaylistSummarySelect });
+      await this.record(tx, identity, data.published ? 'tv_playlist.publication_created' : 'tv_playlist.publication_revoked', 'tv_playlist', playlistId, { version: result.version, displays: displayIds.length, expiresAt: data.published ? (effectiveExpiresAt?.toISOString() ?? null) : undefined });
+      return { playlist: result, publication: token ? { token, expiresAt: effectiveExpiresAt } : null };
     });
   }
 
@@ -668,6 +704,23 @@ export class OperationsService {
       const config: Record<string, string | number> = { message: String(widget.config.message) }; if (typeof widget.config.tone === 'string' && ['INFO', 'SUCCESS', 'WARNING'].includes(widget.config.tone)) config.tone = widget.config.tone; return { type: widget.type, title: widget.title, config };
     });
     return { title: dashboard.title, description: dashboard.description, widgets };
+  }
+
+  private sanitizeTvDisplaySnapshot(value: unknown): { title: string; description: string | null; widgets: Array<{ type: string; title: string; config: Record<string, string | number> }> } {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('A tela não possui um snapshot público válido. Republique-a antes de criar a playlist.');
+    const snapshot = value as { title?: unknown; description?: unknown; widgets?: unknown };
+    if (typeof snapshot.title !== 'string' || (snapshot.description !== null && typeof snapshot.description !== 'string')) throw new BadRequestException('A tela não possui um snapshot público válido. Republique-a antes de criar a playlist.');
+    return this.publicDashboardSnapshot({ title: snapshot.title, description: snapshot.description ?? null, widgets: snapshot.widgets });
+  }
+
+  private playlistDisplayIds(items: unknown): string[] {
+    const parsed = z.array(z.object({ displayId: uuid, position: z.number().int().nonnegative() })).min(1).max(30).safeParse(items);
+    if (!parsed.success || new Set(parsed.data.map((item) => item.displayId)).size !== parsed.data.length) throw new BadRequestException('A configuração da playlist é inválida.');
+    return [...parsed.data].sort((left, right) => left.position - right.position).map((item) => item.displayId);
+  }
+
+  private async invalidateTvPlaylistsForDisplay(tx: TenantTransaction, displayId: string): Promise<void> {
+    await tx.$executeRaw(Prisma.sql`UPDATE "tv_playlists" SET "published" = FALSE, "public_token_hash" = NULL, "public_snapshot" = NULL, "public_revoked_at" = NOW(), "version" = "version" + 1, "updated_at" = NOW() WHERE "published" = TRUE AND "items" @> jsonb_build_array(jsonb_build_object('displayId', ${displayId}::text))`);
   }
 
   private safeFilename(value: string): string {

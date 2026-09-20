@@ -93,6 +93,8 @@ export class OperationsController {
   public publishTvDisplay(@Req() request: AuthenticatedRequest, @Param('displayId') displayId: string, @Body() input: unknown) { return this.operations.publishTvDisplay(request.identity, displayId, input); }
   @Post('tv/playlists') @RequiredCapabilities('tv.manage')
   public createTvPlaylist(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createTvPlaylist(request.identity, input).then((playlist) => ({ playlist })); }
+  @Post('tv/playlists/:playlistId/publish') @RequiredCapabilities('tv.manage')
+  public publishTvPlaylist(@Req() request: AuthenticatedRequest, @Param('playlistId') playlistId: string, @Body() input: unknown) { return this.operations.publishTvPlaylist(request.identity, playlistId, input); }
 
   @Get('integrations') @RequiredCapabilities('integrations.view')
   public integrations(@Req() request: AuthenticatedRequest) { return this.operations.listIntegrations(request.identity).then((integrations) => ({ integrations })); }

@@ -21,6 +21,8 @@ import { PublicDashboardsController } from './operations/public-dashboards.contr
 import { PublicDashboardAccessService } from './platform/public-access/public-dashboard-access.service.js';
 import { PublicTvDisplaysController } from './operations/public-tv-displays.controller.js';
 import { PublicTvDisplayAccessService } from './platform/public-access/public-tv-display-access.service.js';
+import { PublicTvPlaylistsController } from './operations/public-tv-playlists.controller.js';
+import { PublicTvPlaylistAccessService } from './platform/public-access/public-tv-playlist-access.service.js';
 import { NotificationsController } from './notifications/notifications.controller.js';
 import { NotificationsService } from './notifications/notifications.service.js';
 
@@ -103,7 +105,9 @@ const internalRoutes: RouteContract[] = [
   ,{ method: 'PATCH', url: '/v1/tv/displays/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/tv/displays/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publish', payload: {}, expectedStatus: 201 }
   ,{ method: 'POST', url: '/v1/tv/playlists', payload: {}, expectedStatus: 201 }
+  ,{ method: 'POST', url: '/v1/tv/playlists/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/publish', payload: {}, expectedStatus: 201 }
   ,{ method: 'GET', url: '/v1/public/tv/displays/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', expectedStatus: 404, expectedHeaders: { 'referrer-policy': 'no-referrer', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } }
+  ,{ method: 'GET', url: '/v1/public/tv/playlists/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', expectedStatus: 404, expectedHeaders: { 'referrer-policy': 'no-referrer', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } }
   ,{ method: 'GET', url: '/v1/integrations', expectedStatus: 200 }
   ,{ method: 'POST', url: '/v1/integrations', payload: {}, expectedStatus: 201 }
   ,{ method: 'PATCH', url: '/v1/integrations/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 }
@@ -152,13 +156,14 @@ describe('internal API surface contract', () => {
       listClassifications: vi.fn().mockResolvedValue([]), createClassification: vi.fn().mockResolvedValue({}), listEvents: vi.fn().mockResolvedValue([]), createEvent: vi.fn().mockResolvedValue({}), addEventAction: vi.fn().mockResolvedValue({}), completeEventAction: vi.fn().mockResolvedValue({}), transitionEvent: vi.fn().mockResolvedValue({}),
       listChanges: vi.fn().mockResolvedValue({ changes: [], pagination: { page: 1, pageSize: 25, total: 0 } }), getChange: vi.fn().mockResolvedValue({ change: {}, history: [] }), createChange: vi.fn().mockResolvedValue({}), addChangeRisk: vi.fn().mockResolvedValue({}), addChangeApproval: vi.fn().mockResolvedValue({}), decideChangeApproval: vi.fn().mockResolvedValue({}), addChangeEvidence: vi.fn().mockResolvedValue({}), openChangeEvidenceDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), completeChangeWorkflowStep: vi.fn().mockResolvedValue({}), transitionChange: vi.fn().mockResolvedValue({}), listCards: vi.fn().mockResolvedValue([]), createCard: vi.fn().mockResolvedValue({}), addCardComment: vi.fn().mockResolvedValue({}), moveCard: vi.fn().mockResolvedValue({}),
       listHht: vi.fn().mockResolvedValue({ companies: [], reports: [], windows: [] }), createHhtCompany: vi.fn().mockResolvedValue({}), upsertHhtReport: vi.fn().mockResolvedValue({}), setHhtReportStatus: vi.fn().mockResolvedValue({}), upsertHhtWindow: vi.fn().mockResolvedValue({}),
-      listDashboards: vi.fn().mockResolvedValue([]), createDashboard: vi.fn().mockResolvedValue({}), updateDashboard: vi.fn().mockResolvedValue({}), publishDashboard: vi.fn().mockResolvedValue({}), listTv: vi.fn().mockResolvedValue({ displays: [], playlists: [] }), createTvDisplay: vi.fn().mockResolvedValue({}), updateTvDisplay: vi.fn().mockResolvedValue({}), publishTvDisplay: vi.fn().mockResolvedValue({}), createTvPlaylist: vi.fn().mockResolvedValue({}), listIntegrations: vi.fn().mockResolvedValue([]), createIntegration: vi.fn().mockResolvedValue({}), updateIntegration: vi.fn().mockResolvedValue({}), listFiles: vi.fn().mockResolvedValue([]), createFileIntent: vi.fn().mockResolvedValue({}), completeFileUpload: vi.fn().mockResolvedValue({}), uploadFileContent: vi.fn().mockResolvedValue({}), openFileDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), listDeadLetters: vi.fn().mockResolvedValue([]), redriveDeadLetter: vi.fn().mockResolvedValue({})
+      listDashboards: vi.fn().mockResolvedValue([]), createDashboard: vi.fn().mockResolvedValue({}), updateDashboard: vi.fn().mockResolvedValue({}), publishDashboard: vi.fn().mockResolvedValue({}), listTv: vi.fn().mockResolvedValue({ displays: [], playlists: [] }), createTvDisplay: vi.fn().mockResolvedValue({}), updateTvDisplay: vi.fn().mockResolvedValue({}), publishTvDisplay: vi.fn().mockResolvedValue({}), createTvPlaylist: vi.fn().mockResolvedValue({}), publishTvPlaylist: vi.fn().mockResolvedValue({}), listIntegrations: vi.fn().mockResolvedValue([]), createIntegration: vi.fn().mockResolvedValue({}), updateIntegration: vi.fn().mockResolvedValue({}), listFiles: vi.fn().mockResolvedValue([]), createFileIntent: vi.fn().mockResolvedValue({}), completeFileUpload: vi.fn().mockResolvedValue({}), uploadFileContent: vi.fn().mockResolvedValue({}), openFileDownload: vi.fn().mockResolvedValue({ body: Buffer.from(''), contentType: 'application/octet-stream', filename: 'file' }), listDeadLetters: vi.fn().mockResolvedValue([]), redriveDeadLetter: vi.fn().mockResolvedValue({})
     };
     const notifications = { list: vi.fn().mockResolvedValue({ items: [], unread: 0 }), markRead: vi.fn().mockResolvedValue({ read: true }), markAllRead: vi.fn().mockResolvedValue({ updated: 0 }) };
     const publicDashboards = { withPublishedDashboard: vi.fn(async (_token: string, work: (tx: { dashboard: { findFirst: () => Promise<null> } }, tokenHash: string) => Promise<unknown>) => work({ dashboard: { findFirst: async () => null } }, 'a'.repeat(64))) };
     const publicTvDisplays = { withPublishedDisplay: vi.fn(async (_token: string, work: (tx: { tvDisplay: { findFirst: () => Promise<null> } }, tokenHash: string) => Promise<unknown>) => work({ tvDisplay: { findFirst: async () => null } }, 'a'.repeat(64))) };
+    const publicTvPlaylists = { withPublishedPlaylist: vi.fn(async (_token: string, work: (tx: { tvPlaylist: { findFirst: () => Promise<null> } }, tokenHash: string) => Promise<unknown>) => work({ tvPlaylist: { findFirst: async () => null } }, 'a'.repeat(64))) };
     const module = await Test.createTestingModule({
-      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, PublicTvDisplaysController, NotificationsController],
+      controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, PublicTvDisplaysController, PublicTvPlaylistsController, NotificationsController],
       providers: [
         { provide: IdentityService, useValue: identityService },
         { provide: OrganizationAccessService, useValue: organizations },
@@ -166,6 +171,7 @@ describe('internal API surface contract', () => {
         { provide: OperationsService, useValue: operations },
         { provide: PublicDashboardAccessService, useValue: publicDashboards },
         { provide: PublicTvDisplayAccessService, useValue: publicTvDisplays },
+        { provide: PublicTvPlaylistAccessService, useValue: publicTvPlaylists },
         { provide: NotificationsService, useValue: notifications },
         { provide: PrismaService, useValue: { $queryRaw: vi.fn().mockResolvedValue([{ ok: 1 }]) } },
         { provide: RedisService, useValue: { ping: vi.fn().mockResolvedValue('PONG') } },

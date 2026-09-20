@@ -3,7 +3,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { resolveSubmissionCursorPage } from './submission-pagination.js';
 import { DashboardShell } from './dashboard-shell.js';
 import { DashboardsModulePage, PublicDashboardPage } from './dashboard-publication.js';
-import { PublicTvDisplayPage } from './tv-publication.js';
+import { PublicTvDisplayPage, PublicTvPlaylistPage } from './tv-publication.js';
 
 type Identity = { user: { id: string; email: string }; organization: { id: string; name: string; slug: string }; membership: { id: string; role: string }; access: { isPlatformAdmin: boolean; requiresPasswordChange: boolean } };
 type AuthMode = 'loading' | 'bootstrap' | 'login' | 'change-password' | 'invite' | 'signed-in';
@@ -30,6 +30,7 @@ export function App(): React.JSX.Element {
   const publicFormId = /^\/f\/([0-9a-f-]{36})$/i.exec(window.location.pathname)?.[1];
   const publicDashboardToken = /^\/p\/([A-Za-z0-9_-]{43})$/.exec(window.location.pathname)?.[1];
   const publicTvDisplayToken = /^\/tv\/([A-Za-z0-9_-]{43})$/.exec(window.location.pathname)?.[1];
+  const publicTvPlaylistToken = /^\/tv\/playlist\/([A-Za-z0-9_-]{43})$/.exec(window.location.pathname)?.[1];
   const [mode, setMode] = useState<AuthMode>('loading');
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +53,7 @@ export function App(): React.JSX.Element {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   useEffect(() => { void (async () => {
-    if (publicFormId || publicDashboardToken || publicTvDisplayToken) return;
+    if (publicFormId || publicDashboardToken || publicTvDisplayToken || publicTvPlaylistToken) return;
     if (invitationToken) { setMode('invite'); return; }
     try {
       const [session, bootstrap] = await Promise.all([api<{ identity: Identity | null }>('/v1/auth/session'), api<{ bootstrapRequired: boolean }>('/v1/auth/bootstrap-status')]);
@@ -62,7 +63,7 @@ export function App(): React.JSX.Element {
         setMode(session.identity.access.requiresPasswordChange ? 'change-password' : 'signed-in');
       } else setMode(bootstrap.bootstrapRequired ? 'bootstrap' : 'login');
     } catch { setError('Não foi possível conectar à plataforma. Atualize a página em alguns instantes.'); setMode('login'); }
-  })(); }, [invitationToken, publicDashboardToken, publicFormId, publicTvDisplayToken]);
+  })(); }, [invitationToken, publicDashboardToken, publicFormId, publicTvDisplayToken, publicTvPlaylistToken]);
 
   useEffect(() => { void (async () => {
     if (mode !== 'signed-in' || !identity) return;
@@ -310,6 +311,7 @@ export function App(): React.JSX.Element {
   if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
   if (publicDashboardToken) return <PublicDashboardPage token={publicDashboardToken} />;
   if (publicTvDisplayToken) return <PublicTvDisplayPage token={publicTvDisplayToken} />;
+  if (publicTvPlaylistToken) return <PublicTvPlaylistPage token={publicTvPlaylistToken} />;
 
   if (mode === 'loading') return <main className="shell"><p className="loading">Carregando Builder Solutions…</p></main>;
   if (mode === 'signed-in' && identity) return <DashboardShell collapsed={sidebarCollapsed} identity={identity} onLogout={() => void logout()} onNavigate={setWorkspaceView} onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)} pending={pending} unreadNotifications={unreadNotifications} view={workspaceView}><section className="panel dashboard dashboard-wide" aria-labelledby="dashboard-title">
@@ -683,6 +685,18 @@ function TvModulePage({ canManage }: { canManage: boolean }): React.JSX.Element 
       await load();
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a tela.'); } finally { setPending(false); }
   }
+  async function createPlaylist(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault(); const values = new FormData(event.currentTarget); const displayIds = values.getAll('displayIds').map(String);
+    setPending(true); setError(null);
+    try { await api('/v1/tv/playlists', { method: 'POST', body: JSON.stringify({ name: values.get('name'), intervalSeconds: Number(values.get('intervalSeconds')), displayIds }) }); event.currentTarget.reset(); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível criar a playlist.'); } finally { setPending(false); }
+  }
+  async function publishPlaylist(playlist: Record<string, unknown>, published: boolean): Promise<void> {
+    const playlistId = stringValue(playlist.id); const version = typeof playlist.version === 'number' ? playlist.version : 0;
+    if (!playlistId || version < 1) return; setPending(true); setError(null); setPublicationUrl(null);
+    try { const response = await api<{ publication: { token: string } | null }>(`/v1/tv/playlists/${playlistId}/publish`, { method: 'POST', body: JSON.stringify({ published, expectedVersion: version }) }); if (response.publication) setPublicationUrl(`${window.location.origin}/tv/playlist/${response.publication.token}`); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Não foi possível atualizar a publicação da playlist.'); } finally { setPending(false); }
+  }
   return <>
     <p className="eyebrow">Módulo empresarial</p><h1 id="dashboard-title">TV operacional</h1>
     <p className="description">Cada tela publicada recebe um link secreto próprio e reproduz somente um snapshot estático autorizado do painel.</p>
@@ -690,7 +704,7 @@ function TvModulePage({ canManage }: { canManage: boolean }): React.JSX.Element 
     {publicationUrl && <section className="admin-section publication-success"><strong>Link da TV criado — copie agora.</strong><p>Por segurança, este token não será exibido novamente.</p><code>{publicationUrl}</code><span className="action-row"><button className="secondary-button compact" type="button" onClick={() => void navigator.clipboard.writeText(publicationUrl)}>Copiar</button><a className="secondary-button compact" href={publicationUrl} target="_blank" rel="noreferrer">Abrir</a></span></section>}
     {canManage && <form className="inline-form admin-section" onSubmit={createDisplay}><label>Nome da tela<input name="name" required minLength={2} maxLength={160} /></label><label>Painel publicado<select name="dashboardId" required disabled={dashboards.length === 0}><option value="">Selecione</option>{dashboards.map((dashboard) => <option key={String(dashboard.id)} value={String(dashboard.id)}>{recordTitle(dashboard)}</option>)}</select></label><button className="primary-button compact" type="submit" disabled={pending || dashboards.length === 0}>Criar tela</button></form>}
     <section className="admin-section"><h2>Telas</h2>{displays.length === 0 ? <p className="section-note">Nenhuma tela configurada.</p> : <div className="form-list">{displays.map((display) => <article className="form-row" key={String(display.id)}><Settings2 aria-hidden="true" /><div><strong>{recordTitle(display)}</strong><small>{display.published === true ? 'Publicada' : display.publicRevokedAt ? 'Link revogado' : 'Rascunho'} · {display.active === false ? 'em manutenção' : `atualização a cada ${String(display.refreshSeconds ?? 30)}s`}</small>{canManage && <><form className="inline-form" onSubmit={(event) => void updateDisplay(event, display)}><label>Nome<input name="name" required minLength={2} maxLength={160} defaultValue={recordTitle(display)} /></label><label>Atualiza em (s)<input name="refreshSeconds" type="number" min="5" max="3600" required defaultValue={String(display.refreshSeconds ?? 30)} /></label><label><input name="active" type="checkbox" defaultChecked={display.active !== false} /> Ativa</label><button className="secondary-button compact" type="submit" disabled={pending}>Salvar</button></form><span className="action-row">{display.active !== false && <button className="primary-button compact" type="button" disabled={pending} onClick={() => void publishDisplay(display, true)}>{display.published === true ? 'Gerar novo link' : 'Publicar'}</button>}{display.published === true && <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void publishDisplay(display, false)}>Revogar</button>}</span></>}</div></article>)}</div>}</section>
-    <section className="admin-section"><h2>Playlists</h2><p className="section-note">A publicação de playlists será o próximo incremento, para validar cada tela ativa antes de cada alternância.</p>{playlists.length > 0 && <div className="form-list">{playlists.map((playlist) => <article className="form-row" key={String(playlist.id)}><Settings2 aria-hidden="true" /><div><strong>{recordTitle(playlist)}</strong><small>{recordSummary(playlist)}</small></div></article>)}</div>}</section>
+    <section className="admin-section"><h2>Playlists</h2><p className="section-note">Uma playlist alterna snapshots autorizados de telas publicadas. Qualquer alteração em uma tela revoga a playlist para exigir uma nova publicação.</p>{canManage && <form className="inline-form" onSubmit={createPlaylist}><label>Nome<input name="name" required minLength={2} maxLength={160} /></label><label>Intervalo (s)<input name="intervalSeconds" type="number" min="5" max="3600" required defaultValue="30" /></label><fieldset><legend>Telas publicadas</legend>{displays.filter((display) => display.active !== false && display.published === true).map((display) => <label key={String(display.id)}><input name="displayIds" type="checkbox" value={String(display.id)} /> {recordTitle(display)}</label>)}</fieldset><button className="primary-button compact" type="submit" disabled={pending || !displays.some((display) => display.active !== false && display.published === true)}>Criar playlist</button></form>}{playlists.length === 0 ? <p className="section-note">Nenhuma playlist configurada.</p> : <div className="form-list">{playlists.map((playlist) => <article className="form-row" key={String(playlist.id)}><Settings2 aria-hidden="true" /><div><strong>{recordTitle(playlist)}</strong><small>{playlist.published === true ? 'Publicada' : playlist.publicRevokedAt ? 'Link revogado' : 'Rascunho'} · alternância a cada {String(playlist.intervalSeconds ?? 30)}s</small>{canManage && <span className="action-row"><button className="primary-button compact" type="button" disabled={pending} onClick={() => void publishPlaylist(playlist, true)}>{playlist.published === true ? 'Gerar novo link' : 'Publicar'}</button>{playlist.published === true && <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void publishPlaylist(playlist, false)}>Revogar</button>}</span>}</div></article>)}</div>}</section>
   </>;
 }
 

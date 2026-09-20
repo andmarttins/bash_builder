@@ -257,6 +257,33 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('exposes only an active TV playlist snapshot selected by its token digest', async () => {
+    const published = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a58';
+    const revoked = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a59';
+    const expired = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a60';
+    const tenantBPlaylist = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a83';
+    const digest = '3'.repeat(64);
+    await bootstrap.query('INSERT INTO "tv_playlists" (id, organization_id, name, published, public_token_hash, public_snapshot, updated_at) VALUES ($1, $2, $3, TRUE, $4, $5, NOW()), ($6, $2, $7, TRUE, $8, $9, NOW()), ($10, $2, $11, TRUE, $12, $13, NOW()), ($14, $15, $16, TRUE, $17, $18, NOW())', [published, tenantA, 'Published playlist', digest, JSON.stringify({ title: 'Safe' }), revoked, 'Revoked playlist', '4'.repeat(64), JSON.stringify({ title: 'Safe' }), expired, 'Expired playlist', '5'.repeat(64), JSON.stringify({ title: 'Safe' }), tenantBPlaylist, tenantB, 'Other tenant playlist', '6'.repeat(64), JSON.stringify({ title: 'Must not leak' })]);
+    await bootstrap.query('UPDATE "tv_playlists" SET public_revoked_at = NOW() WHERE id = $1', [revoked]);
+    await bootstrap.query('UPDATE "tv_playlists" SET public_expires_at = NOW() - INTERVAL \'1 second\' WHERE id = $1', [expired]);
+    await runtime.query('BEGIN');
+    try {
+      expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [published])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_tv_playlist_token_hash', $1, true)", [digest]);
+      expect((await runtime.query('SELECT id, name FROM "tv_playlists" ORDER BY id')).rows).toEqual([{ id: published, name: 'Published playlist' }]);
+      await expect(runtime.query('UPDATE "tv_playlists" SET name = \'tampered\' WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      const replacementDigest = '7'.repeat(64);
+      await bootstrap.query('UPDATE "tv_playlists" SET public_token_hash = $1 WHERE id = $2', [replacementDigest, published]);
+      expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [published])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_tv_playlist_token_hash', $1, true)", [replacementDigest]);
+      expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [published])).rows).toEqual([{ id: published }]);
+      await runtime.query("SELECT set_config('app.public_tv_playlist_token_hash', $1, true)", ['4'.repeat(64)]);
+      expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [revoked])).rows).toEqual([]);
+      await runtime.query("SELECT set_config('app.public_tv_playlist_token_hash', $1, true)", ['5'.repeat(64)]);
+      expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [expired])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+  });
+
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
     const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
@@ -264,7 +291,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       [tableNames]
     );
     expect(policies.rows).toHaveLength(tableNames.length);
-    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : name === 'dashboards' ? 'dashboards_tenant_or_publication' : name === 'tv_displays' ? 'tv_displays_tenant_or_publication' : `${name}_tenant_isolation`).sort());
+    expect(policies.rows.map((row) => row.policyname)).toEqual(tableNames.map((name) => name === 'user_notifications' ? 'user_notifications_recipient_isolation' : name === 'dashboards' ? 'dashboards_tenant_or_publication' : name === 'tv_displays' ? 'tv_displays_tenant_or_publication' : name === 'tv_playlists' ? 'tv_playlists_tenant_or_publication' : `${name}_tenant_isolation`).sort());
     const rls = await bootstrap.query<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>(
       "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY relname",
       [tableNames]

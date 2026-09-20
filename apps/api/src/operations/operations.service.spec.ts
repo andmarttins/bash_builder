@@ -254,7 +254,8 @@ describe('calculateHhtRates', () => {
     const dashboard = { id: eventId, title: 'Status', widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Tudo normal' } }], version: 2, published: true };
     const tx = {
       dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, widgets: dashboard.widgets }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
-      tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0),
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
@@ -290,7 +291,7 @@ describe('calculateHhtRates', () => {
     const dashboard = { id: eventId, version: 2, title: 'Status', published: true };
     const tx = {
       dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, published: true }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
-      tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) }, tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0), auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 1, widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Atualizado' } }] })).resolves.toEqual(dashboard);
@@ -315,6 +316,8 @@ describe('calculateHhtRates', () => {
     const display = { id: eventId, active: true, dashboard, version: 2, published: true };
     const tx = {
       tvDisplay: { findFirst: vi.fn().mockResolvedValue(display), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, version: 2, published: true }) },
+      tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      $executeRaw: vi.fn().mockResolvedValue(0),
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
@@ -342,7 +345,7 @@ describe('calculateHhtRates', () => {
 
   it('deactivates a TV screen by revoking its publication and uses version control', async () => {
     const updated = { id: eventId, version: 2, active: false, published: false };
-    const tx = { tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(updated) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(updated) }, tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0), auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).updateTvDisplay(identity, eventId, { active: false, expectedVersion: 1 })).resolves.toEqual(updated);
     expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ active: false, published: false, publicTokenHash: null, publicSnapshot: expect.anything() }) }));
@@ -353,5 +356,29 @@ describe('calculateHhtRates', () => {
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).listTv(identity)).resolves.toEqual({ displays: [], playlists: [] });
     expect(tx.tvDisplay.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.not.objectContaining({ publicTokenHash: expect.anything(), publicSnapshot: expect.anything() }) }));
+    expect(tx.tvPlaylist.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.not.objectContaining({ publicTokenHash: expect.anything(), publicSnapshot: expect.anything() }) }));
+  });
+
+  it('publishes an opaque playlist snapshot only when every selected display is currently public', async () => {
+    const displayId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a31';
+    const playlist = { id: eventId, name: 'Unidades', active: true, intervalSeconds: 30, items: [{ displayId, position: 0 }] };
+    const display = { id: displayId, name: 'Recepção', publicSnapshot: { title: 'Status', description: null, widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Seguro' } }] }, publicExpiresAt: null };
+    const result = { id: eventId, name: 'Unidades', version: 2, published: true };
+    const tx = {
+      tvPlaylist: { findFirst: vi.fn().mockResolvedValue(playlist), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(result) },
+      tvDisplay: { findMany: vi.fn().mockResolvedValue([display]) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const published = await new OperationsService(tenants as never).publishTvPlaylist(identity, eventId, { published: true, expectedVersion: 1 });
+    expect(published.publication?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(tx.tvPlaylist.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ publicTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), publicSnapshot: { title: 'Unidades', intervalSeconds: 30, displays: [{ name: 'Recepção', dashboard: display.publicSnapshot }] } }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'tv_playlist.publication_created', metadata: expect.not.objectContaining({ token: expect.anything() }) }) }));
+  });
+
+  it('refuses to publish a playlist if a selected display is not publicly available', async () => {
+    const displayId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a32';
+    const tx = { tvPlaylist: { findFirst: vi.fn().mockResolvedValue({ id: eventId, name: 'Unidades', active: true, intervalSeconds: 30, items: [{ displayId, position: 0 }] }) }, tvDisplay: { findMany: vi.fn().mockResolvedValue([]) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    await expect(new OperationsService(tenants as never).publishTvPlaylist(identity, eventId, { published: true, expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -710,9 +710,16 @@ model TvPlaylist {
   organizationId String       @map("organization_id") @db.Uuid
   name           String       @db.VarChar(160)
   publicId       String       @unique @default(uuid()) @map("public_id") @db.Uuid
+  publicTokenHash String?     @unique @map("public_token_hash") @db.Char(64)
+  publicSnapshot Json?        @map("public_snapshot")
+  publicPublishedAt DateTime? @map("public_published_at") @db.Timestamptz(6)
+  publicExpiresAt DateTime?   @map("public_expires_at") @db.Timestamptz(6)
+  publicRevokedAt DateTime?   @map("public_revoked_at") @db.Timestamptz(6)
   active         Boolean      @default(true)
+  published      Boolean      @default(false)
   intervalSeconds Int         @default(30) @map("interval_seconds")
   items          Json         @default("[]")
+  version        Int          @default(1)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)

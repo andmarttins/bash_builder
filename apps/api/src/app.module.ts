@@ -23,16 +23,18 @@ import { FormValidationService } from './forms/form-validation.service.js';
 import { PublicFormAccessService } from './platform/public-access/public-form-access.service.js';
 import { PublicDashboardAccessService } from './platform/public-access/public-dashboard-access.service.js';
 import { PublicTvDisplayAccessService } from './platform/public-access/public-tv-display-access.service.js';
+import { PublicTvPlaylistAccessService } from './platform/public-access/public-tv-playlist-access.service.js';
 import { ObjectStorageService } from './platform/storage/object-storage.service.js';
 import { OperationsController } from './operations/operations.controller.js';
 import { OperationsService } from './operations/operations.service.js';
 import { PublicDashboardsController } from './operations/public-dashboards.controller.js';
 import { PublicTvDisplaysController } from './operations/public-tv-displays.controller.js';
+import { PublicTvPlaylistsController } from './operations/public-tv-playlists.controller.js';
 import { NotificationsController } from './notifications/notifications.controller.js';
 import { NotificationsService } from './notifications/notifications.service.js';
 
 @Module({
-  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, PublicTvDisplaysController, NotificationsController],
+  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, PublicTvDisplaysController, PublicTvPlaylistsController, NotificationsController],
   providers: [
     PrismaService,
     RedisService,
@@ -52,6 +54,7 @@ import { NotificationsService } from './notifications/notifications.service.js';
     PublicFormAccessService,
     PublicDashboardAccessService,
     PublicTvDisplayAccessService,
+    PublicTvPlaylistAccessService,
     ObjectStorageService,
     OperationsService,
     NotificationsService
