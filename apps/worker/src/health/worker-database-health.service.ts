@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Client } from 'pg';
+import type { OutboxEvent } from '@builder/contracts';
 import { getWorkerRuntimeConfig } from '../config/runtime-config.js';
 
 @Injectable()
@@ -37,6 +38,15 @@ export class WorkerDatabaseHealthService implements OnModuleInit, OnModuleDestro
   public async failReceipt(eventId: string, consumerName: string): Promise<void> {
     if (!this.client) throw new Error('Worker database client is not ready.');
     await this.client.query('SELECT app.fail_worker_event_receipt($1::uuid, $2)', [eventId, consumerName]);
+  }
+
+  public async recordDomainProjection(event: OutboxEvent, projectionName: string): Promise<boolean> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<{ recorded: boolean }>(
+      'SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz) AS recorded',
+      [event.eventId, event.tenantId, projectionName, event.eventType, event.aggregateId, JSON.stringify(event.payload), event.occurredAt]
+    );
+    return result.rows[0]?.recorded === true;
   }
 
   public async query<T extends Record<string, unknown>>(sql: string, values: unknown[] = []): Promise<T[]> {

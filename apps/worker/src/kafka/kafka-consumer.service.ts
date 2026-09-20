@@ -30,9 +30,10 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
           return;
         }
         try {
-          // Provider effects are registered as explicit consumers. A receipt is
-          // completed only after the handler succeeds, so failed work can retry.
-          this.logger.log(`Received ${event.eventType} (${event.eventId}) for tenant ${event.tenantId}`);
+          // Persist a tenant-scoped, idempotent projection before acknowledging
+          // the broker message. Provider-specific consumers can safely build on it.
+          await this.database.recordDomainProjection(event, consumerName);
+          this.logger.log(`Projected ${event.eventType} (${event.eventId}) for tenant ${event.tenantId}`);
           await this.database.completeReceipt(event.eventId, consumerName);
         } catch (error) {
           await this.database.failReceipt(event.eventId, consumerName);
