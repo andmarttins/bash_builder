@@ -49,6 +49,10 @@ button:disabled { cursor: wait; opacity: .65; }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: .45rem; }
 .action-row { display: flex; gap: .75rem; margin: .8rem 0; }
 .field-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+.event-detail { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.nested-list { display: grid; gap: .35rem; margin: .5rem 0 0; padding-left: 1.15rem; color: #cbd5e1; font-size: .82rem; }
+.nested-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+.compact-form { margin-top: .75rem; }
 .admin-section { display: grid; gap: .85rem; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155; }
 .admin-section h2 { margin: 0; color: #e2e8f0; font-size: 1.05rem; }
 .inline-form { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; }
