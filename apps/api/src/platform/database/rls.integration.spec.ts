@@ -278,6 +278,8 @@ describeIntegration('PostgreSQL row-level security', () => {
     const tenantBNotification = notifications.find((notification) => notification.organization_id === tenantB);
     expect(tenantANotification).toEqual(expect.objectContaining({ aggregate_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a95', event_type: 'change.deadline_reminder' }));
     expect(tenantBNotification).toEqual(expect.objectContaining({ aggregate_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a96', event_type: 'change.deadline_reminder' }));
+    const eventTypeKinds = (await worker.query<{ event_type_kind: string }>('SELECT DISTINCT pg_typeof(event_type)::text AS event_type_kind FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
+    expect(eventTypeKinds).toEqual([{ event_type_kind: 'character varying' }]);
     await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantANotification!.event_id, tenantANotification!.organization_id, 'change-deadline-monitor-v1', tenantANotification!.event_type, tenantANotification!.aggregate_id, JSON.stringify(tenantANotification!.payload), tenantANotification!.occurred_at]);
     await worker.query('SELECT app.record_domain_event_projection($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::jsonb, $7::timestamptz)', [tenantBNotification!.event_id, tenantBNotification!.organization_id, 'change-deadline-monitor-v1', tenantBNotification!.event_type, tenantBNotification!.aggregate_id, JSON.stringify(tenantBNotification!.payload), tenantBNotification!.occurred_at]);
     const afterProjection = (await worker.query<{ event_id: string }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;

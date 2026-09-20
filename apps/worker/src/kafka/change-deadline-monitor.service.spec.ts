@@ -11,10 +11,22 @@ describe('ChangeDeadlineMonitorService', () => {
     expect(database.recordDomainProjection).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'change.deadline_reminder', schemaVersion: 1 }), 'change-deadline-monitor-v1');
   });
 
-  it('contains an initial monitor failure instead of preventing worker startup', async () => {
-    const database = { query: vi.fn().mockRejectedValue(new Error('database temporarily unavailable')) };
+  it('contains an initial monitor failure and schedules the next attempt', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WORKER_DATABASE_URL', 'postgresql://worker:password@localhost:5432/builder');
+    vi.stubEnv('KAFKA_BROKERS', 'localhost:9092');
+    vi.stubEnv('KAFKA_CLIENT_ID', 'worker-test');
+    vi.stubEnv('KAFKA_GROUP_ID', 'worker-test-group');
+    vi.stubEnv('CHANGE_DEADLINE_POLL_INTERVAL_MS', '5000');
+    const database = { query: vi.fn().mockRejectedValueOnce(new Error('database temporarily unavailable')).mockResolvedValue([]) };
     const service = new ChangeDeadlineMonitorService(database as never);
 
-    await expect((service as never as { runScheduled(lookaheadHours: number): Promise<void> }).runScheduled(24)).resolves.toBeUndefined();
+    await expect(service.onModuleInit()).resolves.toBeUndefined();
+    expect(database.query).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(database.query).toHaveBeenCalledTimes(2);
+    service.onModuleDestroy();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 });
