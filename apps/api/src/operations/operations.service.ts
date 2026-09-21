@@ -21,7 +21,10 @@ const integrationStatuses = ['DISABLED', 'ACTIVE', 'ERROR'] as const;
 const createClassificationSchema = z.object({ category: text(2, 80), label: text(2, 160), value: text(1, 120), position: z.number().int().nonnegative().optional() });
 const createEventSchema = z.object({
   code: text(2, 32).regex(/^[A-Z0-9][A-Z0-9-]*$/i, 'Código do evento inválido.'), title: text(2, 200), description: optionalText(10_000), occurredAt: z.coerce.date(),
-  site: optionalText(160), area: optionalText(160), origin: text(2, 80), actualClass: optionalText(120), potentialClass: optionalText(120), reporterName: optionalText(160), reporterEmail: z.string().email().max(320).optional().nullable(),
+  site: optionalText(160), area: optionalText(160), origin: text(2, 80), actualClassificationId: z.uuid().optional().nullable(), potentialClassificationId: z.uuid().optional().nullable(),
+  // Kept during the client migration: a legacy value is resolved against the
+  // tenant catalogue and persisted as its canonical ID, never silently lost.
+  actualClass: text(1, 120).optional().nullable(), potentialClass: text(1, 120).optional().nullable(), reporterName: optionalText(160), reporterEmail: z.string().email().max(320).optional().nullable(),
   slaHours: z.number().int().min(1).max(720).optional().nullable()
 });
 const eventActionSchema = z.object({ title: text(2, 200), owner: optionalText(160), dueAt: z.coerce.date().optional().nullable() });
@@ -124,8 +127,9 @@ export class OperationsService {
     const data = this.parse(createEventSchema, input);
     return this.withTenant(identity, async (tx) => {
       const { slaHours, ...eventData } = data;
+      const classifications = await this.resolveEventClassifications(tx, eventData.actualClassificationId, eventData.potentialClassificationId, eventData.actualClass, eventData.potentialClass);
       const slaDueAt = slaHours ? new Date(eventData.occurredAt.getTime() + slaHours * 60 * 60 * 1_000) : null;
-      const event = await tx.safetyEvent.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, slaDueAt, ...eventData } });
+      const event = await tx.safetyEvent.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, slaDueAt, ...eventData, actualClassificationId: classifications.actual?.id ?? null, potentialClassificationId: classifications.potential?.id ?? null, actualClass: classifications.actual?.value ?? null, potentialClass: classifications.potential?.value ?? null } });
       await this.record(tx, identity, 'safety_event.created', 'safety_event', event.id, { code: event.code, slaHours: slaHours ?? null, slaDueAt: slaDueAt?.toISOString() ?? null });
       return event;
     });
@@ -907,6 +911,22 @@ export class OperationsService {
   }
 
   private async eventExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.safetyEvent.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Evento não encontrado.'); }
+  private async resolveEventClassifications(tx: TenantTransaction, actualId: string | null | undefined, potentialId: string | null | undefined, actualValue: string | null | undefined, potentialValue: string | null | undefined): Promise<{ actual?: { id: string; value: string }; potential?: { id: string; value: string } }> {
+    const ids = [...new Set([actualId, potentialId].filter((value): value is string => Boolean(value)))];
+    // IDs take precedence when a mixed-version client sends both fields.
+    const values = [...new Set([actualId ? undefined : actualValue, potentialId ? undefined : potentialValue].filter((value): value is string => Boolean(value)))];
+    if (ids.length === 0 && values.length === 0) return {};
+    const alternatives: Prisma.ClassificationItemWhereInput[] = [];
+    if (ids.length > 0) alternatives.push({ id: { in: ids } });
+    if (values.length > 0) alternatives.push({ value: { in: values } });
+    const found = await tx.classificationItem.findMany({ where: { category: 'event_classification', active: true, OR: alternatives }, select: { id: true, value: true } });
+    const byId = new Map(found.map((item) => [item.id, item]));
+    const byValue = new Map(found.map((item) => [item.value, item]));
+    const actual = actualId ? byId.get(actualId) : actualValue ? byValue.get(actualValue) : undefined;
+    const potential = potentialId ? byId.get(potentialId) : potentialValue ? byValue.get(potentialValue) : undefined;
+    if ((actualId || actualValue) && !actual || (potentialId || potentialValue) && !potential) throw new BadRequestException('Selecione uma classificação ativa cadastrada para eventos.');
+    return { actual, potential };
+  }
   private async changeExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.changeRequest.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Mudança não encontrada.'); }
   private async cardExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.bashCard.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Cartão não encontrado.'); }
   private async record(tx: TenantTransaction, identity: SessionIdentity, action: string, resourceType: string, resourceId: string, metadata: Record<string, unknown>): Promise<void> {

@@ -66,6 +66,20 @@ describe('calculateHhtRates', () => {
     expect(() => service.createEvent(identity, { code: 'EVT-BAD', title: 'Evento inválido', origin: 'MANUAL', occurredAt, slaHours: 721 })).toThrow(BadRequestException);
   });
 
+  it('resolves actual and potential event classifications by ID or legacy value', async () => {
+    const classId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a19';
+    const potentialId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a20';
+    const tx = { classificationItem: { findMany: vi.fn().mockResolvedValue([{ id: classId, value: 'near-miss' }, { id: potentialId, value: 'serious' }]) }, safetyEvent: { create: vi.fn().mockResolvedValue({ id: eventId, code: 'EVT-CLASS' }) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.createEvent(identity, { code: 'EVT-CLASS', title: 'Classificado', origin: 'MANUAL', occurredAt: '2026-09-20T12:00:00.000Z', actualClassificationId: classId, potentialClassificationId: potentialId })).resolves.toMatchObject({ id: eventId });
+    expect(tx.classificationItem.findMany).toHaveBeenCalledWith({ where: { category: 'event_classification', active: true, OR: [{ id: { in: [classId, potentialId] } }] }, select: { id: true, value: true } });
+    expect(tx.safetyEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ actualClassificationId: classId, potentialClassificationId: potentialId, actualClass: 'near-miss', potentialClass: 'serious' }) }));
+    await expect(service.createEvent(identity, { code: 'EVT-LEGACY', title: 'Legado', origin: 'MANUAL', occurredAt: '2026-09-20T12:00:00.000Z', actualClass: 'near-miss', potentialClass: 'serious' })).resolves.toMatchObject({ id: eventId });
+    expect(tx.safetyEvent.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ actualClassificationId: classId, potentialClassificationId: potentialId, actualClass: 'near-miss', potentialClass: 'serious' }) }));
+    tx.classificationItem.findMany.mockResolvedValue([]);
+    await expect(service.createEvent(identity, { code: 'EVT-INVALID', title: 'Inválido', origin: 'MANUAL', occurredAt: '2026-09-20T12:00:00.000Z', actualClassificationId: classId })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('does not approve a change while an approval decision is pending', async () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },

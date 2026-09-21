@@ -3234,6 +3234,7 @@ function EventsModulePage({
   canManage: boolean;
 }): React.JSX.Element {
   const [events, setEvents] = useState<Array<Record<string, unknown>>>([]);
+  const [eventClasses, setEventClasses] = useState<Array<{ id: string; label: string; active: boolean }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const load = useCallback(async (): Promise<void> => {
@@ -3253,6 +3254,7 @@ function EventsModulePage({
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => { void api<{ items: Array<{ id: string; label: string; active: boolean }> }>("/v1/classifications?category=event_classification").then((response) => setEventClasses(response.items.filter((item) => item.active))).catch(() => setEventClasses([])); }, []);
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
@@ -3268,6 +3270,8 @@ function EventsModulePage({
           occurredAt: new Date(String(values.get("occurredAt"))).toISOString(),
           site: values.get("site") || null,
           area: values.get("area") || null,
+          actualClassificationId: values.get("actualClassificationId") || null,
+          potentialClassificationId: values.get("potentialClassificationId") || null,
           description: values.get("description") || null,
           slaHours: values.get("slaHours")
             ? Number(values.get("slaHours"))
@@ -3417,6 +3421,8 @@ function EventsModulePage({
             Área
             <input name="area" maxLength={160} />
           </label>
+          <label>Classificação real<select name="actualClassificationId" defaultValue=""><option value="">Não informada</option>{eventClasses.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <label>Classificação potencial<select name="potentialClassificationId" defaultValue=""><option value="">Não informada</option>{eventClasses.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label>
             SLA (horas)
             <input
@@ -5523,7 +5529,7 @@ function operationalPayload(
   if (view === "bash") return { title };
   if (view === "hht") return { name: title, site: "Principal" };
   if (view === "classifications")
-    return { category: "event_type", label: title, value: slugValue(title) };
+    return { category: "event_classification", label: title, value: slugValue(title) };
   return {
     originalName: title,
     contentType: "application/octet-stream",

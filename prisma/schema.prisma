@@ -418,8 +418,11 @@ model ClassificationItem {
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actualSafetyEvents SafetyEvent[] @relation("ActualSafetyEventClassification")
+  potentialSafetyEvents SafetyEvent[] @relation("PotentialSafetyEventClassification")
 
   @@unique([organizationId, category, value])
+  @@unique([id, organizationId])
   @@index([organizationId, category, active, position])
   @@map("classification_items")
 }
@@ -437,6 +440,8 @@ model SafetyEvent {
   status             SafetyEventStatus @default(DRAFT)
   actualClass        String?           @map("actual_class") @db.VarChar(120)
   potentialClass     String?           @map("potential_class") @db.VarChar(120)
+  actualClassificationId String?       @map("actual_classification_id") @db.Uuid
+  potentialClassificationId String?    @map("potential_classification_id") @db.Uuid
   reporterName       String?           @map("reporter_name") @db.VarChar(160)
   reporterEmail      String?           @map("reporter_email") @db.VarChar(320)
   slaDueAt           DateTime?         @map("sla_due_at") @db.Timestamptz(6)
@@ -446,6 +451,8 @@ model SafetyEvent {
   updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   actions            SafetyEventAction[]
+  actualClassification ClassificationItem? @relation("ActualSafetyEventClassification", fields: [actualClassificationId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  potentialClassification ClassificationItem? @relation("PotentialSafetyEventClassification", fields: [potentialClassificationId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   @@unique([organizationId, code])
   @@unique([id, organizationId])

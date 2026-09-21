@@ -358,11 +358,15 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect(rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
 
     const eventA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a71';
-    await bootstrap.query("INSERT INTO \"safety_events\" (id, organization_id, code, title, occurred_at, origin, updated_at) VALUES ($1, $2, 'EV-A', 'Event A', NOW(), 'TEST', NOW())", [eventA, tenantA]);
+    const classificationA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a72';
+    const classificationB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a73';
+    await bootstrap.query("INSERT INTO \"classification_items\" (id, organization_id, category, label, value, updated_at) VALUES ($1, $2, 'event_classification', 'Tenant A', 'tenant-a', NOW()), ($3, $4, 'event_classification', 'Tenant B', 'tenant-b', NOW())", [classificationA, tenantA, classificationB, tenantB]);
+    await bootstrap.query("INSERT INTO \"safety_events\" (id, organization_id, code, title, occurred_at, origin, actual_classification_id, updated_at) VALUES ($1, $2, 'EV-A', 'Event A', NOW(), 'TEST', $3, NOW())", [eventA, tenantA, classificationA]);
+    await expect(bootstrap.query('UPDATE "safety_events" SET actual_classification_id = $1 WHERE id = $2', [classificationB, eventA])).rejects.toThrow(/foreign key/i);
     await runtime.query('BEGIN');
     try {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
-      expect((await runtime.query('SELECT id FROM "safety_events"')).rows).toEqual([{ id: eventA }]);
+      expect((await runtime.query('SELECT id, actual_classification_id FROM "safety_events"')).rows).toEqual([{ id: eventA, actual_classification_id: classificationA }]);
       await expect(runtime.query("INSERT INTO \"safety_event_actions\" (organization_id, event_id, title, updated_at) VALUES ($1, $2, 'forbidden', NOW())", [tenantB, eventA])).rejects.toThrow(/row-level security|foreign key/i);
       await expect(runtime.query("INSERT INTO \"classification_items\" (organization_id, category, label, value, updated_at) VALUES ($1, 'event_type', 'cross', 'cross', NOW())", [tenantB])).rejects.toThrow(/row-level security/i);
     } finally {
