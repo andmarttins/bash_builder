@@ -4,18 +4,21 @@
   "status": "ACTIVE",
   "baseline": {
     "repository": "https://github.com/andmarttins/builder-solutions-9",
-    "commit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24"
+    "commit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24",
+    "tree": "90ce153c920deb0414afadee1ef6af2fe10ca282"
+  },
+  "pilot": {
+    "tenantReference": "external://tenant-registry/synthetic",
+    "classification": "CONFIDENTIAL",
+    "retention": "RETENTION-SYNTHETIC",
+    "volumes": { "externalLocation": "external://evidence/volumes", "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/volumes", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "2222222222222222222222222222222222222222222222222222222222222222" } }
   },
   "scope": {
     "assetGroups": ["FOR-01"],
-    "dependencies": [{ "id": "identity-readiness", "status": "APPROVED" }]
+    "capabilities": ["forms"],
+    "dependencies": [{ "id": "identity-readiness", "kind": "READINESS", "evidence": { "externalLocation": "external://evidence/identity", "contentSha256": "3333333333333333333333333333333333333333333333333333333333333333", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/identity", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "4444444444444444444444444444444444444444444444444444444444444444" } } }]
   },
-  "ownership": {
-    "businessOwner": "external://people/business-owner",
-    "securityOwner": "external://people/security-owner",
-    "privacyOwner": "external://people/privacy-owner",
-    "cutoverOperator": "external://people/cutover-operator"
-  },
+  "ownership": { "businessOwner": "external://people/business-owner", "securityOwner": "external://people/security-owner", "privacyOwner": "external://people/privacy-owner", "cutoverOperator": "external://people/cutover-operator" },
   "approvals": [
     { "role": "BUSINESS", "approvalId": "external://approvals/business", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
     { "role": "SECURITY", "approvalId": "external://approvals/security", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
@@ -23,17 +26,17 @@
     { "role": "OPERATIONS", "approvalId": "external://approvals/operations", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
   ],
   "references": {
-    "identityReadiness": "external://evidence/identity",
-    "tenantMapping": "external://evidence/tenant-map",
-    "exceptionRegister": "external://evidence/exceptions",
-    "reconciliationPlan": "external://evidence/reconciliation",
-    "accessPolicy": "external://evidence/access-policy",
-    "cutoverRunbook": "external://evidence/cutover"
+    "identityReadiness": { "externalLocation": "external://evidence/identity", "contentSha256": "5555555555555555555555555555555555555555555555555555555555555555", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/identity", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "6666666666666666666666666666666666666666666666666666666666666666" } },
+    "tenantMapping": { "externalLocation": "external://evidence/tenant-map", "contentSha256": "7777777777777777777777777777777777777777777777777777777777777777", "classification": "RESTRICTED", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/tenant-map", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "8888888888888888888888888888888888888888888888888888888888888888" } },
+    "exceptionRegister": { "externalLocation": "external://evidence/exceptions", "contentSha256": "9999999999999999999999999999999999999999999999999999999999999999", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/exceptions", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+    "reconciliationPlan": { "externalLocation": "external://evidence/reconciliation", "contentSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/reconciliation", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } },
+    "accessPolicy": { "externalLocation": "external://evidence/access-policy", "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/access-policy", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } },
+    "cutoverRunbook": { "externalLocation": "external://evidence/cutover", "contentSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/cutover", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "1111111111111111111111111111111111111111111111111111111111111111" } }
   },
   "cutover": {
     "rpoMinutes": 15,
     "rtoMinutes": 60,
-    "incidentChannel": "external://incident-channels/migration",
-    "returnCriteria": "external://evidence/return-criteria"
+    "incidentChannel": { "externalLocation": "external://incident-channels/migration", "contentSha256": "2222222222222222222222222222222222222222222222222222222222222222", "classification": "INTERNAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/incident-channel", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "3333333333333333333333333333333333333333333333333333333333333333" } },
+    "returnCriteria": { "externalLocation": "external://evidence/return-criteria", "contentSha256": "4444444444444444444444444444444444444444444444444444444444444444", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/return-criteria", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "5555555555555555555555555555555555555555555555555555555555555555" } }
   }
 }

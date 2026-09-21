@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24",
+  "baselineTree": "90ce153c920deb0414afadee1ef6af2fe10ca282",
+  "trackedFileCount": 346,
+  "pathManifestSha256": "ba9719aa3b60d6af98901860e043edca9b5dfe242f0ee8151275d7b83a988729",
+  "capturedAt": "2026-09-21",
+  "capturedBy": "git fetch legacy-origin main; git ls-tree -r --name-only",
+  "scope": ["all tracked paths", "Prisma schema", "route groups", "pages", "services"]
+}

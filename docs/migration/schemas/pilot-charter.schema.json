@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schemaVersion", "id", "status", "baseline", "pilot", "scope", "ownership", "approvals", "references", "cutover"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["DRAFT", "ACTIVE", "COMPLETE", "CANCELLED"] },
+    "id": { "type": "string", "minLength": 1 }
+  }
+}

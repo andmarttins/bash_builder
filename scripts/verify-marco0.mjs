@@ -1,56 +1,90 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const root = globalThis.process.cwd();
 const migrationDirectory = join(root, 'docs', 'migration');
-const pilotsDirectory = join(root, globalThis.process.env.MIGRATION_PILOTS_DIRECTORY ?? join('docs', 'migration', 'pilots'));
+const pilotsDirectory = resolve(root, globalThis.process.env.MIGRATION_PILOTS_DIRECTORY ?? join('docs', 'migration', 'pilots'));
+const assetsDirectory = resolve(root, globalThis.process.env.MIGRATION_ASSETS_DIRECTORY ?? join('docs', 'migration', 'assets'));
 const requireActive = globalThis.process.argv.includes('--require-active');
 const requiredApprovalRoles = ['BUSINESS', 'SECURITY', 'PRIVACY', 'OPERATIONS'];
-
+const classifications = new Set(['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED']);
 const failures = [];
+
 const readJson = async (path) => {
   try { return JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { failures.push(`${path}: JSON inválido (${error instanceof Error ? error.message : 'erro desconhecido'})`); return undefined; }
 };
-const nonBlank = (value) => typeof value === 'string' && value.trim().length > 0;
-const reference = (value) => nonBlank(value) && !/\b(TBD|TODO)\b/i.test(value);
-const sha256 = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
-const fail = (pilot, message) => failures.push(`${pilot}: ${message}`);
-
-const baseline = await readJson(join(migrationDirectory, 'legacy-baseline.json'));
-if (baseline) {
-  if (baseline.schemaVersion !== 1) failures.push('legacy-baseline.json: schemaVersion deve ser 1.');
-  if (!nonBlank(baseline.legacyRepository) || !/^[a-f0-9]{40}$/i.test(baseline.baselineCommit) || !/^[a-f0-9]{40}$/i.test(baseline.baselineTree)) failures.push('legacy-baseline.json: referência de baseline incompleta.');
-  if (!Number.isInteger(baseline.trackedFileCount) || baseline.trackedFileCount < 1) failures.push('legacy-baseline.json: trackedFileCount inválido.');
-  if (!Array.isArray(baseline.assetGroups) || baseline.assetGroups.length === 0) failures.push('legacy-baseline.json: assetGroups é obrigatório.');
-}
-
-const pilotFiles = (await readdir(pilotsDirectory, { withFileTypes: true }))
+const files = async (directory) => (await readdir(directory, { withFileTypes: true }))
   .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
   .map((entry) => entry.name)
   .sort();
+const nonBlank = (value) => typeof value === 'string' && value.trim().length > 0;
+const sha256 = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+const reference = (value) => nonBlank(value) && /^external:\/\//.test(value) && !/\b(TBD|TODO)\b/i.test(value);
+const fail = (scope, message) => failures.push(`${scope}: ${message}`);
+const validApproval = (value) => reference(value?.approvalId) && nonBlank(value?.approvedAt) && sha256(value?.evidenceSha256);
+const validReference = (value) => reference(value?.externalLocation) && sha256(value?.contentSha256) && classifications.has(value?.classification) && nonBlank(value?.retention) && validApproval(value?.approval);
+
+const baseline = await readJson(join(migrationDirectory, 'legacy-baseline.json'));
+const inventory = await readJson(join(migrationDirectory, 'legacy-inventory.json'));
+if (baseline) {
+  if (baseline.schemaVersion !== 1) fail('legacy-baseline.json', 'schemaVersion deve ser 1.');
+  if (!nonBlank(baseline.legacyRepository) || !/^[a-f0-9]{40}$/i.test(baseline.baselineCommit) || !/^[a-f0-9]{40}$/i.test(baseline.baselineTree)) fail('legacy-baseline.json', 'referência de baseline incompleta.');
+  if (!Number.isInteger(baseline.trackedFileCount) || baseline.trackedFileCount < 1) fail('legacy-baseline.json', 'trackedFileCount inválido.');
+  if (!Array.isArray(baseline.assetGroups) || baseline.assetGroups.length === 0 || new Set(baseline.assetGroups).size !== baseline.assetGroups.length) fail('legacy-baseline.json', 'assetGroups deve ser não vazio e sem duplicatas.');
+}
+if (!inventory || inventory.schemaVersion !== 1 || !baseline || inventory.baselineCommit !== baseline.baselineCommit || inventory.baselineTree !== baseline.baselineTree || inventory.trackedFileCount !== baseline.trackedFileCount || !sha256(inventory.pathManifestSha256) || !nonBlank(inventory.capturedBy)) fail('legacy-inventory.json', 'inventário deve referenciar integralmente o baseline e seu manifesto.');
+
+const assetDecisions = new Map();
+for (const file of await files(assetsDirectory)) {
+  const asset = await readJson(join(assetsDirectory, file));
+  if (!asset) continue;
+  if (!nonBlank(asset.assetGroup) || assetDecisions.has(asset.assetGroup)) { fail(`assets/${file}`, 'assetGroup é obrigatório e único.'); continue; }
+  assetDecisions.set(asset.assetGroup, asset);
+  if (asset.schemaVersion !== 1 || !['MIGRATE', 'SUBSTITUTE', 'DECOMMISSION'].includes(asset.decision) || asset.status !== 'APPROVED') fail(`assets/${file}`, 'schemaVersion, decision válida e status APPROVED são obrigatórios.');
+  if (!reference(asset.businessOwner) || !reference(asset.evidence) || !classifications.has(asset.classification) || !nonBlank(asset.retention) || !validApproval(asset.approval) || !reference(asset.reconciliation)) fail(`assets/${file}`, 'owner, evidência, classificação, retenção, aprovação e reconciliação estruturados são obrigatórios.');
+}
+
 const pilots = [];
-for (const file of pilotFiles) {
+for (const file of await files(pilotsDirectory)) {
   const pilot = await readJson(join(pilotsDirectory, file));
   if (pilot) pilots.push({ file, pilot });
 }
-
 const activePilots = pilots.filter(({ pilot }) => pilot.status === 'ACTIVE');
-if (activePilots.length > 1) failures.push('pilots: somente uma carta pode estar ACTIVE.');
+if (activePilots.length > 1) fail('pilots', 'somente uma carta pode estar ACTIVE.');
 for (const { file, pilot } of activePilots) {
   if (pilot.schemaVersion !== 1 || !nonBlank(pilot.id)) fail(file, 'id e schemaVersion 1 são obrigatórios.');
-  if (!baseline || pilot.baseline?.commit !== baseline.baselineCommit || pilot.baseline?.repository !== baseline.legacyRepository) fail(file, 'baseline deve corresponder a legacy-baseline.json.');
-  if (!Array.isArray(pilot.scope?.assetGroups) || pilot.scope.assetGroups.length === 0) fail(file, 'scope.assetGroups é obrigatório.');
-  if (!Array.isArray(pilot.scope?.dependencies) || pilot.scope.dependencies.length === 0 || pilot.scope.dependencies.some((item) => !nonBlank(item?.id) || item.status !== 'APPROVED')) fail(file, 'todas as dependências transitivas devem estar APPROVED.');
+  if (!baseline || pilot.baseline?.commit !== baseline.baselineCommit || pilot.baseline?.tree !== baseline.baselineTree || pilot.baseline?.repository !== baseline.legacyRepository) fail(file, 'baseline repository, commit e tree devem corresponder ao registro canônico.');
+  if (!reference(pilot.pilot?.tenantReference) || !classifications.has(pilot.pilot?.classification) || !nonBlank(pilot.pilot?.retention) || !validReference(pilot.pilot?.volumes)) fail(file, 'tenant, classificação, retenção e volumes estruturados são obrigatórios.');
+  const scopedAssets = pilot.scope?.assetGroups;
+  if (!Array.isArray(scopedAssets) || scopedAssets.length === 0 || new Set(scopedAssets).size !== scopedAssets.length || scopedAssets.some((id) => !baseline?.assetGroups.includes(id))) fail(file, 'scope.assetGroups deve conter IDs únicos do baseline.');
+  if (!Array.isArray(pilot.scope?.capabilities) || pilot.scope.capabilities.length === 0 || pilot.scope.capabilities.some((item) => !nonBlank(item))) fail(file, 'scope.capabilities é obrigatório.');
+  const dependencies = pilot.scope?.dependencies;
+  if (!Array.isArray(dependencies) || dependencies.length === 0 || dependencies.some((item) => !nonBlank(item?.id) || !['ASSET', 'READINESS'].includes(item?.kind) || !validReference(item?.evidence) || (item.kind === 'ASSET' && !baseline?.assetGroups.includes(item.assetGroup)))) fail(file, 'dependências devem ter tipo, ID e evidência estruturada; ASSET deve pertencer ao baseline.');
+  const assetIds = new Set([...(Array.isArray(scopedAssets) ? scopedAssets : []), ...(Array.isArray(dependencies) ? dependencies.filter((item) => item.kind === 'ASSET').map((item) => item.assetGroup) : [])]);
+  for (const id of assetIds) if (!assetDecisions.has(id)) fail(file, `decisão APPROVED ausente para ${id}.`);
   for (const role of ['businessOwner', 'securityOwner', 'privacyOwner', 'cutoverOperator']) if (!reference(pilot.ownership?.[role])) fail(file, `ownership.${role} deve referenciar responsável externo.`);
-  const approvedRoles = new Set((Array.isArray(pilot.approvals) ? pilot.approvals : []).filter((item) => reference(item?.approvalId) && nonBlank(item?.approvedAt) && sha256(item?.evidenceSha256)).map((item) => item.role));
+  const approvedRoles = new Set((Array.isArray(pilot.approvals) ? pilot.approvals : []).filter((item) => validApproval(item)).map((item) => item.role));
   for (const role of requiredApprovalRoles) if (!approvedRoles.has(role)) fail(file, `aprovação válida ausente para ${role}.`);
-  for (const key of ['identityReadiness', 'tenantMapping', 'exceptionRegister', 'reconciliationPlan', 'accessPolicy', 'cutoverRunbook']) if (!reference(pilot.references?.[key])) fail(file, `references.${key} é obrigatório e não pode conter TBD.`);
-  if (!Number.isInteger(pilot.cutover?.rpoMinutes) || pilot.cutover.rpoMinutes < 0 || !Number.isInteger(pilot.cutover?.rtoMinutes) || pilot.cutover.rtoMinutes < 1 || !reference(pilot.cutover?.incidentChannel) || !reference(pilot.cutover?.returnCriteria)) fail(file, 'cutover deve declarar RPO/RTO, canal de incidente e retorno.');
+  for (const key of ['identityReadiness', 'tenantMapping', 'exceptionRegister', 'reconciliationPlan', 'accessPolicy', 'cutoverRunbook']) if (!validReference(pilot.references?.[key])) fail(file, `references.${key} deve ser estruturada e aprovada.`);
+  if (!Number.isInteger(pilot.cutover?.rpoMinutes) || pilot.cutover.rpoMinutes < 0 || !Number.isInteger(pilot.cutover?.rtoMinutes) || pilot.cutover.rtoMinutes < 1 || !validReference(pilot.cutover?.incidentChannel) || !validReference(pilot.cutover?.returnCriteria)) fail(file, 'cutover deve declarar RPO/RTO e referências estruturadas.');
   if (/\b(TBD|TODO)\b/i.test(JSON.stringify(pilot))) fail(file, 'uma carta ACTIVE não pode conter TBD/TODO.');
 }
 
-if (requireActive && activePilots.length !== 1) failures.push('Gate Marco 0 fechado: uma única carta ACTIVE é obrigatória antes de extração, carga ou corte.');
+const checkout = globalThis.process.env.LEGACY_BASELINE_CHECKOUT;
+if (checkout && baseline && inventory) {
+  try {
+    const commit = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const tree = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+    const paths = execFileSync('git', ['-C', checkout, 'ls-tree', '-r', '--name-only', 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+    const manifest = createHash('sha256').update(`${paths.join('\n')}\n`).digest('hex');
+    if (commit !== baseline.baselineCommit || tree !== baseline.baselineTree || paths.length !== baseline.trackedFileCount || manifest !== inventory.pathManifestSha256) fail('legacy checkout', 'não reproduz o commit, tree ou manifesto do baseline.');
+  } catch (error) { fail('legacy checkout', `não foi possível verificar (${error instanceof Error ? error.message : 'erro desconhecido'}).`); }
+}
+
+if (requireActive && activePilots.length !== 1) fail('Gate Marco 0', 'uma única carta ACTIVE é obrigatória antes de extração, carga ou corte.');
 if (failures.length > 0) {
   globalThis.console.error('Falha na governança do Marco 0:');
   for (const failure of failures) globalThis.console.error(`- ${failure}`);
