@@ -339,6 +339,15 @@ describe('calculateHhtRates', () => {
     expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_reference_target.updated', aggregateId: eventId }) }));
   });
 
+  it('grants a bounded late HHT exception only while its report window remains open', async () => {
+    const exception = { id: eventId, companyId: changeId, year: 2026, month: 9, expiresAt: new Date(Date.now() + 60_000) };
+    const tx = { hhtCompany: { findFirst: vi.fn().mockResolvedValue({ id: changeId }) }, hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ status: 'OPEN' }) }, hhtLateException: { create: vi.fn().mockResolvedValue(exception) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.grantHhtLateException(identity, { companyId: changeId, year: 2026, month: 9, expiresAt: exception.expiresAt.toISOString(), reason: 'Documento de fechamento recebido após o prazo.' })).resolves.toEqual(exception);
+    expect(tx.hhtLateException.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organizationId: identity.organization.id, grantedById: identity.user.id, companyId: changeId }) }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_late_exception.granted', aggregateId: eventId }) }));
+  });
+
   it('closes an elapsed HHT window once and locks only its submitted reports', async () => {
     const windowId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a23';
     const tx = {

@@ -49,6 +49,8 @@ const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000
 const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
 const hhtReferenceTargetSchema = z.object({ year: z.number().int().min(2000).max(2200), site: text(2, 120), refTrifr: z.number().finite().nonnegative(), refLtifr: z.number().finite().nonnegative(), refLtifr13: z.number().finite().nonnegative(), refLtisr: z.number().finite().nonnegative(), expectedVersion: expectedVersion.optional() });
+const hhtLateExceptionSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), expiresAt: z.coerce.date(), reason: text(10, 2_000) }).refine((input) => input.expiresAt > new Date(), 'A exceção de atraso precisa expirar no futuro.');
+const hhtLateExceptionRevokeSchema = z.object({ expectedVersion });
 const hhtWindowCloseSchema = z.object({ expectedVersion });
 const hhtPublicationSchema = z.object({ published: z.boolean(), expectedVersion: expectedVersion.optional(), expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
   if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
@@ -423,8 +425,8 @@ export class OperationsService {
 
   public listHht(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => {
-      const [companies, reports, windows, publications, targets] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtPeriodPublication.findMany({ select: { id: true, year: true, month: true, published: true, publicExpiresAt: true, version: true, updatedAt: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReferenceTarget.findMany({ orderBy: [{ year: 'desc' }, { site: 'asc' }] })]);
-      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows, publications, targets: targets.map((target) => ({ ...target, refTrifr: Number(target.refTrifr), refLtifr: Number(target.refLtifr), refLtifr13: Number(target.refLtifr13), refLtisr: Number(target.refLtisr) })) };
+      const [companies, reports, windows, publications, targets, lateExceptions] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtPeriodPublication.findMany({ select: { id: true, year: true, month: true, published: true, publicExpiresAt: true, version: true, updatedAt: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReferenceTarget.findMany({ orderBy: [{ year: 'desc' }, { site: 'asc' }] }), tx.hhtLateException.findMany({ include: { company: { select: { name: true, site: true } } }, orderBy: [{ year: 'desc' }, { month: 'desc' }, { expiresAt: 'asc' }] })]);
+      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows, publications, targets: targets.map((target) => ({ ...target, refTrifr: Number(target.refTrifr), refLtifr: Number(target.refLtifr), refLtifr13: Number(target.refLtifr13), refLtisr: Number(target.refLtisr) })), lateExceptions };
     });
   }
 
@@ -445,7 +447,7 @@ export class OperationsService {
       if (!await tx.hhtCompany.findFirst({ where: { id: data.companyId }, select: { id: true } })) throw new NotFoundException('Empresa HHT não encontrada.');
       const window = await tx.hhtReportWindow.findFirst({ where: { year: data.year, month: data.month } });
       const now = new Date();
-      if (!window || window.status !== 'OPEN' || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
+      if (!window || window.status !== 'OPEN' || now < window.opensAt || (now > window.closesAt && !await this.hasActiveHhtLateException(tx, data.companyId, data.year, data.month, now))) throw new BadRequestException('A janela de reporte deste período não está aberta.');
       const existing = await tx.hhtReport.findFirst({ where: { companyId: data.companyId, year: data.year, month: data.month } });
       if (existing?.status === 'LOCKED') throw new ConflictException('Este período HHT está bloqueado.');
       let report: HhtReport;
@@ -477,7 +479,7 @@ export class OperationsService {
       if (current.status === 'LOCKED') throw new ConflictException('Este período HHT já está bloqueado.');
       const window = await tx.hhtReportWindow.findFirst({ where: { year: current.year, month: current.month } });
       const now = new Date();
-      if (!window || window.status !== 'OPEN' || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
+      if (!window || window.status !== 'OPEN' || now < window.opensAt || (now > window.closesAt && !await this.hasActiveHhtLateException(tx, current.companyId, current.year, current.month, now))) throw new BadRequestException('A janela de reporte deste período não está aberta.');
       if (data.status === 'LOCKED' && current.status !== 'SUBMITTED') throw new BadRequestException('Envie o relatório antes de bloqueá-lo.');
       const changed = await tx.hhtReport.updateMany({ where: { id: reportId, version: data.expectedVersion, status: current.status }, data: { status: data.status as HhtReportStatus, submittedAt: data.status === 'SUBMITTED' ? new Date() : current.submittedAt, version: { increment: 1 } } });
       if (changed.count !== 1) throw new ConflictException('Este relatório HHT foi alterado por outra pessoa. Atualize a página antes de tentar novamente.');
@@ -514,6 +516,34 @@ export class OperationsService {
       }
       await this.record(tx, identity, existing ? 'hht_reference_target.updated' : 'hht_reference_target.created', 'hht_reference_target', target.id, { year: target.year, site: target.site });
       return { ...target, refTrifr: Number(target.refTrifr), refLtifr: Number(target.refLtifr), refLtifr13: Number(target.refLtifr13), refLtisr: Number(target.refLtisr) };
+    });
+  }
+
+  public grantHhtLateException(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(hhtLateExceptionSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      if (!await tx.hhtCompany.findFirst({ where: { id: data.companyId }, select: { id: true } })) throw new NotFoundException('Empresa HHT não encontrada.');
+      const window = await tx.hhtReportWindow.findFirst({ where: { year: data.year, month: data.month }, select: { status: true } });
+      if (!window || window.status !== 'OPEN') throw new BadRequestException('A exceção só pode ser criada para uma janela HHT aberta.');
+      try {
+        const exception = await tx.hhtLateException.create({ data: { organizationId: identity.organization.id, grantedById: identity.user.id, ...data } });
+        await this.record(tx, identity, 'hht_late_exception.granted', 'hht_late_exception', exception.id, { companyId: exception.companyId, year: exception.year, month: exception.month, expiresAt: exception.expiresAt.toISOString() });
+        return exception;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Já existe uma exceção de atraso para esta empresa e período.');
+        throw error;
+      }
+    });
+  }
+
+  public revokeHhtLateException(identity: SessionIdentity, exceptionIdInput: string, input: unknown) {
+    const exceptionId = this.id(exceptionIdInput); const data = this.parse(hhtLateExceptionRevokeSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const revoked = await tx.hhtLateException.updateMany({ where: { id: exceptionId, version: data.expectedVersion, revokedAt: null }, data: { revokedAt: new Date(), version: { increment: 1 } } });
+      if (revoked.count !== 1) throw new ConflictException('A exceção de atraso foi alterada ou revogada por outra pessoa. Atualize a página antes de tentar novamente.');
+      const exception = await tx.hhtLateException.findFirstOrThrow({ where: { id: exceptionId } });
+      await this.record(tx, identity, 'hht_late_exception.revoked', 'hht_late_exception', exception.id, { companyId: exception.companyId, year: exception.year, month: exception.month });
+      return exception;
     });
   }
 
@@ -1120,6 +1150,10 @@ export class OperationsService {
 
   private async lockHhtPeriod(tx: TenantTransaction, organizationId: string, year: number, month: number): Promise<void> {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`hht:${organizationId}:${year}:${month}`}))`);
+  }
+
+  private async hasActiveHhtLateException(tx: TenantTransaction, companyId: string, year: number, month: number, now: Date): Promise<boolean> {
+    return Boolean(await tx.hhtLateException.findFirst({ where: { companyId, year, month, revokedAt: null, expiresAt: { gt: now } }, select: { id: true } }));
   }
 
   private async eventExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.safetyEvent.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Evento não encontrado.'); }

@@ -153,6 +153,7 @@ model Organization {
   groupMemberships TenantGroupMembership[]
   settings    TenantSetting[]
   hhtReferenceTargets HhtReferenceTarget[]
+  hhtLateExceptions HhtLateException[]
   auditLogs   AuditLog[]
   outbox      OutboxEvent[]
   domainEventProjections DomainEventProjection[]
@@ -202,6 +203,7 @@ model IdentityUser {
   changesCreated ChangeRequest[] @relation("ChangesCreatedBy")
   changeApprovals ChangeApproval[] @relation("ChangeApprovalApprover")
   changeWorkflowStepsCompleted ChangeWorkflowStep[] @relation("ChangeWorkflowStepsCompletedBy")
+  hhtLateExceptionsGranted HhtLateException[] @relation("HhtLateExceptionGrantedBy")
   notifications UserNotification[]
 
   @@map("identity_users")
@@ -741,6 +743,7 @@ model HhtCompany {
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   reports        HhtReport[]
+  lateExceptions HhtLateException[]
 
   @@unique([organizationId, name, site])
   @@unique([id, organizationId])
@@ -808,6 +811,29 @@ model HhtReferenceTarget {
   @@unique([organizationId, year, site])
   @@index([organizationId, year, site])
   @@map("hht_reference_targets")
+}
+
+model HhtLateException {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  companyId      String       @map("company_id") @db.Uuid
+  year           Int
+  month          Int
+  expiresAt      DateTime     @map("expires_at") @db.Timestamptz(6)
+  reason         String       @db.Text
+  grantedById    String       @map("granted_by_id") @db.Uuid
+  revokedAt      DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  company        HhtCompany   @relation(fields: [companyId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  grantedBy      IdentityUser @relation("HhtLateExceptionGrantedBy", fields: [grantedById], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, year, month])
+  @@unique([id, organizationId])
+  @@index([organizationId, year, month, expiresAt])
+  @@map("hht_late_exceptions")
 }
 
 model HhtPeriodPublication {

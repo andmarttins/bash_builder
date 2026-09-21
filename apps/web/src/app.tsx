@@ -4857,6 +4857,7 @@ function HhtModulePage({
   const [reports, setReports] = useState<Array<Record<string, unknown>>>([]);
   const [windows, setWindows] = useState<Array<Record<string, unknown>>>([]);
   const [targets, setTargets] = useState<Array<Record<string, unknown>>>([]);
+  const [lateExceptions, setLateExceptions] = useState<Array<Record<string, unknown>>>([]);
   const [publications, setPublications] = useState<Array<Record<string, unknown>>>([]);
   const [publicationUrl, setPublicationUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -4868,12 +4869,14 @@ function HhtModulePage({
         reports: Array<Record<string, unknown>>;
         windows: Array<Record<string, unknown>>;
         targets: Array<Record<string, unknown>>;
+        lateExceptions: Array<Record<string, unknown>>;
         publications: Array<Record<string, unknown>>;
       }>("/v1/hht");
       setCompanies(data.companies);
       setReports(data.reports);
       setWindows(data.windows);
       setTargets(data.targets);
+      setLateExceptions(data.lateExceptions);
       setPublications(data.publications);
     } catch (requestError) {
       setError(
@@ -5016,6 +5019,19 @@ function HhtModulePage({
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível salvar as metas HHT."); }
     finally { setPending(false); }
   }
+  async function grantLateException(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault(); const values = new FormData(event.currentTarget);
+    setPending(true); setError(null);
+    try { await api("/v1/hht/late-exceptions", { method: "POST", body: JSON.stringify({ companyId: values.get("companyId"), year: Number(values.get("year")), month: Number(values.get("month")), expiresAt: new Date(String(values.get("expiresAt"))).toISOString(), reason: values.get("reason") }) }); event.currentTarget.reset(); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível liberar o atraso HHT."); }
+    finally { setPending(false); }
+  }
+  async function revokeLateException(id: string, expectedVersion: number): Promise<void> {
+    setPending(true); setError(null);
+    try { await api(`/v1/hht/late-exceptions/${id}/revoke`, { method: "POST", body: JSON.stringify({ expectedVersion }) }); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível revogar a exceção HHT."); }
+    finally { setPending(false); }
+  }
   async function closeWindow(year: number, month: number, expectedVersion: number): Promise<void> {
     setPending(true); setError(null);
     try { await api(`/v1/hht/windows/${year}/${month}/close`, { method: "POST", body: JSON.stringify({ expectedVersion }) }); await load(); }
@@ -5054,6 +5070,15 @@ function HhtModulePage({
       {publicationUrl && <p className="section-note">Link público gerado: <a href={publicationUrl} target="_blank" rel="noreferrer">Abrir consolidado HHT</a></p>}
       {canManage && (
         <>
+          <form className="inline-form admin-section" onSubmit={grantLateException}>
+            <label>Unidade<select name="companyId" required disabled={companies.length === 0}><option value="">Selecione</option>{companies.map((company) => <option key={String(company.id)} value={String(company.id)}>{recordTitle(company)}</option>)}</select></label>
+            <label>Ano<input name="year" type="number" min="2000" max="2200" defaultValue={today.getFullYear()} required /></label>
+            <label>Mês<input name="month" type="number" min="1" max="12" defaultValue={today.getMonth() + 1} required /></label>
+            <label>Permitir até<input name="expiresAt" type="datetime-local" defaultValue={new Date(today.getTime() + 86400000).toISOString().slice(0, 16)} required /></label>
+            <label>Motivo<input name="reason" minLength={10} maxLength={2000} required /></label>
+            <button className="secondary-button compact" type="submit" disabled={pending || companies.length === 0}>Liberar atraso</button>
+          </form>
+          {lateExceptions.length > 0 && <section className="admin-section"><h2>Exceções de atraso</h2><ul className="nested-list">{lateExceptions.map((item) => { const id = stringValue(item.id); const version = typeof item.version === "number" ? item.version : 0; return <li key={id ?? recordTitle(item)}>{isRecord(item.company) ? recordTitle(item.company) : "Unidade"} · {String(item.month)}/{String(item.year)} · até {new Date(String(item.expiresAt)).toLocaleString("pt-BR")} · {item.revokedAt ? "Revogada" : "Ativa"}{id && !item.revokedAt && <button className="secondary-button compact" type="button" disabled={pending || version < 1} onClick={() => void revokeLateException(id, version)}>Revogar</button>}</li>; })}</ul></section>}
           <form className="inline-form admin-section" onSubmit={saveReferenceTarget}>
             <label>Ano<input name="year" type="number" min="2000" max="2200" defaultValue={today.getFullYear()} required /></label>
             <label>Local<input name="site" minLength={2} maxLength={120} defaultValue="Principal" required /></label>

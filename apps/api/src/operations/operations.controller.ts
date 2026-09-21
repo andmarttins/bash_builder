@@ -99,6 +99,10 @@ export class OperationsController {
   public upsertHhtWindow(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.upsertHhtWindow(request.identity, input).then((window) => ({ window })); }
   @Put('hht/reference-targets') @RequiredCapabilities('hht.manage')
   public upsertHhtReferenceTarget(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.upsertHhtReferenceTarget(request.identity, input).then((target) => ({ target })); }
+  @Post('hht/late-exceptions') @RequiredCapabilities('hht.manage')
+  public grantHhtLateException(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.grantHhtLateException(request.identity, input).then((exception) => ({ exception })); }
+  @Post('hht/late-exceptions/:exceptionId/revoke') @RequiredCapabilities('hht.manage')
+  public revokeHhtLateException(@Req() request: AuthenticatedRequest, @Param('exceptionId') exceptionId: string, @Body() input: unknown) { return this.operations.revokeHhtLateException(request.identity, exceptionId, input).then((exception) => ({ exception })); }
   @Post('hht/windows/:year/:month/close') @RequiredCapabilities('hht.manage')
   public closeHhtWindow(@Req() request: AuthenticatedRequest, @Param('year') year: string, @Param('month') month: string, @Body() input: unknown) { return this.operations.closeHhtWindow(request.identity, year, month, input); }
   @Post('hht/publications/:year/:month') @RequiredCapabilities('hht.manage')
