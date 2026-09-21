@@ -522,6 +522,30 @@ describeIntegration('PostgreSQL row-level security', () => {
     await expect(worker.query('SELECT * FROM app.list_safety_event_sla_notifications($1, $2)', [0, 24])).rejects.toThrow(/invalid safety event SLA limits/i);
   });
 
+  it('delivers idempotent BASH deadline alerts and revalidates a card completed after selection', async () => {
+    const creatorA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380d11';
+    const adminA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380d12';
+    const cardA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380d13';
+    const done = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380d14';
+    await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW()), ($3, $4, TRUE, NOW())', [creatorA, 'bash-creator-a@example.test', adminA, 'bash-admin-a@example.test']);
+    await bootstrap.query('INSERT INTO "memberships" (organization_id, identity_user_id, role, status, updated_at) VALUES ($1, $2, \'MEMBER\', \'ACTIVE\', NOW()), ($1, $3, \'ADMIN\', \'ACTIVE\', NOW())', [tenantA, creatorA, adminA]);
+    await bootstrap.query('INSERT INTO "bash_cards" (id, organization_id, title, due_at, created_by_id, updated_at) VALUES ($1, $2, \'Due BASH\', NOW() + INTERVAL \'1 hour\', $3, NOW()), ($4, $2, \'Race BASH\', NOW() + INTERVAL \'1 hour\', $3, NOW())', [cardA, tenantA, creatorA, done]);
+    const query = 'SELECT * FROM app.list_bash_deadline_notifications($1, $2)';
+    const candidates = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown> }>(query, [25, 24])).rows;
+    const notification = candidates.find((item) => item.aggregate_id === cardA)!;
+    const race = candidates.find((item) => item.aggregate_id === done)!;
+    expect(notification).toEqual(expect.objectContaining({ organization_id: tenantA, event_type: 'bash_card.deadline_reminder' }));
+    const delivery = 'SELECT app.deliver_bash_deadline_notifications($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb) AS delivered';
+    await expect(worker.query(delivery, [notification.event_id, tenantB, notification.aggregate_id, notification.event_type, JSON.stringify(notification.payload)])).rejects.toThrow(/does not belong/i);
+    expect((await worker.query<{ delivered: number }>(delivery, [notification.event_id, notification.organization_id, notification.aggregate_id, notification.event_type, JSON.stringify(notification.payload)])).rows).toEqual([{ delivered: 2 }]);
+    expect((await bootstrap.query<{ identity_user_id: string }>('SELECT identity_user_id FROM "user_notifications" WHERE event_id = $1 ORDER BY identity_user_id', [notification.event_id])).rows).toEqual([{ identity_user_id: creatorA }, { identity_user_id: adminA }].sort((left, right) => left.identity_user_id.localeCompare(right.identity_user_id)));
+    expect((await worker.query<{ delivered: number }>(delivery, [notification.event_id, notification.organization_id, notification.aggregate_id, notification.event_type, JSON.stringify(notification.payload)])).rows).toEqual([{ delivered: 0 }]);
+    await bootstrap.query("UPDATE \"bash_cards\" SET stage = 'DONE' WHERE id = $1", [done]);
+    expect((await worker.query<{ delivered: number }>(delivery, [race.event_id, race.organization_id, race.aggregate_id, race.event_type, JSON.stringify(race.payload)])).rows).toEqual([{ delivered: 0 }]);
+    await expect(runtime.query(query, [25, 24])).rejects.toThrow(/permission denied/i);
+    await expect(runtime.query(delivery, [notification.event_id, notification.organization_id, notification.aggregate_id, notification.event_type, JSON.stringify(notification.payload)])).rejects.toThrow(/permission denied/i);
+  });
+
   it('claims, retries, publishes and de-duplicates outbox events through narrow worker procedures', async () => {
     const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81';
     const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';

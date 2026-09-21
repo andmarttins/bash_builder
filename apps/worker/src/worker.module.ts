@@ -5,6 +5,7 @@ import { WorkerDatabaseHealthService } from './health/worker-database-health.ser
 import { OutboxDispatcherService } from './kafka/outbox-dispatcher.service.js';
 import { ChangeDeadlineMonitorService } from './kafka/change-deadline-monitor.service.js';
 import { SafetyEventSlaMonitorService } from './kafka/safety-event-sla-monitor.service.js';
+import { BashDeadlineMonitorService } from './kafka/bash-deadline-monitor.service.js';
 
-@Module({ providers: [KafkaConsumerService, WorkerDatabaseHealthService, WorkerReadinessService, OutboxDispatcherService, ChangeDeadlineMonitorService, SafetyEventSlaMonitorService] })
+@Module({ providers: [KafkaConsumerService, WorkerDatabaseHealthService, WorkerReadinessService, OutboxDispatcherService, ChangeDeadlineMonitorService, SafetyEventSlaMonitorService, BashDeadlineMonitorService] })
 export class WorkerModule {}
