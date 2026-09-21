@@ -22,6 +22,9 @@ incluem tenant, URL de webhook, payload, e-mail, segredo ou mensagem de erro.
 | --- | --- | --- | --- |
 | `builder_api_up` | ausente por 2 minutos | crítica | confirmar `/health`, `/ready`, logs e dependências internas |
 | `builder_worker_up` | ausente por 2 minutos | crítica | confirmar health do worker, banco e broker |
+| `builder_worker_file_cleanup_configured` | igual a `0` com `builder_worker_file_cleanup_required=1` | crítica | corrigir a credencial exclusiva `FILE_CLEANUP_S3_*`; o worker deve permanecer não pronto |
+| `builder_worker_file_cleanup_last_success_unixtime` | mais antigo que dois intervalos de limpeza | alta | investigar acesso de remoção e objetos rejeitados; não registrar chaves ou credenciais |
+| `builder_worker_file_cleanup_failures_total` | aumenta por 10 minutos | alta | investigar o objeto e IAM do worker; os demais itens do lote continuam sendo processados |
 | `builder_api_http_requests_total` | taxa de 5xx acima de 2% por 10 minutos | alta | verificar rota, readiness e erros sem copiar dados sensíveis |
 | `builder_worker_events_total{outcome="outbox_failed"}` | cresce continuamente por 10 minutos | alta | verificar a saúde operacional e aguardar o backoff antes de re-drive |
 | `builder_worker_events_total{outcome="webhook_failed"}` | cresce continuamente por 10 minutos | alta | verificar a integração ativa e o destino; não registrar segredo ou URL completa |

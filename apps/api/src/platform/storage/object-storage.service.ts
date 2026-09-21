@@ -10,11 +10,15 @@ const storageEnvironmentSchema = z.object({
   S3_REGION: optionalEnvironmentValue.pipe(z.string().trim().min(2).max(64).optional()),
   S3_BUCKET: optionalEnvironmentValue,
   S3_ACCESS_KEY_ID: optionalEnvironmentValue.pipe(z.string().trim().min(3).max(256).optional()),
-  S3_SECRET_ACCESS_KEY: optionalEnvironmentValue.pipe(z.string().trim().min(8).max(512).optional())
+  S3_SECRET_ACCESS_KEY: optionalEnvironmentValue.pipe(z.string().trim().min(8).max(512).optional()),
+  S3_READINESS_KEY: optionalEnvironmentValue.pipe(z.string().trim().min(1).max(512).regex(/^[a-zA-Z0-9!_.*'()/-]+$/, 'S3_READINESS_KEY is invalid.').optional())
 }).superRefine((value, context) => {
   const configured = [value.S3_ENDPOINT, value.S3_REGION, value.S3_BUCKET, value.S3_ACCESS_KEY_ID, value.S3_SECRET_ACCESS_KEY].filter(Boolean);
   if (configured.length > 0 && configured.length < 5) {
     context.addIssue({ code: 'custom', message: 'S3 configuration must include endpoint, region, bucket and credentials.' });
+  }
+  if (value.S3_ENDPOINT && !value.S3_READINESS_KEY) {
+    context.addIssue({ code: 'custom', message: 'S3_READINESS_KEY is required when S3 storage is enabled.', path: ['S3_READINESS_KEY'] });
   }
   if (value.S3_BUCKET) {
     const parsed = bucketName.safeParse(value.S3_BUCKET);
@@ -28,6 +32,7 @@ export type ObjectStorageRuntimeConfig = {
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
+  readinessKey: string;
 };
 
 export function getObjectStorageRuntimeConfig(environment: NodeJS.ProcessEnv = process.env): ObjectStorageRuntimeConfig | undefined {
@@ -38,7 +43,8 @@ export function getObjectStorageRuntimeConfig(environment: NodeJS.ProcessEnv = p
     region: parsed.S3_REGION!,
     bucket: parsed.S3_BUCKET!,
     accessKeyId: parsed.S3_ACCESS_KEY_ID!,
-    secretAccessKey: parsed.S3_SECRET_ACCESS_KEY!
+    secretAccessKey: parsed.S3_SECRET_ACCESS_KEY!,
+    readinessKey: parsed.S3_READINESS_KEY!
   };
 }
 
@@ -78,6 +84,16 @@ export class ObjectStorageService {
       return object.ContentLength === input.byteSize && object.ContentType === input.contentType && object.Metadata?.sha256 === input.checksum;
     } catch {
       return false;
+    }
+  }
+
+  /** Probes a non-tenant sentinel through the same private API identity. */
+  public async probe(): Promise<void> {
+    const { client, config } = this.requireClient();
+    try {
+      await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: config.readinessKey }));
+    } catch {
+      throw new ServiceUnavailableException('O armazenamento privado não está pronto para uploads.');
     }
   }
 

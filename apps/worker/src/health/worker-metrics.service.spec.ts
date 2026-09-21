@@ -15,7 +15,12 @@ describe('WorkerMetricsService', () => {
   it('renders only aggregate worker outcomes', () => {
     const service = new WorkerMetricsService();
     service.increment('webhook_failed');
+    service.setFileCleanupConfiguration(true, false);
+    service.recordFileCleanupFailure();
     expect(service.render()).toContain('builder_worker_events_total{outcome="webhook_failed"} 1');
+    expect(service.render()).toContain('builder_worker_file_cleanup_required 1');
+    expect(service.render()).toContain('builder_worker_file_cleanup_configured 0');
+    expect(service.render()).toContain('builder_worker_file_cleanup_failures_total 1');
     expect(service.render()).not.toContain('endpoint');
   });
 

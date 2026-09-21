@@ -8,11 +8,20 @@ export class WorkerMetricsService implements OnApplicationBootstrap, OnModuleDes
   private readonly logger = new Logger(WorkerMetricsService.name);
   private readonly startedAt = Date.now();
   private readonly counters = new Map<string, number>();
+  private fileCleanup = { required: false, configured: false, lastSuccessAt: 0, failures: 0 };
   private server: Server | undefined;
 
   public increment(name: 'kafka_events' | 'outbox_published' | 'outbox_failed' | 'webhook_delivered' | 'webhook_failed'): void {
     this.counters.set(name, (this.counters.get(name) ?? 0) + 1);
   }
+
+  public setFileCleanupConfiguration(required: boolean, configured: boolean): void {
+    this.fileCleanup = { ...this.fileCleanup, required, configured };
+  }
+
+  public recordFileCleanupSuccess(): void { this.fileCleanup = { ...this.fileCleanup, lastSuccessAt: Math.floor(Date.now() / 1_000) }; }
+
+  public recordFileCleanupFailure(): void { this.fileCleanup = { ...this.fileCleanup, failures: this.fileCleanup.failures + 1 }; }
 
   public async onApplicationBootstrap(): Promise<void> {
     const config = getWorkerRuntimeConfig();
@@ -31,7 +40,7 @@ export class WorkerMetricsService implements OnApplicationBootstrap, OnModuleDes
   }
 
   public render(): string {
-    const lines = ['# HELP builder_worker_up Worker process availability.', '# TYPE builder_worker_up gauge', 'builder_worker_up 1', '# HELP builder_worker_process_uptime_seconds Worker process uptime.', '# TYPE builder_worker_process_uptime_seconds gauge', `builder_worker_process_uptime_seconds ${((Date.now() - this.startedAt) / 1_000).toFixed(3)}`, '# HELP builder_worker_events_total Worker event outcomes.', '# TYPE builder_worker_events_total counter'];
+    const lines = ['# HELP builder_worker_up Worker process availability.', '# TYPE builder_worker_up gauge', 'builder_worker_up 1', '# HELP builder_worker_process_uptime_seconds Worker process uptime.', '# TYPE builder_worker_process_uptime_seconds gauge', `builder_worker_process_uptime_seconds ${((Date.now() - this.startedAt) / 1_000).toFixed(3)}`, '# HELP builder_worker_file_cleanup_required Whether private-file cleanup is required.', '# TYPE builder_worker_file_cleanup_required gauge', `builder_worker_file_cleanup_required ${this.fileCleanup.required ? 1 : 0}`, '# HELP builder_worker_file_cleanup_configured Whether the dedicated delete identity is configured.', '# TYPE builder_worker_file_cleanup_configured gauge', `builder_worker_file_cleanup_configured ${this.fileCleanup.configured ? 1 : 0}`, '# HELP builder_worker_file_cleanup_last_success_unixtime Last completed cleanup sweep.', '# TYPE builder_worker_file_cleanup_last_success_unixtime gauge', `builder_worker_file_cleanup_last_success_unixtime ${this.fileCleanup.lastSuccessAt}`, '# HELP builder_worker_file_cleanup_failures_total Cleanup failures by object or sweep.', '# TYPE builder_worker_file_cleanup_failures_total counter', `builder_worker_file_cleanup_failures_total ${this.fileCleanup.failures}`, '# HELP builder_worker_events_total Worker event outcomes.', '# TYPE builder_worker_events_total counter'];
     for (const [name, value] of this.counters) lines.push(`builder_worker_events_total{outcome="${name}"} ${value}`);
     return `${lines.join('\n')}\n`;
   }

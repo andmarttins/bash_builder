@@ -19,4 +19,16 @@ describe('worker file upload cleanup', () => {
     await expect(new FileUploadCleanupService(database as never, storage as never).runOnce()).resolves.toBe(0);
     expect(database.query).not.toHaveBeenCalled();
   });
+
+  it('continues the bounded batch after one object deletion fails', async () => {
+    const first = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'; const second = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12';
+    const database = { isReady: vi.fn().mockReturnValue(true), query: vi.fn().mockResolvedValueOnce([{ id: first, storage_key: 'tenant/failed' }, { id: second, storage_key: 'tenant/deleted' }]).mockResolvedValueOnce([]) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), deleteObject: vi.fn().mockRejectedValueOnce(new Error('denied')).mockResolvedValueOnce(undefined) };
+    const metrics = { recordFileCleanupFailure: vi.fn(), recordFileCleanupSuccess: vi.fn() };
+    await expect(new FileUploadCleanupService(database as never, storage as never, metrics as never).runOnce()).resolves.toBe(1);
+    expect(storage.deleteObject).toHaveBeenNthCalledWith(2, 'tenant/deleted');
+    expect(database.query).toHaveBeenLastCalledWith('SELECT app.mark_file_object_deleted($1::uuid)', [second]);
+    expect(metrics.recordFileCleanupFailure).toHaveBeenCalledOnce();
+    expect(metrics.recordFileCleanupSuccess).toHaveBeenCalledOnce();
+  });
 });

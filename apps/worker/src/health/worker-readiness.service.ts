@@ -2,6 +2,8 @@ import { Injectable, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/com
 import { rm, writeFile } from 'node:fs/promises';
 import { KafkaConsumerService } from '../kafka/kafka-consumer.service.js';
 import { WorkerDatabaseHealthService } from './worker-database-health.service.js';
+import { FileCleanupStorageService } from '../storage/file-cleanup-storage.service.js';
+import { getWorkerRuntimeConfig } from '../config/runtime-config.js';
 
 export const workerReadinessPath = '/tmp/builder-worker-ready';
 
@@ -9,11 +11,15 @@ export const workerReadinessPath = '/tmp/builder-worker-ready';
 export class WorkerReadinessService implements OnApplicationBootstrap, OnModuleDestroy {
   public constructor(
     private readonly consumer: KafkaConsumerService,
-    private readonly database: WorkerDatabaseHealthService
+    private readonly database: WorkerDatabaseHealthService,
+    private readonly cleanupStorage: FileCleanupStorageService
   ) {}
 
   public async onApplicationBootstrap(): Promise<void> {
     if (!this.consumer.isReady() || !this.database.isReady()) throw new Error('Worker dependencies are not ready.');
+    if (getWorkerRuntimeConfig().FILE_CLEANUP_REQUIRED && !this.cleanupStorage.isConfigured()) {
+      throw new Error('Worker file cleanup is required but its dedicated delete credential is not configured.');
+    }
     await writeFile(workerReadinessPath, 'ready\n', { mode: 0o600 });
   }
 

@@ -2,13 +2,17 @@ import { Controller, Get, Header, Headers, HttpException, HttpStatus, ServiceUna
 import { PrismaService } from '../platform/database/prisma.service.js';
 import { RedisService } from '../platform/redis/redis.service.js';
 import { RuntimeMetricsService } from './runtime-metrics.service.js';
+import { ObjectStorageService } from '../platform/storage/object-storage.service.js';
+import { MalwareScannerService } from '../platform/storage/malware-scanner.service.js';
 
 @Controller()
 export class HealthController {
   public constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-    private readonly runtimeMetrics: RuntimeMetricsService
+    private readonly runtimeMetrics: RuntimeMetricsService,
+    private readonly storage: ObjectStorageService,
+    private readonly scanner: MalwareScannerService
   ) {}
 
   @Get('health')
@@ -28,6 +32,10 @@ export class HealthController {
   public async ready(): Promise<{ status: 'ready' }> {
     try {
       await Promise.all([this.prisma.$queryRaw`SELECT 1`, this.redis.ping()]);
+      const storageConfigured = this.storage.isConfigured();
+      const scannerConfigured = this.scanner.isConfigured();
+      if (storageConfigured !== scannerConfigured) throw new Error('File upload dependencies are only partially configured.');
+      if (storageConfigured) await Promise.all([this.storage.probe(), this.scanner.probe()]);
       return { status: 'ready' };
     } catch {
       throw new ServiceUnavailableException({ status: 'not_ready' });

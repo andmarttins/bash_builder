@@ -129,6 +129,8 @@ describeIntegration('PostgreSQL row-level security', () => {
       await runtime.query('ROLLBACK');
     }
     await expect(runtime.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileB])).rejects.toThrow(/permission denied for function mark_file_object_deleted/i);
+    const cleanupPermissions = await bootstrap.query<{ worker_expire: boolean; runtime_expire: boolean; public_expire: boolean; worker_mark: boolean; runtime_mark: boolean; public_mark: boolean }>("SELECT has_function_privilege('app_worker', 'app.expire_file_uploads(integer)', 'EXECUTE') AS worker_expire, has_function_privilege('app_runtime', 'app.expire_file_uploads(integer)', 'EXECUTE') AS runtime_expire, has_function_privilege('public', 'app.expire_file_uploads(integer)', 'EXECUTE') AS public_expire, has_function_privilege('app_worker', 'app.mark_file_object_deleted(uuid)', 'EXECUTE') AS worker_mark, has_function_privilege('app_runtime', 'app.mark_file_object_deleted(uuid)', 'EXECUTE') AS runtime_mark, has_function_privilege('public', 'app.mark_file_object_deleted(uuid)', 'EXECUTE') AS public_mark");
+    expect(cleanupPermissions.rows).toEqual([{ worker_expire: true, runtime_expire: false, public_expire: false, worker_mark: true, runtime_mark: false, public_mark: false }]);
     const expired = await worker.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id');
     expect(expired.rows.filter((row) => row.id === fileA || row.id === fileB)).toEqual([{ id: fileA }, { id: fileB }]);
     await worker.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileA]);

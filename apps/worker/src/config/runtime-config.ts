@@ -15,6 +15,7 @@ const workerEnvironmentSchema = z.object({
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(900).default(60),
   OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(8),
   FILE_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(5_000).max(3_600_000).default(300_000),
+  FILE_CLEANUP_REQUIRED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   WEBHOOK_DELIVERY_POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(2_000),
   WEBHOOK_DELIVERY_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
   WEBHOOK_DELIVERY_LEASE_SECONDS: z.coerce.number().int().min(5).max(900).default(70),

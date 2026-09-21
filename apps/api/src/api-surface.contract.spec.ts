@@ -11,6 +11,8 @@ import { CapabilityGuard } from './identity/capability.guard.js';
 import { SessionContextGuard } from './identity/session-context.guard.js';
 import { PrismaService } from './platform/database/prisma.service.js';
 import { RedisService } from './platform/redis/redis.service.js';
+import { ObjectStorageService } from './platform/storage/object-storage.service.js';
+import { MalwareScannerService } from './platform/storage/malware-scanner.service.js';
 import { OrganizationAccessController } from './organizations/organization-access.controller.js';
 import { OrganizationAccessService } from './organizations/organization-access.service.js';
 import { OrganizationInvitationController } from './organizations/organization-invitation.controller.js';
@@ -200,6 +202,8 @@ describe('internal API surface contract', () => {
         { provide: PrismaService, useValue: { $queryRaw: vi.fn().mockResolvedValue([{ ok: 1 }]) } },
         { provide: RedisService, useValue: { ping: vi.fn().mockResolvedValue('PONG') } },
         { provide: RuntimeMetricsService, useValue: { isAuthorized: vi.fn().mockReturnValue(false), render: vi.fn() } },
+        { provide: ObjectStorageService, useValue: { isConfigured: vi.fn().mockReturnValue(false), probe: vi.fn() } },
+        { provide: MalwareScannerService, useValue: { isConfigured: vi.fn().mockReturnValue(false), probe: vi.fn() } },
         { provide: SessionContextGuard, useValue: { canActivate: () => true } },
         { provide: MembershipRoleGuard, useValue: { canActivate: () => true } },
         { provide: CapabilityGuard, useValue: { canActivate: () => true } }

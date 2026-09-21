@@ -14,4 +14,13 @@ describe('getWorkerRuntimeConfig', () => {
       WEBHOOK_DELIVERY_BATCH_SIZE: '25', WEBHOOK_DELIVERY_LEASE_SECONDS: '70', WEBHOOK_DELIVERY_TIMEOUT_MS: '5000'
     })).toThrow('Webhook batch and timeout do not fit within the delivery lease');
   });
+
+  it('requires an explicit boolean for mandatory file cleanup', () => {
+    expect(getWorkerRuntimeConfig({
+      WORKER_DATABASE_URL: 'postgresql://a:b@db:5432/app', KAFKA_BROKERS: 'broker:9092', KAFKA_CLIENT_ID: 'worker', KAFKA_GROUP_ID: 'group', FILE_CLEANUP_REQUIRED: 'true'
+    }).FILE_CLEANUP_REQUIRED).toBe(true);
+    expect(() => getWorkerRuntimeConfig({
+      WORKER_DATABASE_URL: 'postgresql://a:b@db:5432/app', KAFKA_BROKERS: 'broker:9092', KAFKA_CLIENT_ID: 'worker', KAFKA_GROUP_ID: 'group', FILE_CLEANUP_REQUIRED: 'yes'
+    })).toThrow();
+  });
 });
