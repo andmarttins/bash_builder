@@ -44,6 +44,7 @@ const createCompanySchema = z.object({ name: text(2, 200), document: optionalTex
 const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative(), expectedVersion: expectedVersion.optional() });
 const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
+const hhtWindowCloseSchema = z.object({ expectedVersion });
 const analyticsSourceKeys = ['safety.open_events', 'changes.by_status', 'hht.latest_rates', 'bash.by_stage'] as const;
 const analyticsSourceSchema = z.enum(analyticsSourceKeys);
 const analyticsMetrics: Record<z.infer<typeof analyticsSourceSchema>, readonly string[]> = {
@@ -403,10 +404,11 @@ export class OperationsService {
     const parsed = this.parse(reportSchema, input);
     const { expectedVersion, ...data } = parsed;
     return this.withTenant(identity, async (tx) => {
+      await this.lockHhtPeriod(tx, identity.organization.id, data.year, data.month);
       if (!await tx.hhtCompany.findFirst({ where: { id: data.companyId }, select: { id: true } })) throw new NotFoundException('Empresa HHT não encontrada.');
       const window = await tx.hhtReportWindow.findFirst({ where: { year: data.year, month: data.month } });
       const now = new Date();
-      if (!window || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
+      if (!window || window.status !== 'OPEN' || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
       const existing = await tx.hhtReport.findFirst({ where: { companyId: data.companyId, year: data.year, month: data.month } });
       if (existing?.status === 'LOCKED') throw new ConflictException('Este período HHT está bloqueado.');
       let report: HhtReport;
@@ -430,9 +432,15 @@ export class OperationsService {
   public setHhtReportStatus(identity: SessionIdentity, reportIdInput: string, input: unknown) {
     const reportId = this.id(reportIdInput); const data = this.parse(reportStatusSchema, input);
     return this.withTenant(identity, async (tx) => {
-      const current = await tx.hhtReport.findFirst({ where: { id: reportId } });
+      let current = await tx.hhtReport.findFirst({ where: { id: reportId } });
+      if (!current) throw new NotFoundException('Relatório HHT não encontrado.');
+      await this.lockHhtPeriod(tx, identity.organization.id, current.year, current.month);
+      current = await tx.hhtReport.findFirst({ where: { id: reportId } });
       if (!current) throw new NotFoundException('Relatório HHT não encontrado.');
       if (current.status === 'LOCKED') throw new ConflictException('Este período HHT já está bloqueado.');
+      const window = await tx.hhtReportWindow.findFirst({ where: { year: current.year, month: current.month } });
+      const now = new Date();
+      if (!window || window.status !== 'OPEN' || now < window.opensAt || now > window.closesAt) throw new BadRequestException('A janela de reporte deste período não está aberta.');
       if (data.status === 'LOCKED' && current.status !== 'SUBMITTED') throw new BadRequestException('Envie o relatório antes de bloqueá-lo.');
       const changed = await tx.hhtReport.updateMany({ where: { id: reportId, version: data.expectedVersion, status: current.status }, data: { status: data.status as HhtReportStatus, submittedAt: data.status === 'SUBMITTED' ? new Date() : current.submittedAt, version: { increment: 1 } } });
       if (changed.count !== 1) throw new ConflictException('Este relatório HHT foi alterado por outra pessoa. Atualize a página antes de tentar novamente.');
@@ -445,9 +453,30 @@ export class OperationsService {
   public upsertHhtWindow(identity: SessionIdentity, input: unknown) {
     const data = this.parse(windowSchema, input);
     return this.withTenant(identity, async (tx) => {
+      await this.lockHhtPeriod(tx, identity.organization.id, data.year, data.month);
+      const existing = await tx.hhtReportWindow.findFirst({ where: { year: data.year, month: data.month }, select: { id: true, status: true } });
+      if (existing?.status === 'CLOSED') throw new ConflictException('A janela HHT já foi encerrada e não pode ser reaberta.');
       const window = await tx.hhtReportWindow.upsert({ where: { organizationId_year_month: { organizationId: identity.organization.id, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: data });
       await this.record(tx, identity, 'hht_window.upserted', 'hht_window', window.id, { year: window.year, month: window.month });
       return window;
+    });
+  }
+
+  public closeHhtWindow(identity: SessionIdentity, yearInput: string, monthInput: string, input: unknown) {
+    const year = Number(yearInput); const month = Number(monthInput); const data = this.parse(hhtWindowCloseSchema, input);
+    if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new BadRequestException('Período HHT inválido.');
+    return this.withTenant(identity, async (tx) => {
+      await this.lockHhtPeriod(tx, identity.organization.id, year, month);
+      const window = await tx.hhtReportWindow.findFirst({ where: { year, month } });
+      if (!window) throw new NotFoundException('Janela HHT não encontrada.');
+      if (window.status === 'CLOSED') throw new ConflictException('A janela HHT já está encerrada.');
+      if (new Date() < window.closesAt) throw new BadRequestException('A janela HHT só pode ser encerrada após o horário de fechamento.');
+      const closed = await tx.hhtReportWindow.updateMany({ where: { id: window.id, status: 'OPEN', version: data.expectedVersion }, data: { status: 'CLOSED', closedAt: new Date(), closedById: identity.user.id, version: { increment: 1 } } });
+      if (closed.count !== 1) throw new ConflictException('A janela HHT foi alterada por outra pessoa. Atualize a página antes de tentar novamente.');
+      const reports = await tx.hhtReport.updateMany({ where: { year, month, status: 'SUBMITTED' }, data: { status: 'LOCKED', version: { increment: 1 } } });
+      const result = await tx.hhtReportWindow.findFirstOrThrow({ where: { id: window.id } });
+      await this.record(tx, identity, 'hht_window.closed', 'hht_window', window.id, { year, month, lockedReports: reports.count });
+      return { window: result, lockedReports: reports.count };
     });
   }
 
@@ -908,6 +937,10 @@ export class OperationsService {
 
   private async lockBoardStage(tx: TenantTransaction, organizationId: string, stage: string): Promise<void> {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`${organizationId}:${stage}`}))`);
+  }
+
+  private async lockHhtPeriod(tx: TenantTransaction, organizationId: string, year: number, month: number): Promise<void> {
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`hht:${organizationId}:${year}:${month}`}))`);
   }
 
   private async eventExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.safetyEvent.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Evento não encontrado.'); }

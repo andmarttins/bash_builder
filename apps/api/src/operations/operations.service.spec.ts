@@ -247,7 +247,7 @@ describe('calculateHhtRates', () => {
   });
 
   it('rejects a stale HHT status transition instead of overwriting a newer report', async () => {
-    const tx = { hhtReport: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'DRAFT', submittedAt: null }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) } };
+    const tx = { $executeRaw: vi.fn(), hhtReport: { findFirst: vi.fn().mockResolvedValue({ id: eventId, year: 2026, month: 9, status: 'DRAFT', submittedAt: null }), updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ status: 'OPEN', opensAt: new Date(Date.now() - 60_000), closesAt: new Date(Date.now() + 60_000) }) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const service = new OperationsService(tenants as never);
 
@@ -255,8 +255,24 @@ describe('calculateHhtRates', () => {
     expect(tx.hhtReport.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1, status: 'DRAFT' } }));
   });
 
+  it('closes an elapsed HHT window once and locks only its submitted reports', async () => {
+    const windowId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a23';
+    const tx = {
+      $executeRaw: vi.fn(), hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ id: windowId, status: 'OPEN', closesAt: new Date(Date.now() - 1_000), version: 3 }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: windowId, status: 'CLOSED' }) },
+      hhtReport: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.closeHhtWindow(identity, '2026', '9', { expectedVersion: 3 })).resolves.toMatchObject({ lockedReports: 2 });
+    expect(tx.hhtReport.updateMany).toHaveBeenCalledWith({ where: { year: 2026, month: 9, status: 'SUBMITTED' }, data: { status: 'LOCKED', version: { increment: 1 } } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'hht_window.closed', resourceId: windowId, metadata: expect.objectContaining({ lockedReports: 2 }) }) }));
+    tx.hhtReportWindow.findFirst.mockResolvedValue({ id: windowId, status: 'OPEN', closesAt: new Date(Date.now() + 60_000), version: 3 });
+    await expect(service.closeHhtWindow(identity, '2026', '9', { expectedVersion: 3 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('requires a version before editing an existing HHT report', async () => {
     const tx = {
+      $executeRaw: vi.fn(),
       hhtCompany: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
       hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ opensAt: new Date(Date.now() - 60_000), closesAt: new Date(Date.now() + 60_000) }) },
       hhtReport: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'DRAFT', version: 2 }) }

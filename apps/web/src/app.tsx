@@ -4828,6 +4828,12 @@ function HhtModulePage({
       setPending(false);
     }
   }
+  async function closeWindow(year: number, month: number, expectedVersion: number): Promise<void> {
+    setPending(true); setError(null);
+    try { await api(`/v1/hht/windows/${year}/${month}/close`, { method: "POST", body: JSON.stringify({ expectedVersion }) }); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível encerrar a janela HHT."); }
+    finally { setPending(false); }
+  }
   const today = new Date();
   return (
     <>
@@ -5002,17 +5008,11 @@ function HhtModulePage({
       )}
       <section className="admin-section">
         <h2>Janelas e relatórios</h2>
-        {windows.length > 0 && (
-          <p className="section-note">
-            Janelas:{" "}
-            {windows
-              .map(
-                (window) =>
-                  `${String(window.month).padStart(2, "0")}/${String(window.year)}`,
-              )
-              .join(", ")}
-          </p>
-        )}
+        {windows.length > 0 && <ul className="nested-list">{windows.map((window) => {
+          const version = typeof window.version === "number" ? window.version : 0;
+          const ended = new Date(String(window.closesAt)).getTime() <= Date.now();
+          return <li key={String(window.id)}>{String(window.month).padStart(2, "0")}/{String(window.year)} · {String(window.status)} {canManage && window.status === "OPEN" && ended && <button className="secondary-button compact" type="button" disabled={pending || version < 1} onClick={() => void closeWindow(Number(window.year), Number(window.month), version)}>Encerrar e bloquear enviados</button>}</li>;
+        })}</ul>}
         {reports.length === 0 ? (
           <p className="section-note">Nenhum relatório registrado.</p>
         ) : (
