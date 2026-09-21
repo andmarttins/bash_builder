@@ -1070,8 +1070,8 @@ export class OperationsService {
   public redriveWebhookDeadLetter(identity: SessionIdentity, deliveryIdInput: string) {
     const deliveryId = this.id(deliveryIdInput);
     return this.withTenant(identity, async (tx) => {
-      const updated = await tx.webhookDelivery.updateMany({ where: { id: deliveryId, status: 'DEAD_LETTER' }, data: { status: 'PENDING', attemptCount: 0, availableAt: new Date(), leasedUntil: null, leaseToken: null, lastError: null } });
-      if (updated.count !== 1) throw new NotFoundException('Entrega de webhook em DLQ não encontrada para esta organização.');
+      const rows = await tx.$queryRaw<Array<{ redriven: boolean }>>(Prisma.sql`SELECT app.request_webhook_delivery_redrive(${deliveryId}::uuid) AS redriven`);
+      if (rows[0]?.redriven !== true) throw new NotFoundException('Entrega de webhook em DLQ não encontrada para esta organização.');
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'webhook_delivery.dead_letter_redriven', resourceType: 'webhook_delivery', resourceId: deliveryId, metadata: {} } });
       return { id: deliveryId, status: 'PENDING' };
     });
@@ -1132,7 +1132,7 @@ export class OperationsService {
   private async record(tx: TenantTransaction, identity: SessionIdentity, action: string, resourceType: string, resourceId: string, metadata: Record<string, unknown>): Promise<void> {
     await Promise.all([
       tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action, resourceType, resourceId, metadata: metadata as Prisma.InputJsonValue } }),
-      tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: resourceId, eventType: action, payload: metadata as Prisma.InputJsonValue } })
+      tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: resourceId, eventType: action, payload: metadata as Prisma.InputJsonValue }, select: { id: true } })
     ]);
   }
   private async resetQuarantinedUpload(identity: SessionIdentity, assetId: string): Promise<void> {

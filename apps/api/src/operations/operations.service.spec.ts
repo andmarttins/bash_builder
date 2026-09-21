@@ -57,6 +57,15 @@ describe('calculateHhtRates', () => {
     expect(classifyOutboxHealth({ failed: 0, deadLetter: 0, expiredLeases: 0, actionableAgeSeconds: 900 })).toBe('CRITICAL');
   });
 
+  it('re-drives a webhook DLQ item only through the bounded database procedure', async () => {
+    const tx = { $queryRaw: vi.fn().mockResolvedValue([{ redriven: true }]), auditLog: { create: vi.fn().mockResolvedValue({}) } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+
+    await expect(service.redriveWebhookDeadLetter(identity, eventId)).resolves.toEqual({ id: eventId, status: 'PENDING' });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'webhook_delivery.dead_letter_redriven', resourceId: eventId }) }));
+  });
+
   it('derives a bounded event SLA deadline and does not persist the input-only duration', async () => {
     const occurredAt = '2026-09-20T12:00:00.000Z';
     const created = { id: eventId, code: 'EVT-SLA' };

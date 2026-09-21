@@ -657,6 +657,44 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('limits runtime queue access to operational columns and bounded redrive procedures', async () => {
+    const outboxId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef1';
+    const deliveryA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef2';
+    const deliveryB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef3';
+    const outboxPrivileges = await bootstrap.query<{ insert: boolean; update: boolean; payload: boolean; status: boolean }>(
+      "SELECT has_column_privilege('app_runtime', 'public.outbox_events', 'organization_id', 'INSERT') AS insert, has_table_privilege('app_runtime', 'public.outbox_events', 'UPDATE') AS update, has_column_privilege('app_runtime', 'public.outbox_events', 'payload', 'SELECT') AS payload, has_column_privilege('app_runtime', 'public.outbox_events', 'status', 'SELECT') AS status"
+    );
+    expect(outboxPrivileges.rows).toEqual([{ insert: true, update: false, payload: false, status: true }]);
+    const webhookPrivileges = await bootstrap.query<{ update: boolean; endpoint: boolean; status: boolean; redrive: boolean }>(
+      "SELECT has_table_privilege('app_runtime', 'public.webhook_deliveries', 'UPDATE') AS update, has_column_privilege('app_runtime', 'public.webhook_deliveries', 'endpoint', 'SELECT') AS endpoint, has_column_privilege('app_runtime', 'public.webhook_deliveries', 'status', 'SELECT') AS status, has_function_privilege('app_runtime', 'app.request_webhook_delivery_redrive(uuid)', 'EXECUTE') AS redrive"
+    );
+    expect(webhookPrivileges.rows).toEqual([{ update: false, endpoint: false, status: true, redrive: true }]);
+    await bootstrap.query(
+      `INSERT INTO "integrations" (id, organization_id, name, type, config, updated_at)
+       VALUES ($1, $2, 'Webhook tenant A', 'WEBHOOK', '{}', NOW()),
+              ($3, $4, 'Webhook tenant B', 'WEBHOOK', '{}', NOW())`,
+      ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef4', tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef6', tenantB]
+    );
+    await bootstrap.query(
+      `INSERT INTO "outbox_events" (id, organization_id, aggregate_id, event_type, payload)
+       VALUES ($1, $2, $1, 'queue.restricted', '{"secret":"not-for-runtime"}');
+       INSERT INTO "webhook_deliveries" (id, organization_id, integration_id, event_id, event_type, aggregate_id, occurred_at, payload, endpoint, secret_ref, status)
+       VALUES ($3, $2, $4, $5, 'webhook.restricted', $3, NOW(), '{"secret":"not-for-runtime"}', 'https://example.test/hook', 'secret-a', 'DEAD_LETTER'),
+              ($6, $7, $8, $9, 'webhook.restricted', $6, NOW(), '{}', 'https://example.test/other', 'secret-b', 'DEAD_LETTER')`,
+      [outboxId, tenantA, deliveryA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef4', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef5', deliveryB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef6', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef7']
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      await expectRuntimeFailure(() => runtime.query('SELECT payload FROM "outbox_events"'), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query("UPDATE \"outbox_events\" SET status = 'PUBLISHED'"), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query('SELECT endpoint FROM "webhook_deliveries"'), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query("UPDATE \"webhook_deliveries\" SET status = 'PENDING'"), /permission denied/i);
+      expect((await runtime.query<{ redriven: boolean }>('SELECT app.request_webhook_delivery_redrive($1::uuid) AS redriven', [deliveryA])).rows).toEqual([{ redriven: true }]);
+      expect((await runtime.query<{ redriven: boolean }>('SELECT app.request_webhook_delivery_redrive($1::uuid) AS redriven', [deliveryB])).rows).toEqual([{ redriven: false }]);
+    } finally { await runtime.query('ROLLBACK'); }
+  });
+
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
     const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a85';
     const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a86';
