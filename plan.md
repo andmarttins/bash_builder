@@ -12,6 +12,10 @@ evidência (commit, teste/CI ou documento), data, impacto e próximo item. Um
 item só pode ser marcado como concluído quando seus critérios de aceite forem
 atendidos; aprovação pendente, deploy, ETL ou piloto não são inferidos.
 
+Toda solicitação que mencionar plano, próximos passos, pendências, progresso,
+roadmap, piloto ou corte deve começar pela consulta deste arquivo. O `README.md`
+o referencia como a raiz do plano em curso.
+
 | Status | Significado |
 | --- | --- |
 | `CONCLUÍDO (código)` | Implementado e validado em CI; não significa piloto ou corte aprovado. |
@@ -97,3 +101,4 @@ ampliando os testes end-to-end sem alterar o escopo de negócio.
 | Data | Item atualizado | Alteração | Evidência |
 | --- | --- | --- | --- |
 | 21/09/2026 | revisão inicial | plano criado a partir do ledger, ADRs, protocolo de ETL e estado do commit atual | `e0525a1`; CI do `main` aprovado |
+| 21/09/2026 | convenção de planejamento | `README.md` passou a apontar `plan.md` como raiz obrigatória para consulta e atualização | alteração conjunta em `README.md` e `plan.md` |

@@ -2,6 +2,15 @@
 
 Base do novo Builder Solutions multi-tenant. O projeto substitui o legado gradualmente e começa por infraestrutura segura e módulos independentes.
 
+## Plano em curso
+
+O arquivo raiz do planejamento é [plan.md](plan.md). Ele deve ser consultado
+antes de responder ou executar qualquer solicitação sobre plano, próximos
+passos, pendências, progresso, roadmap, piloto ou corte. Ao concluir uma parte
+do plano, atualize `plan.md` no mesmo conjunto de mudanças com status,
+evidência, impacto e próximo item; não marque como concluído algo que ainda
+dependa de aprovação, deploy, ETL ou piloto.
+
 ## Aplicações
 
 - `apps/api`: API NestJS com Fastify e contrato de contexto de tenant.
