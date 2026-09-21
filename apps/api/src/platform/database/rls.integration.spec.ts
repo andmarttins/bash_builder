@@ -124,8 +124,8 @@ describeIntegration('PostgreSQL row-level security', () => {
     try {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
       expect((await runtime.query('SELECT id FROM "file_assets" ORDER BY id')).rows).toEqual([{ id: fileA }]);
-      await expect(runtime.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id')).rejects.toThrow(/restricted to app_worker/i);
-      await expect(runtime.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileB])).rejects.toThrow(/restricted to app_worker/i);
+      await expect(runtime.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id')).rejects.toThrow(/permission denied for function expire_file_uploads/i);
+      await expect(runtime.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileB])).rejects.toThrow(/permission denied for function mark_file_object_deleted/i);
     } finally {
       await runtime.query('ROLLBACK');
     }
