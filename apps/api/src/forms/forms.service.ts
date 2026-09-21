@@ -6,6 +6,7 @@ import { PublicFormAccessService, type PublicFormTransaction } from '../platform
 import { TenantTransactionService } from '../platform/tenant/tenant-transaction.service.js';
 import { FormValidationService, formFieldTypes, formFieldsSchema, formStatuses, formSubmissionStatuses, type FormFieldInput, type StoredField } from './form-validation.service.js';
 import { SubmissionCursorService } from './submission-cursor.service.js';
+import { ObjectStorageService } from '../platform/storage/object-storage.service.js';
 
 const formIdSchema = z.uuid();
 const publicIdSchema = z.uuid();
@@ -18,6 +19,7 @@ const submissionStatusSchema = z.object({
   status: z.enum(formSubmissionStatuses),
   expectedStatus: z.enum(formSubmissionStatuses)
 });
+const attachmentSchema = z.object({ fileId: z.uuid(), category: z.string().trim().min(1).max(80).optional().nullable(), description: z.string().trim().min(1).max(10_000).optional().nullable() });
 const submissionListSchema = z.object({
   status: z.enum(formSubmissionStatuses).optional(),
   from: z.coerce.date().optional(),
@@ -50,7 +52,8 @@ export class FormsService {
     private readonly tenants: TenantTransactionService,
     private readonly validation: FormValidationService,
     private readonly publicForms: PublicFormAccessService,
-    private readonly cursors: SubmissionCursorService
+    private readonly cursors: SubmissionCursorService,
+    private readonly storage?: ObjectStorageService
   ) {}
 
   public async list(identity: SessionIdentity): Promise<FormRecord[]> {
@@ -153,7 +156,7 @@ export class FormsService {
     });
   }
 
-  public async listSubmissions(identity: SessionIdentity, formId: string, input: unknown): Promise<{ submissions: Array<{ id: string; formVersion: number; formSnapshot: unknown; answers: unknown; status: FormSubmissionStatus; submittedAt: string }>; pagination: { pageSize: number; total: number; nextCursor: string | null } }> {
+  public async listSubmissions(identity: SessionIdentity, formId: string, input: unknown): Promise<{ submissions: Array<{ id: string; formVersion: number; formSnapshot: unknown; answers: unknown; status: FormSubmissionStatus; submittedAt: string; attachments: Array<{ id: string; category: string | null; description: string | null; file: { id: string; originalName: string; contentType: string; byteSize: number } }> }>; pagination: { pageSize: number; total: number; nextCursor: string | null } }> {
     const id = this.id(formId);
     const filters = this.parse(submissionListSchema, input);
     const cursorScope = this.submissionCursorScope(id, filters);
@@ -167,7 +170,7 @@ export class FormsService {
       };
       const where: Prisma.FormSubmissionWhereInput = cursor === undefined ? baseWhere : { ...baseWhere, OR: [{ submittedAt: { lt: cursor.submittedAt } }, { submittedAt: cursor.submittedAt, id: { lt: cursor.id } }] };
       const [rows, total] = await Promise.all([
-        tx.formSubmission.findMany({ where, select: { id: true, formVersion: true, formSnapshot: true, answers: true, status: true, submittedAt: true }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: filters.pageSize + 1 }),
+        tx.formSubmission.findMany({ where, select: { id: true, formVersion: true, formSnapshot: true, answers: true, status: true, submittedAt: true, attachments: { select: { id: true, category: true, description: true, file: { select: { id: true, originalName: true, contentType: true, byteSize: true } } }, orderBy: { createdAt: 'desc' } } }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: filters.pageSize + 1 }),
         tx.formSubmission.count({ where: baseWhere })
       ]);
       const page = rows.slice(0, filters.pageSize);
@@ -190,6 +193,36 @@ export class FormsService {
       if (updated.count !== 1) throw new ConflictException('A resposta foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.status_updated', resourceType: 'form_submission', resourceId: submission, metadata: { from: expectedStatus, to: status } } });
       return { id: submission, status };
+    });
+  }
+
+  public async attachSubmissionFile(identity: SessionIdentity, formId: string, submissionId: string, input: unknown) {
+    const id = this.id(formId); const submission = this.id(submissionId); const data = this.parse(attachmentSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      await this.exists(tx, id);
+      if (!await tx.formSubmission.findFirst({ where: { id: submission, formId: id }, select: { id: true } })) throw new NotFoundException('Resposta não encontrada.');
+      if (!await tx.fileAsset.findFirst({ where: { id: data.fileId, status: 'READY' }, select: { id: true } })) throw new BadRequestException('Selecione um arquivo pronto e validado.');
+      try {
+        const attachment = await tx.formSubmissionAttachment.create({ data: { organizationId: identity.organization.id, submissionId: submission, fileId: data.fileId, category: data.category, description: data.description, createdById: identity.user.id }, include: { file: { select: { id: true, originalName: true, contentType: true, byteSize: true } } } });
+        await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.attachment_linked', resourceType: 'form_submission_attachment', resourceId: attachment.id, metadata: { formId: id, submissionId: submission, fileId: data.fileId } } });
+        return attachment;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Este arquivo já está vinculado à resposta.');
+        throw error;
+      }
+    });
+  }
+
+  public async openSubmissionAttachmentDownload(identity: SessionIdentity, formId: string, submissionId: string, attachmentId: string) {
+    const id = this.id(formId); const submission = this.id(submissionId); const attachment = this.id(attachmentId);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      if (!this.storage?.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const linked = await tx.formSubmissionAttachment.findFirst({ where: { id: attachment, submissionId: submission, submission: { formId: id } }, include: { file: true } });
+      if (!linked || linked.file.status !== 'READY') throw new NotFoundException('Anexo pronto para download não encontrado.');
+      const filename = this.safeFilename(linked.file.originalName);
+      const download = await this.storage.openDownload(linked.file.storageKey, filename);
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.attachment_download_prepared', resourceType: 'form_submission_attachment', resourceId: linked.id, metadata: { formId: id, submissionId: submission, fileId: linked.fileId } } });
+      return { ...download, filename };
     });
   }
 
@@ -284,6 +317,7 @@ export class FormsService {
   }
 
   private exportFilename(title: string): string { return (title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'formulario').slice(0, 80); }
+  private safeFilename(value: string): string { const sanitized = Array.from(value.normalize('NFKC'), (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? '_' : character).join('').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 180); return sanitized || 'arquivo'; }
 
   private publicSnapshot(value: unknown): { title: string; description: string | null; version: number; fields: Array<FormFieldInput & { position: number }> } {
     const parsed = z.object({ title: z.string(), description: z.string().nullable(), version: z.number().int().positive(), fields: z.array(z.object({ key: z.string(), label: z.string(), type: z.enum(formFieldTypes), required: z.boolean(), options: z.array(z.string()), position: z.number().int().nonnegative() })) }).safeParse(value);

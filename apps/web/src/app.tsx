@@ -99,6 +99,7 @@ type FormSubmission = {
   formVersion: number;
   formSnapshot: { fields?: Array<{ key: string; label: string }> };
   answers: Record<string, unknown>;
+  attachments: Array<{ id: string; category: string | null; description: string | null; file: { id: string; originalName: string; contentType: string; byteSize: number } }>;
 };
 type SubmissionPagination = {
   pageSize: number;
@@ -186,6 +187,7 @@ export function App(): React.JSX.Element {
   const [forms, setForms] = useState<FormSummary[]>([]);
   const [selectedForm, setSelectedForm] = useState<FormSummary | null>(null);
   const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
+  const [readyFiles, setReadyFiles] = useState<Array<{ id: string; originalName: string }>>([]);
   const [submissionPagination, setSubmissionPagination] =
     useState<SubmissionPager>({
       page: 1,
@@ -201,6 +203,11 @@ export function App(): React.JSX.Element {
   >("");
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+
+  useEffect(() => {
+    if (!selectedForm) { setReadyFiles([]); return; }
+    void api<{ files: Array<{ id: string; originalName: string; status: string }> }>("/v1/files").then((response) => setReadyFiles(response.files.filter((file) => file.status === "READY").map((file) => ({ id: file.id, originalName: file.originalName })))).catch(() => setReadyFiles([]));
+  }, [selectedForm]);
 
   useEffect(() => {
     void (async () => {
@@ -779,6 +786,14 @@ export function App(): React.JSX.Element {
     } finally {
       setPending(false);
     }
+  }
+  async function attachSubmissionFile(submissionId: string, formEvent: FormEvent<HTMLFormElement>): Promise<void> {
+    formEvent.preventDefault(); if (!selectedForm) return;
+    const fileId = new FormData(formEvent.currentTarget).get("fileId"); if (typeof fileId !== "string" || !fileId) return;
+    setPending(true); setError(null);
+    try { await api(`/v1/forms/${selectedForm.id}/submissions/${submissionId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) }); formEvent.currentTarget.reset(); await loadSubmissions(selectedForm.id, submissionPagination.page); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível vincular o anexo."); }
+    finally { setPending(false); }
   }
   async function refreshForms(selectedId?: string): Promise<void> {
     const next = (await api<{ forms: FormSummary[] }>("/v1/forms")).forms;
@@ -1553,6 +1568,21 @@ export function App(): React.JSX.Element {
                                 ),
                               )}
                             </dl>
+                            {submission.attachments.length > 0 && (
+                              <ul className="nested-list">
+                                {submission.attachments.map((attachment) => (
+                                  <li key={attachment.id}>
+                                    <a href={`/api/v1/forms/${selectedForm.id}/submissions/${submission.id}/attachments/${attachment.id}/download`}>{attachment.file.originalName}</a>{attachment.category ? ` · ${attachment.category}` : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {(identity.membership.role === "OWNER" || identity.membership.role === "ADMIN") && readyFiles.length > 0 && (
+                              <form className="inline-form compact-form" onSubmit={(formEvent) => void attachSubmissionFile(submission.id, formEvent)}>
+                                <label>Anexar arquivo validado<select name="fileId" required defaultValue=""><option value="" disabled>Selecione um arquivo</option>{readyFiles.map((file) => <option key={file.id} value={file.id}>{file.originalName}</option>)}</select></label>
+                                <button className="secondary-button compact" type="submit" disabled={pending}>Vincular</button>
+                              </form>
+                            )}
                             {(identity.membership.role === "OWNER" ||
                               identity.membership.role === "ADMIN") && (
                               <div className="action-row">

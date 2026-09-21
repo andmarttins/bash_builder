@@ -70,6 +70,18 @@ export class FormsController {
   public updateSubmissionStatus(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Param('submissionId') submissionId: string, @Body() input: unknown) {
     return this.forms.updateSubmissionStatus(request.identity, formId, submissionId, input).then((submission) => ({ submission }));
   }
+
+  @Post(':formId/submissions/:submissionId/attachments')
+  @UseGuards(CapabilityGuard)
+  @RequiredCapabilities('forms.submissions.manage')
+  public attachSubmissionFile(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Param('submissionId') submissionId: string, @Body() input: unknown) { return this.forms.attachSubmissionFile(request.identity, formId, submissionId, input).then((attachment) => ({ attachment })); }
+
+  @Get(':formId/submissions/:submissionId/attachments/:attachmentId/download')
+  @UseGuards(CapabilityGuard)
+  @RequiredCapabilities('forms.submissions.view')
+  public submissionAttachmentDownload(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Param('submissionId') submissionId: string, @Param('attachmentId') attachmentId: string, @Res({ passthrough: true }) reply: FastifyReply) {
+    return this.forms.openSubmissionAttachmentDownload(request.identity, formId, submissionId, attachmentId).then((download) => { reply.header('content-type', download.contentType ?? 'application/octet-stream'); if (download.contentLength !== undefined) reply.header('content-length', download.contentLength); reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`); return download.body; });
+  }
 }
 
 @Controller('v1/public/forms')

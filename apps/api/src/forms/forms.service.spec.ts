@@ -120,6 +120,15 @@ describe('FormsService', () => {
     await expect(service.updateSubmissionStatus(identity, formId, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', { expectedStatus: 'RESOLVED', status: 'IN_REVIEW' })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('links only a ready tenant file to an existing submission and audits the evidence', async () => {
+    const attachment = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a19', file: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a18', originalName: 'evidence.pdf' } };
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) }, formSubmission: { findFirst: vi.fn().mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16' }) }, fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: attachment.file.id }) }, formSubmissionAttachment: { create: vi.fn().mockResolvedValue(attachment) }, auditLog: { create: vi.fn().mockResolvedValue({}) } };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+    await expect(service.attachSubmissionFile(identity, formId, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', { fileId: attachment.file.id, category: 'Evidência' })).resolves.toEqual(attachment);
+    expect(tx.fileAsset.findFirst).toHaveBeenCalledWith({ where: { id: attachment.file.id, status: 'READY' }, select: { id: true } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submission.attachment_linked' }) }));
+  });
+
   it('rejects a concurrent treatment update instead of overwriting it', async () => {
     const tx = {
       form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) },
