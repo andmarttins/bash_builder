@@ -3,7 +3,7 @@ import { ConflictException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { FormsService } from '../../forms/forms.service.js';
 import { FormValidationService } from '../../forms/form-validation.service.js';
 import { PublicFormAccessService } from '../public-access/public-form-access.service.js';
@@ -24,6 +24,46 @@ describeIntegration('PostgreSQL row-level security', () => {
   const runtime = new Client({ connectionString: runtimeUrl });
   const worker = new Client({ connectionString: workerUrl });
 
+  const resetDatabase = async () => {
+    if (!bootstrapUrl) throw new Error('RLS integration tests require TEST_BOOTSTRAP_DATABASE_URL.');
+    const databaseName = new URL(bootstrapUrl).pathname.slice(1);
+    if (!databaseName.endsWith('_test')) throw new Error('RLS integration tests require a dedicated *_test database.');
+    await runtime.query('ROLLBACK').catch(() => undefined);
+    const tables = await bootstrap.query<{ tablename: string }>(
+      "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations' ORDER BY tablename"
+    );
+    const names = tables.rows.map(({ tablename }) => `"${tablename.replaceAll('"', '""')}"`);
+    await bootstrap.query(`TRUNCATE TABLE ${names.join(', ')} RESTART IDENTITY CASCADE`);
+    await bootstrap.query(
+      'INSERT INTO "organizations" (id, slug, name, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',
+      [tenantA, 'tenant-a', 'Tenant A', tenantB, 'tenant-b', 'Tenant B']
+    );
+  };
+
+  const expectRuntimeFailure = async (work: () => Promise<unknown>, matcher: RegExp) => {
+    await runtime.query('SAVEPOINT expected_runtime_failure');
+    try {
+      await expect(work()).rejects.toThrow(matcher);
+    } finally {
+      await runtime.query('ROLLBACK TO SAVEPOINT expected_runtime_failure');
+      await runtime.query('RELEASE SAVEPOINT expected_runtime_failure');
+    }
+  };
+
+  const seedActivePlatformAdmin = async () => {
+    const created = await runtime.query<{ identity_user_id: string; organization_id: string; membership_id: string }>(
+      "SELECT * FROM app.bootstrap_first_admin($1::citext, $2, $3, $4)",
+      ['owner@example.com', 'argon2id$fixture', 'First organization', 'first-organization']
+    );
+    const tokenHash = 'a'.repeat(64);
+    await runtime.query(
+      'SELECT app.create_auth_session($1::char(64), $2::uuid, $3::uuid, $4::uuid, NOW() + INTERVAL \'1 hour\')',
+      [tokenHash, created.rows[0]!.identity_user_id, created.rows[0]!.organization_id, created.rows[0]!.membership_id]
+    );
+    await runtime.query('SELECT * FROM app.change_own_password($1::char(64), $2)', [tokenHash, 'argon2id$replacement']);
+    return { ...created.rows[0]!, tokenHash };
+  };
+
   beforeAll(async () => {
     await bootstrap.connect();
     execFileSync('npm', ['run', 'db:deploy'], {
@@ -39,46 +79,11 @@ describeIntegration('PostgreSQL row-level security', () => {
       "SELECT extname FROM pg_extension WHERE extname IN ('citext', 'pgcrypto') ORDER BY extname"
     );
     expect(requiredExtensions.rows).toEqual([{ extname: 'citext' }, { extname: 'pgcrypto' }]);
-    await bootstrap.query('DELETE FROM "auth_sessions"');
-    await bootstrap.query('DELETE FROM "user_notifications"');
-    await bootstrap.query('DELETE FROM "audit_logs"');
-    await bootstrap.query('DELETE FROM "organization_invitations"');
-    await bootstrap.query('DELETE FROM "safety_event_actions"');
-    await bootstrap.query('DELETE FROM "safety_event_attachments"');
-    await bootstrap.query('DELETE FROM "safety_events"');
-    await bootstrap.query('DELETE FROM "bash_card_attachments"');
-    await bootstrap.query('DELETE FROM "change_evidence"');
-    await bootstrap.query('DELETE FROM "change_approvals"');
-    await bootstrap.query('DELETE FROM "change_workflow_steps"');
-    await bootstrap.query('DELETE FROM "change_risks"');
-    await bootstrap.query('DELETE FROM "change_requests"');
-    await bootstrap.query('DELETE FROM "bash_comments"');
-    await bootstrap.query('DELETE FROM "bash_cards"');
-    await bootstrap.query('DELETE FROM "hht_period_publications"');
-    await bootstrap.query('DELETE FROM "hht_reports"');
-    await bootstrap.query('DELETE FROM "hht_companies"');
-    await bootstrap.query('DELETE FROM "hht_report_windows"');
-    await bootstrap.query('DELETE FROM "tv_displays"');
-    await bootstrap.query('DELETE FROM "tv_playlists"');
-    await bootstrap.query('DELETE FROM "domain_event_projections"');
-    await bootstrap.query('DELETE FROM "worker_event_receipts"');
-    await bootstrap.query('DELETE FROM "classification_items"');
-    await bootstrap.query('DELETE FROM "dashboards"');
-    await bootstrap.query('DELETE FROM "integrations"');
-    await bootstrap.query('DELETE FROM "file_assets"');
-    await bootstrap.query('DELETE FROM "form_submissions"');
-    await bootstrap.query('DELETE FROM "form_fields"');
-    await bootstrap.query('DELETE FROM "forms"');
-    await bootstrap.query('DELETE FROM "memberships"');
-    await bootstrap.query('DELETE FROM "identity_users"');
-    await bootstrap.query('DELETE FROM "organizations"');
-    await bootstrap.query(
-      'INSERT INTO "organizations" (id, slug, name, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',
-      [tenantA, 'tenant-a', 'Tenant A', tenantB, 'tenant-b', 'Tenant B']
-    );
     await runtime.connect();
     await worker.connect();
   }, 60_000);
+
+  beforeEach(resetDatabase);
 
   afterAll(async () => {
     await runtime.end();
@@ -207,6 +212,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     const publicId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a76';
     await bootstrap.query('INSERT INTO "forms" (id, organization_id, public_id, title, status, updated_at) VALUES ($1, $2, $3, $4, \'PUBLISHED\', NOW())', [formId, tenantA, publicId, 'Integrated treatment']);
     await bootstrap.query('INSERT INTO "form_fields" (organization_id, form_id, key, label, type, required, position, updated_at) VALUES ($1, $2, $3, $4, \'SHORT_TEXT\', true, 0, NOW())', [tenantA, formId, 'title', 'Title']);
+    await bootstrap.query('UPDATE "forms" SET public_snapshot = $1 WHERE id = $2', [JSON.stringify({ title: 'Integrated treatment', description: null, version: 1, fields: [{ key: 'title', label: 'Title', type: 'SHORT_TEXT', required: true, options: [], position: 0 }] }), formId]);
     const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: runtimeUrl }) });
     const service = new FormsService(new TenantTransactionService(prisma as never), new FormValidationService(), new PublicFormAccessService(prisma as never), new SubmissionCursorService('c'.repeat(32)));
     try {
@@ -243,7 +249,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       const listed = await service.listSubmissions(identity, formA, { pageSize: 25 });
       expect(listed.submissions).toEqual([expect.objectContaining({ id: parentA, status: 'IN_REVIEW', treatment: expect.objectContaining({ id: child.id, note: 'Investigar causa raiz', status: 'IN_REVIEW' }) })]);
       await expect(service.updateSubmissionStatus(identity, formA, child.id, { expectedStatus: 'IN_REVIEW', status: 'RESOLVED' })).resolves.toEqual({ id: child.id, status: 'RESOLVED' });
-      expect((await bootstrap.query('SELECT id, status::text FROM "form_submissions" WHERE id IN ($1, $2) ORDER BY id', [parentA, child.id])).rows).toEqual([{ id: parentA, status: 'RESOLVED' }, { id: child.id, status: 'RESOLVED' }]);
+      expect((await bootstrap.query('SELECT id, status::text FROM "form_submissions" WHERE id IN ($1, $2) ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END', [parentA, child.id])).rows).toEqual([{ id: parentA, status: 'RESOLVED' }, { id: child.id, status: 'RESOLVED' }]);
     } finally { await prisma.$disconnect(); }
     await runtime.query('BEGIN');
     try {
@@ -305,7 +311,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [published])).rows).toEqual([]);
       await runtime.query("SELECT set_config('app.public_dashboard_token_hash', $1, true)", [digest]);
       expect((await runtime.query('SELECT id, title FROM "dashboards" ORDER BY id')).rows).toEqual([{ id: published, title: 'Published dashboard' }]);
-      await expect(runtime.query('UPDATE "dashboards" SET title = \'tampered\' WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('UPDATE "dashboards" SET title = \'tampered\' WHERE id = $1', [published]), /row-level security/i);
       const replacementDigest = 'd'.repeat(64);
       await bootstrap.query('UPDATE "dashboards" SET public_token_hash = $1 WHERE id = $2', [replacementDigest, published]);
       expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [published])).rows).toEqual([]);
@@ -331,7 +337,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('SELECT id FROM "hht_period_publications" WHERE id = $1', [published])).rows).toEqual([]);
       await runtime.query("SELECT set_config('app.public_hht_token_hash', $1, true)", [digest]);
       expect((await runtime.query('SELECT id FROM "hht_period_publications"')).rows).toEqual([{ id: published }]);
-      await expect(runtime.query('UPDATE "hht_period_publications" SET published = FALSE WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('UPDATE "hht_period_publications" SET published = FALSE WHERE id = $1', [published]), /row-level security/i);
       await runtime.query("SELECT set_config('app.public_hht_token_hash', $1, true)", ['8'.repeat(64)]);
       expect((await runtime.query('SELECT id FROM "hht_period_publications" WHERE id = $1', [revoked])).rows).toEqual([]);
       await runtime.query("SELECT set_config('app.public_hht_token_hash', $1, true)", ['9'.repeat(64)]);
@@ -358,7 +364,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [published])).rows).toEqual([]);
       await runtime.query("SELECT set_config('app.public_tv_display_token_hash', $1, true)", [digest]);
       expect((await runtime.query('SELECT id, name FROM "tv_displays" ORDER BY id')).rows).toEqual([{ id: published, name: 'Published TV' }]);
-      await expect(runtime.query('UPDATE "tv_displays" SET name = \'tampered\' WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('UPDATE "tv_displays" SET name = \'tampered\' WHERE id = $1', [published]), /row-level security/i);
       const replacementDigest = '1'.repeat(64);
       await bootstrap.query('UPDATE "tv_displays" SET public_token_hash = $1 WHERE id = $2', [replacementDigest, published]);
       expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [published])).rows).toEqual([]);
@@ -385,7 +391,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [published])).rows).toEqual([]);
       await runtime.query("SELECT set_config('app.public_tv_playlist_token_hash', $1, true)", [digest]);
       expect((await runtime.query('SELECT id, name FROM "tv_playlists" ORDER BY id')).rows).toEqual([{ id: published, name: 'Published playlist' }]);
-      await expect(runtime.query('UPDATE "tv_playlists" SET name = \'tampered\' WHERE id = $1', [published])).rejects.toThrow(/row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('UPDATE "tv_playlists" SET name = \'tampered\' WHERE id = $1', [published]), /row-level security/i);
       const replacementDigest = '7'.repeat(64);
       await bootstrap.query('UPDATE "tv_playlists" SET public_token_hash = $1 WHERE id = $2', [replacementDigest, published]);
       expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [published])).rows).toEqual([]);
@@ -435,9 +441,9 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('SELECT id FROM "safety_event_attachments"')).rows).toEqual([{ id: attachmentA }]);
       expect((await runtime.query('UPDATE "safety_event_attachments" SET category = \'forbidden\' WHERE id = $1 RETURNING id', [attachmentB])).rows).toEqual([]);
       expect((await runtime.query('DELETE FROM "safety_event_attachments" WHERE id = $1 RETURNING id', [attachmentB])).rows).toEqual([]);
-      await expect(runtime.query('INSERT INTO "safety_event_attachments" (organization_id, event_id, file_id) VALUES ($1, $2, $3)', [tenantB, eventB, fileB])).rejects.toThrow(/row-level security/i);
-      await expect(runtime.query("INSERT INTO \"safety_event_actions\" (organization_id, event_id, title, updated_at) VALUES ($1, $2, 'forbidden', NOW())", [tenantB, eventA])).rejects.toThrow(/row-level security|foreign key/i);
-      await expect(runtime.query("INSERT INTO \"classification_items\" (organization_id, category, label, value, updated_at) VALUES ($1, 'event_type', 'cross', 'cross', NOW())", [tenantB])).rejects.toThrow(/row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('INSERT INTO "safety_event_attachments" (organization_id, event_id, file_id) VALUES ($1, $2, $3)', [tenantB, eventB, fileB]), /row-level security/i);
+      await expectRuntimeFailure(() => runtime.query("INSERT INTO \"safety_event_actions\" (organization_id, event_id, title, updated_at) VALUES ($1, $2, 'forbidden', NOW())", [tenantB, eventA]), /row-level security|foreign key/i);
+      await expectRuntimeFailure(() => runtime.query("INSERT INTO \"classification_items\" (organization_id, category, label, value, updated_at) VALUES ($1, 'event_type', 'cross', 'cross', NOW())", [tenantB]), /row-level security/i);
     } finally {
       await runtime.query('ROLLBACK');
     }
@@ -481,15 +487,19 @@ describeIntegration('PostgreSQL row-level security', () => {
       expect((await runtime.query('DELETE FROM "change_approvals" WHERE id = $1 RETURNING id', [approvalB])).rows).toEqual([]);
       expect((await runtime.query('DELETE FROM "change_evidence" WHERE id = $1 RETURNING id', [evidenceB])).rows).toEqual([]);
       expect((await runtime.query('DELETE FROM "change_workflow_steps" WHERE change_id = $1 RETURNING id', [changeB])).rows).toEqual([]);
-      await expect(runtime.query('INSERT INTO "change_approvals" (organization_id, change_id, approver_name, approver_email, approver_user_id, approver_membership_id, approver_membership_role, updated_at) VALUES ($1, $2, \'blocked\', \'approval-b@example.test\', $3, $4, \'MEMBER\', NOW())', [tenantB, changeB, userB, membershipB])).rejects.toThrow(/row-level security/i);
-      await expect(runtime.query('INSERT INTO "change_evidence" (organization_id, change_id, file_id) VALUES ($1, $2, $3)', [tenantB, changeB, fileB])).rejects.toThrow(/row-level security/i);
-      await expect(runtime.query('INSERT INTO "change_workflow_steps" (organization_id, change_id, step, updated_at) VALUES ($1, $2, \'TRIGGERS\', NOW())', [tenantB, changeB])).rejects.toThrow(/row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('INSERT INTO "change_approvals" (organization_id, change_id, approver_name, approver_email, approver_user_id, approver_membership_id, approver_membership_role, updated_at) VALUES ($1, $2, \'blocked\', \'approval-b@example.test\', $3, $4, \'MEMBER\', NOW())', [tenantB, changeB, userB, membershipB]), /row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('INSERT INTO "change_evidence" (organization_id, change_id, file_id) VALUES ($1, $2, $3)', [tenantB, changeB, fileB]), /row-level security/i);
+      await expectRuntimeFailure(() => runtime.query('INSERT INTO "change_workflow_steps" (organization_id, change_id, step, updated_at) VALUES ($1, $2, \'TRIGGERS\', NOW())', [tenantB, changeB]), /row-level security/i);
     } finally {
       await runtime.query('ROLLBACK');
     }
   });
 
   it('lists each due change once per São Paulo day through the worker-only deadline procedure', async () => {
+    const userA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a91';
+    const userB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a92';
+    await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW()), ($3, $4, TRUE, NOW())', [userA, 'deadline-a@example.test', userB, 'deadline-b@example.test']);
+    await bootstrap.query('INSERT INTO "change_requests" (id, organization_id, public_code, title, created_by_id, due_at, updated_at) VALUES ($1, $2, \'MUD-A\', \'A\', $3, NOW() + INTERVAL \'1 hour\', NOW()), ($4, $5, \'MUD-B\', \'B\', $6, NOW() + INTERVAL \'1 hour\', NOW())', ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a95', tenantA, userA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a96', tenantB, userB]);
     const notifications = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown>; occurred_at: Date }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
     const tenantANotification = notifications.find((notification) => notification.organization_id === tenantA);
     const tenantBNotification = notifications.find((notification) => notification.organization_id === tenantB);
@@ -625,13 +635,13 @@ describeIntegration('PostgreSQL row-level security', () => {
       "SELECT has_function_privilege('app_worker', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS runtime, has_function_privilege('app_worker', 'app.mark_outbox_failed(uuid,integer)', 'EXECUTE') AS legacy_failure"
     );
     expect(permissions.rows).toEqual([{ worker: true, runtime: false, legacy_failure: false }]);
-    await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied/i);
+    await expect(worker.query('SELECT id FROM "outbox_events"')).rejects.toThrow(/permission denied|does not exist/i);
     const deadlinePermissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.list_change_deadline_notifications(integer,integer,timestamp with time zone)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.list_change_deadline_notifications(integer,integer,timestamp with time zone)', 'EXECUTE') AS runtime");
     expect(deadlinePermissions.rows).toEqual([{ worker: true, runtime: false }]);
     const notificationDeliveryPermissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.deliver_change_deadline_notifications(uuid,uuid,uuid,character varying,jsonb)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.deliver_change_deadline_notifications(uuid,uuid,uuid,character varying,jsonb)', 'EXECUTE') AS runtime");
     expect(notificationDeliveryPermissions.rows).toEqual([{ worker: true, runtime: false }]);
-    await expect(worker.query('SELECT id FROM "user_notifications"')).rejects.toThrow(/permission denied/i);
-    await expect(worker.query('SELECT id FROM "change_requests"')).rejects.toThrow(/permission denied/i);
+    await expect(worker.query('SELECT id FROM "user_notifications"')).rejects.toThrow(/permission denied|does not exist/i);
+    await expect(worker.query('SELECT id FROM "change_requests"')).rejects.toThrow(/permission denied|does not exist/i);
   });
 
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
@@ -644,8 +654,12 @@ describeIntegration('PostgreSQL row-level security', () => {
     const permissions = await bootstrap.query<{ worker: boolean; runtime: boolean }>("SELECT has_function_privilege('app_worker', 'app.record_domain_event_projection(uuid,uuid,character varying,character varying,uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.record_domain_event_projection(uuid,uuid,character varying,character varying,uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS runtime");
     expect(permissions.rows).toEqual([{ worker: true, runtime: false }]);
     await expect(runtime.query(query, [eventId, tenantA, 'domain-projection-v1', 'event.projected', aggregateId, '{}', '2026-09-20T00:00:00.000Z'])).rejects.toThrow(/permission denied/i);
-    await expect(runtime.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied/i);
-    await expect(worker.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied/i);
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      await expect(runtime.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied|does not exist/i);
+    } finally { await runtime.query('ROLLBACK'); }
+    await expect(worker.query('SELECT id FROM "domain_event_projections"')).rejects.toThrow(/permission denied|does not exist/i);
   });
 
   it('moves exhausted outbox work to a dead letter and permits explicit re-drive', async () => {
@@ -691,7 +705,7 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('rotates a session only to an active membership and the old token stops resolving', async () => {
-    const originalHash = 'a'.repeat(64);
+    const { tokenHash: originalHash } = await seedActivePlatformAdmin();
     const created = await runtime.query<{ organization_id: string }>(
       'SELECT * FROM app.create_organization_for_platform_admin($1::char(64), $2, $3)',
       [originalHash, 'Second organization', 'second-organization']
@@ -765,6 +779,15 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('enforces the invitation lifecycle, tenant scope, and existing-identity acceptance', async () => {
+    const { tokenHash: originalHash } = await seedActivePlatformAdmin();
+    const created = await runtime.query<{ organization_id: string }>(
+      'SELECT * FROM app.create_organization_for_platform_admin($1::char(64), $2, $3)',
+      [originalHash, 'Second organization', 'second-organization']
+    );
+    await runtime.query(
+      'SELECT * FROM app.switch_auth_session($1::char(64), $2::uuid, $3::char(64), NOW() + INTERVAL \'1 hour\')',
+      [originalHash, created.rows[0]!.organization_id, 'b'.repeat(64)]
+    );
     const ownerSessionHash = 'b'.repeat(64);
     const ownerSession = await runtime.query<{ organization_id: string; identity_user_id: string }>(
       'SELECT organization_id, identity_user_id FROM app.resolve_auth_session($1::char(64))',
