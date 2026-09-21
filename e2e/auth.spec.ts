@@ -13,11 +13,11 @@ test('bootstrap forces password replacement, then supports login and logout', as
   await page.locator('input[name="currentPassword"]').fill('Temporary-password-123');
   await page.locator('input[name="newPassword"]').fill('Permanent-password-456');
   await page.getByRole('button', { name: /atualizar senha/i }).click();
-  await expect(page.getByText('Visão geral')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
   await page.getByRole('button', { name: 'Sair' }).click();
   await expect(page.getByText('Acesso à plataforma')).toBeVisible();
   await page.locator('input[name="email"]').fill('owner@empresa-e2e.test');
   await page.locator('input[name="password"]').fill('Permanent-password-456');
   await page.getByRole('button', { name: 'Entrar' }).click();
-  await expect(page.getByText('Visão geral')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
 });

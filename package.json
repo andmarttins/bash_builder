@@ -20,7 +20,7 @@
     "test": "npm run build -w @builder/contracts && vitest run",
     "test:unit": "npm run build -w @builder/contracts && vitest run --exclude apps/api/src/platform/database/rls.integration.spec.ts --exclude apps/api/src/platform/redis/redis.integration.spec.ts",
     "test:integration": "npm run build -w @builder/contracts && vitest run apps/api/src/platform/database/rls.integration.spec.ts apps/api/src/platform/redis/redis.integration.spec.ts",
-    "test:e2e": "playwright test",
+    "test:e2e": "node e2e/prepare-database.mjs && playwright test",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "db:generate": "prisma generate --schema prisma/schema.prisma",

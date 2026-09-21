@@ -15,7 +15,11 @@ if (process.env.E2E_ALLOW_DESTRUCTIVE !== 'true') {
 }
 
 const runtimeDatabaseUrl = requiredE2eDatabaseUrl('E2E_RUNTIME_DATABASE_URL');
-requiredE2eDatabaseUrl('E2E_MIGRATOR_DATABASE_URL');
+const migratorDatabaseUrl = requiredE2eDatabaseUrl('E2E_MIGRATOR_DATABASE_URL');
+if (new URL(runtimeDatabaseUrl).host !== new URL(migratorDatabaseUrl).host
+  || new URL(runtimeDatabaseUrl).pathname !== new URL(migratorDatabaseUrl).pathname) {
+  throw new Error('E2E runtime and migrator URLs must target the same database.');
+}
 const e2eRedisUrl = process.env.E2E_REDIS_URL;
 if (!e2eRedisUrl) throw new Error('E2E_REDIS_URL must be set for browser E2E tests.');
 
@@ -23,7 +27,6 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
   workers: 1,
-  globalSetup: './e2e/global-setup.ts',
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
     baseURL: 'http://127.0.0.1:4173',
