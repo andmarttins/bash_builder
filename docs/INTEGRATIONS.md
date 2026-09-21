@@ -22,11 +22,28 @@ INTEGRATION_ACME_WEBHOOK_SECRET=<valor-fornecido-pelo-destino>
 Ao criar a integração, informe apenas `INTEGRATION_ACME_WEBHOOK_SECRET` em
 **Referência de segredo**. O botão **Verificar configuração** confirma apenas
 se a variável está presente e não vazia; ele não revela valor, tamanho ou
-qualquer parte do segredo e ainda não realiza tráfego para sistemas externos.
+qualquer parte do segredo e não realiza tráfego para sistemas externos.
 
-Quando um consumer passar a executar uma integração, a mesma variável deve ser
-configurada também no Worker. Essa alteração exige um adaptador específico por
-tipo de integração, allowlist de destinos e testes de segurança contra SSRF.
+## Webhooks
+
+Uma integração `WEBHOOK` ativa enfileira cada evento de domínio em uma fila
+durável por integração. A variável protegida precisa existir tanto na API
+(para permitir a ativação) quanto no Worker (para assinar a entrega). O Worker
+aceita somente URLs HTTPS sem IP, porta, credenciais, query ou fragmento; faz
+resolução DNS pinada e envia apenas para IPv4 público. Redirecionamentos não
+são seguidos.
+
+O corpo contém `eventId`, `eventType`, `schemaVersion`, `tenantId`,
+`aggregateId`, `occurredAt` e `payload`. Ele é assinado com HMAC-SHA256 no
+header `x-builder-signature-sha256`; `x-builder-event-id` é a chave de
+deduplicação do receptor. A semântica é **at-least-once**: o receptor deve
+deduplicar pelo `eventId` antes de executar efeitos externos.
+
+Falhas usam backoff, lease e DLQ. A desativação ou reconfiguração da integração
+cancela entregas ainda pendentes; entregas já em trânsito podem completar uma
+única vez. Operadores com `operations.view` consultam a DLQ em
+`GET /v1/operations/webhooks/dead-letter`; `operations.manage` pode reenfileirar
+uma entrega em `POST /v1/operations/webhooks/dead-letter/:deliveryId/redrive`.
 
 ## Estados da verificação
 

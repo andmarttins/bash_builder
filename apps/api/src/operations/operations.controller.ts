@@ -157,10 +157,14 @@ export class OperationsController {
 
   @Get('operations/outbox/dead-letter') @RequiredCapabilities('operations.view')
   public deadLetters(@Req() request: AuthenticatedRequest) { return this.operations.listDeadLetters(request.identity).then((events) => ({ events })); }
+  @Get('operations/webhooks/dead-letter') @RequiredCapabilities('operations.view')
+  public webhookDeadLetters(@Req() request: AuthenticatedRequest) { return this.operations.listWebhookDeadLetters(request.identity).then((deliveries) => ({ deliveries })); }
   @Get('operations/audit') @RequiredCapabilities('operations.view')
   public auditEntries(@Req() request: AuthenticatedRequest, @Query() query: unknown) { return this.operations.listAuditEntries(request.identity, query).then((items) => ({ items })); }
   @Get('operations/summary') @RequiredCapabilities('operations.view')
   public operationalSummary(@Req() request: AuthenticatedRequest) { return this.operations.operationalSummary(request.identity); }
   @Post('operations/outbox/dead-letter/:eventId/redrive') @RequiredCapabilities('operations.manage')
   public redriveDeadLetter(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string) { return this.operations.redriveDeadLetter(request.identity, eventId).then((event) => ({ event })); }
+  @Post('operations/webhooks/dead-letter/:deliveryId/redrive') @RequiredCapabilities('operations.manage')
+  public redriveWebhookDeadLetter(@Req() request: AuthenticatedRequest, @Param('deliveryId') deliveryId: string) { return this.operations.redriveWebhookDeadLetter(request.identity, deliveryId).then((delivery) => ({ delivery })); }
 }

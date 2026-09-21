@@ -58,6 +58,43 @@ export class WorkerDatabaseHealthService implements OnModuleInit, OnModuleDestro
     return result.rows[0]?.delivered ?? 0;
   }
 
+  public async enqueueWebhookDeliveries(event: OutboxEvent): Promise<number> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<{ queued: number }>(
+      'SELECT app.enqueue_webhook_deliveries($1::uuid, $2::uuid, $3, $4::uuid, $5::timestamptz, $6::jsonb) AS queued',
+      [event.eventId, event.tenantId, event.eventType, event.aggregateId, event.occurredAt, JSON.stringify(event.payload)]
+    );
+    return result.rows[0]?.queued ?? 0;
+  }
+
+  public async claimWebhookDeliveries(limit: number, leaseSeconds: number): Promise<WebhookDelivery[]> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<WebhookDelivery>(
+      'SELECT * FROM app.claim_webhook_deliveries($1, $2)', [limit, leaseSeconds]
+    );
+    return result.rows;
+  }
+
+  public async confirmWebhookDeliveryLease(deliveryId: string, leaseToken: string): Promise<boolean> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<{ confirmed: boolean }>('SELECT app.confirm_webhook_delivery_lease($1::uuid, $2::uuid) AS confirmed', [deliveryId, leaseToken]);
+    return result.rows[0]?.confirmed === true;
+  }
+
+  public async markWebhookDeliveryDelivered(deliveryId: string, leaseToken: string): Promise<boolean> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<{ delivered: boolean }>('SELECT app.mark_webhook_delivery_delivered($1::uuid, $2::uuid) AS delivered', [deliveryId, leaseToken]);
+    return result.rows[0]?.delivered === true;
+  }
+
+  public async markWebhookDeliveryFailed(deliveryId: string, leaseToken: string, delaySeconds: number, maxAttempts: number, error: string): Promise<boolean> {
+    if (!this.client) throw new Error('Worker database client is not ready.');
+    const result = await this.client.query<{ failed: boolean }>(
+      'SELECT app.mark_webhook_delivery_failed($1::uuid, $2::uuid, $3, $4, $5) AS failed', [deliveryId, leaseToken, delaySeconds, maxAttempts, error]
+    );
+    return result.rows[0]?.failed === true;
+  }
+
   public async deliverSafetyEventSlaNotifications(event: OutboxEvent): Promise<number> {
     if (!this.client) throw new Error('Worker database client is not ready.');
     const result = await this.client.query<{ delivered: number }>(
@@ -83,3 +120,17 @@ export class WorkerDatabaseHealthService implements OnModuleInit, OnModuleDestro
     await this.client?.end();
   }
 }
+
+export type WebhookDelivery = {
+  id: string;
+  organization_id: string;
+  event_id: string;
+  event_type: string;
+  aggregate_id: string;
+  occurred_at: Date;
+  payload: Record<string, unknown>;
+  endpoint: string;
+  secret_ref: string;
+  attempt_count: number;
+  lease_token: string;
+};

@@ -133,6 +133,14 @@ enum FileAssetStatus {
   REJECTED
 }
 
+enum WebhookDeliveryStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  DEAD_LETTER
+  CANCELLED
+}
+
 model Organization {
   id          String             @id @default(uuid()) @db.Uuid
   slug        String             @unique @db.VarChar(63)
@@ -169,6 +177,7 @@ model Organization {
   tvDisplays TvDisplay[]
   tvPlaylists TvPlaylist[]
   integrations Integration[]
+  webhookDeliveries WebhookDelivery[]
   fileAssets FileAsset[]
   notifications UserNotification[]
 
@@ -850,10 +859,41 @@ model Integration {
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  webhookDeliveries WebhookDelivery[]
 
   @@unique([organizationId, name])
+  @@unique([id, organizationId])
   @@index([organizationId, type, status])
   @@map("integrations")
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @map("organization_id") @db.Uuid
+  integrationId  String                @map("integration_id") @db.Uuid
+  eventId        String                @map("event_id") @db.Uuid
+  eventType      String                @map("event_type") @db.VarChar(120)
+  aggregateId    String                @map("aggregate_id") @db.Uuid
+  occurredAt     DateTime              @map("occurred_at") @db.Timestamptz(6)
+  payload        Json
+  endpoint       String                @db.VarChar(2048)
+  secretRef      String                @map("secret_ref") @db.VarChar(120)
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0) @map("attempt_count")
+  availableAt    DateTime              @default(now()) @map("available_at") @db.Timestamptz(6)
+  leasedUntil    DateTime?             @map("leased_until") @db.Timestamptz(6)
+  leaseToken     String?               @map("lease_token") @db.Uuid
+  lastError      String?               @map("last_error") @db.Text
+  deliveredAt    DateTime?             @map("delivered_at") @db.Timestamptz(6)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  integration    Integration           @relation(fields: [integrationId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@unique([integrationId, eventId])
+  @@unique([id, organizationId])
+  @@index([status, availableAt])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@map("webhook_deliveries")
 }
 
 model FileAsset {

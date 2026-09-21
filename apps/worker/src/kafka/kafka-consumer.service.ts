@@ -25,18 +25,30 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
         const event = outboxEventSchema.parse(JSON.parse(message.value.toString()));
         const consumerName = 'domain-projection-v1';
         const firstDelivery = await this.database.claimReceipt(event.eventId, event.tenantId, consumerName, 60);
-        if (!firstDelivery) {
-          this.logger.debug(`Duplicate ${event.eventId} ignored.`);
-          return;
+        if (firstDelivery) {
+          try {
+            // Persist a tenant-scoped, idempotent projection before acknowledging
+            // the broker message. Provider-specific consumers can safely build on it.
+            await this.database.recordDomainProjection(event, consumerName);
+            this.logger.log(`Projected ${event.eventType} (${event.eventId}) for tenant ${event.tenantId}`);
+            await this.database.completeReceipt(event.eventId, consumerName);
+          } catch (error) {
+            await this.database.failReceipt(event.eventId, consumerName);
+            throw error;
+          }
+        } else {
+          this.logger.debug(`Projection for duplicate ${event.eventId} ignored.`);
         }
+
+        const webhookConsumerName = 'webhook-enqueue-v1';
+        const firstWebhookDelivery = await this.database.claimReceipt(event.eventId, event.tenantId, webhookConsumerName, 60);
+        if (!firstWebhookDelivery) return;
         try {
-          // Persist a tenant-scoped, idempotent projection before acknowledging
-          // the broker message. Provider-specific consumers can safely build on it.
-          await this.database.recordDomainProjection(event, consumerName);
-          this.logger.log(`Projected ${event.eventType} (${event.eventId}) for tenant ${event.tenantId}`);
-          await this.database.completeReceipt(event.eventId, consumerName);
+          const queued = await this.database.enqueueWebhookDeliveries(event);
+          this.logger.debug(`Queued ${queued} webhook delivery record(s) for ${event.eventId}.`);
+          await this.database.completeReceipt(event.eventId, webhookConsumerName);
         } catch (error) {
-          await this.database.failReceipt(event.eventId, consumerName);
+          await this.database.failReceipt(event.eventId, webhookConsumerName);
           throw error;
         }
       }

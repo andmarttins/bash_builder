@@ -903,6 +903,10 @@ export class OperationsService {
     return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
   }
 
+  public listWebhookDeadLetters(identity: SessionIdentity) {
+    return this.withTenant(identity, (tx) => tx.webhookDelivery.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventId: true, eventType: true, aggregateId: true, attemptCount: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 100 }));
+  }
+
   public listAuditEntries(identity: SessionIdentity, input?: unknown) {
     const query = this.parse(auditListQuerySchema, input ?? {});
     return this.withTenant(identity, (tx) => tx.auditLog.findMany({
@@ -916,17 +920,20 @@ export class OperationsService {
   public operationalSummary(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => {
       const now = new Date();
-      const [byStatus, oldestActionable, expiredLeases] = await Promise.all([
+      const [byStatus, oldestActionable, expiredLeases, webhookByStatus, expiredWebhookLeases] = await Promise.all([
         tx.outboxEvent.groupBy({ by: ['status'], _count: { _all: true } }),
         tx.outboxEvent.findFirst({ where: { status: { in: ['PENDING', 'FAILED'] }, availableAt: { lte: now } }, select: { availableAt: true }, orderBy: { availableAt: 'asc' } }),
-        tx.outboxEvent.count({ where: { status: 'PROCESSING', leasedUntil: { lt: now } } })
+        tx.outboxEvent.count({ where: { status: 'PROCESSING', leasedUntil: { lt: now } } }),
+        tx.webhookDelivery.groupBy({ by: ['status'], _count: { _all: true } }),
+        tx.webhookDelivery.count({ where: { status: 'PROCESSING', leasedUntil: { lt: now } } })
       ]);
       const counts = Object.fromEntries(byStatus.map((item) => [item.status, item._count._all]));
       const oldestActionableAt = oldestActionable?.availableAt.toISOString() ?? null;
       const actionableAgeSeconds = oldestActionable ? Math.max(0, Math.floor((now.getTime() - oldestActionable.availableAt.getTime()) / 1_000)) : 0;
       const failed = counts.FAILED ?? 0;
       const deadLetter = counts.DEAD_LETTER ?? 0;
-      return { generatedAt: now.toISOString(), outbox: { pending: counts.PENDING ?? 0, processing: counts.PROCESSING ?? 0, failed, deadLetter, published: counts.PUBLISHED ?? 0, expiredLeases, oldestActionableAt, sli: { status: classifyOutboxHealth({ failed, deadLetter, expiredLeases, actionableAgeSeconds }), actionableAgeSeconds, ...outboxOperationalThresholds } } };
+      const webhookCounts = Object.fromEntries(webhookByStatus.map((item) => [item.status, item._count._all]));
+      return { generatedAt: now.toISOString(), outbox: { pending: counts.PENDING ?? 0, processing: counts.PROCESSING ?? 0, failed, deadLetter, published: counts.PUBLISHED ?? 0, expiredLeases, oldestActionableAt, sli: { status: classifyOutboxHealth({ failed, deadLetter, expiredLeases, actionableAgeSeconds }), actionableAgeSeconds, ...outboxOperationalThresholds } }, webhooks: { pending: webhookCounts.PENDING ?? 0, processing: webhookCounts.PROCESSING ?? 0, delivered: webhookCounts.DELIVERED ?? 0, deadLetter: webhookCounts.DEAD_LETTER ?? 0, cancelled: webhookCounts.CANCELLED ?? 0, expiredLeases: expiredWebhookLeases } };
     });
   }
 
@@ -1058,6 +1065,16 @@ export class OperationsService {
 
   private async lockBoardStage(tx: TenantTransaction, organizationId: string, stage: string): Promise<void> {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`${organizationId}:${stage}`}))`);
+  }
+
+  public redriveWebhookDeadLetter(identity: SessionIdentity, deliveryIdInput: string) {
+    const deliveryId = this.id(deliveryIdInput);
+    return this.withTenant(identity, async (tx) => {
+      const updated = await tx.webhookDelivery.updateMany({ where: { id: deliveryId, status: 'DEAD_LETTER' }, data: { status: 'PENDING', attemptCount: 0, availableAt: new Date(), leasedUntil: null, leaseToken: null, lastError: null } });
+      if (updated.count !== 1) throw new NotFoundException('Entrega de webhook em DLQ não encontrada para esta organização.');
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'webhook_delivery.dead_letter_redriven', resourceType: 'webhook_delivery', resourceId: deliveryId, metadata: {} } });
+      return { id: deliveryId, status: 'PENDING' };
+    });
   }
 
   private async lockHhtPeriod(tx: TenantTransaction, organizationId: string, year: number, month: number): Promise<void> {
