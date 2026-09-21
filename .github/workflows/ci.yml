@@ -76,6 +76,7 @@ jobs:
           postgres:18.1-alpine sh /init.sh
       - run: npm run db:generate
       - run: npm run db:validate
+      - run: npm run db:verify-acl
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit

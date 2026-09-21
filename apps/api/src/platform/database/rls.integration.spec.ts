@@ -681,21 +681,32 @@ describeIntegration('PostgreSQL row-level security', () => {
       [outboxId, tenantA]
     );
     await bootstrap.query(
-      `INSERT INTO "webhook_deliveries" (id, organization_id, integration_id, event_id, event_type, aggregate_id, occurred_at, payload, endpoint, secret_ref, status)
-       VALUES ($1, $2, $3, $4, 'webhook.restricted', $1, NOW(), '{"secret":"not-for-runtime"}', 'https://example.test/hook', 'secret-a', 'DEAD_LETTER'),
-              ($5, $6, $7, $8, 'webhook.restricted', $5, NOW(), '{}', 'https://example.test/other', 'secret-b', 'DEAD_LETTER')`,
+      `INSERT INTO "webhook_deliveries" (id, organization_id, integration_id, event_id, event_type, aggregate_id, occurred_at, payload, endpoint, secret_ref, status, attempt_count, leased_until, last_error)
+       VALUES ($1, $2, $3, $4, 'webhook.restricted', $1, NOW(), '{"secret":"not-for-runtime"}', 'https://example.test/hook', 'secret-a', 'DEAD_LETTER', 4, NOW() + INTERVAL '1 minute', 'worker secret error'),
+              ($5, $6, $7, $8, 'webhook.restricted', $5, NOW(), '{}', 'https://example.test/other', 'secret-b', 'DEAD_LETTER', 0, NULL, NULL)`,
       [deliveryA, tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef4', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef5', deliveryB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef6', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef7']
     );
     await runtime.query('BEGIN');
+    let committed = false;
     try {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
       await expectRuntimeFailure(() => runtime.query('SELECT payload FROM "outbox_events"'), /permission denied/i);
       await expectRuntimeFailure(() => runtime.query("UPDATE \"outbox_events\" SET status = 'PUBLISHED'"), /permission denied/i);
-      await expectRuntimeFailure(() => runtime.query('SELECT endpoint FROM "webhook_deliveries"'), /permission denied/i);
+      for (const column of ['payload', 'endpoint', 'secret_ref', 'lease_token', 'last_error']) {
+        await expectRuntimeFailure(() => runtime.query(`SELECT "${column}" FROM "webhook_deliveries"`), /permission denied/i);
+      }
       await expectRuntimeFailure(() => runtime.query("UPDATE \"webhook_deliveries\" SET status = 'PENDING'"), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query("INSERT INTO \"webhook_deliveries\" (organization_id) VALUES ($1)", [tenantA]), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query('DELETE FROM "webhook_deliveries"'), /permission denied/i);
       expect((await runtime.query<{ redriven: boolean }>('SELECT app.request_webhook_delivery_redrive($1::uuid) AS redriven', [deliveryA])).rows).toEqual([{ redriven: true }]);
       expect((await runtime.query<{ redriven: boolean }>('SELECT app.request_webhook_delivery_redrive($1::uuid) AS redriven', [deliveryB])).rows).toEqual([{ redriven: false }]);
-    } finally { await runtime.query('ROLLBACK'); }
+      expect((await runtime.query<{ status: string; attempt_count: number; leased_until: null }>('SELECT status::text, attempt_count, leased_until FROM "webhook_deliveries" WHERE id = $1', [deliveryA])).rows).toEqual([{ status: 'PENDING', attempt_count: 0, leased_until: null }]);
+      await runtime.query('COMMIT');
+      committed = true;
+    } finally {
+      if (!committed) await runtime.query('ROLLBACK');
+    }
+    expect((await bootstrap.query<{ last_error: null }>('SELECT last_error FROM "webhook_deliveries" WHERE id = $1', [deliveryA])).rows).toEqual([{ last_error: null }]);
   });
 
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
