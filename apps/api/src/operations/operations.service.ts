@@ -48,6 +48,7 @@ const createCompanySchema = z.object({ name: text(2, 200), document: optionalTex
 const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), hhtWorked: z.number().finite().nonnegative(), hhtMeal: z.number().finite().nonnegative(), workforce: z.number().int().nonnegative(), lostDays: z.number().int().nonnegative(), lti: z.number().int().nonnegative(), expectedVersion: expectedVersion.optional() });
 const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
+const hhtReferenceTargetSchema = z.object({ year: z.number().int().min(2000).max(2200), site: text(2, 120), refTrifr: z.number().finite().nonnegative(), refLtifr: z.number().finite().nonnegative(), refLtifr13: z.number().finite().nonnegative(), refLtisr: z.number().finite().nonnegative(), expectedVersion: expectedVersion.optional() });
 const hhtWindowCloseSchema = z.object({ expectedVersion });
 const hhtPublicationSchema = z.object({ published: z.boolean(), expectedVersion: expectedVersion.optional(), expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
   if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
@@ -422,8 +423,8 @@ export class OperationsService {
 
   public listHht(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => {
-      const [companies, reports, windows, publications] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtPeriodPublication.findMany({ select: { id: true, year: true, month: true, published: true, publicExpiresAt: true, version: true, updatedAt: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] })]);
-      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows, publications };
+      const [companies, reports, windows, publications, targets] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtPeriodPublication.findMany({ select: { id: true, year: true, month: true, published: true, publicExpiresAt: true, version: true, updatedAt: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReferenceTarget.findMany({ orderBy: [{ year: 'desc' }, { site: 'asc' }] })]);
+      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows, publications, targets: targets.map((target) => ({ ...target, refTrifr: Number(target.refTrifr), refLtifr: Number(target.refLtifr), refLtifr13: Number(target.refLtifr13), refLtisr: Number(target.refLtisr) })) };
     });
   }
 
@@ -495,6 +496,24 @@ export class OperationsService {
       const window = await tx.hhtReportWindow.upsert({ where: { organizationId_year_month: { organizationId: identity.organization.id, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: data });
       await this.record(tx, identity, 'hht_window.upserted', 'hht_window', window.id, { year: window.year, month: window.month });
       return window;
+    });
+  }
+
+  public upsertHhtReferenceTarget(identity: SessionIdentity, input: unknown) {
+    const data = this.parse(hhtReferenceTargetSchema, input); const { expectedVersion, ...targetData } = data;
+    return this.withTenant(identity, async (tx) => {
+      const existing = await tx.hhtReferenceTarget.findFirst({ where: { year: targetData.year, site: targetData.site } });
+      let target;
+      if (existing) {
+        if (expectedVersion === undefined) throw new BadRequestException('Informe a versão atual para alterar a meta HHT.');
+        const updated = await tx.hhtReferenceTarget.updateMany({ where: { id: existing.id, version: expectedVersion }, data: { ...targetData, version: { increment: 1 } } });
+        if (updated.count !== 1) throw new ConflictException('A meta HHT foi alterada por outra pessoa. Atualize a página antes de tentar novamente.');
+        target = await tx.hhtReferenceTarget.findFirstOrThrow({ where: { id: existing.id } });
+      } else {
+        target = await tx.hhtReferenceTarget.create({ data: { organizationId: identity.organization.id, ...targetData } });
+      }
+      await this.record(tx, identity, existing ? 'hht_reference_target.updated' : 'hht_reference_target.created', 'hht_reference_target', target.id, { year: target.year, site: target.site });
+      return { ...target, refTrifr: Number(target.refTrifr), refLtifr: Number(target.refLtifr), refLtifr13: Number(target.refLtifr13), refLtisr: Number(target.refLtisr) };
     });
   }
 

@@ -4856,6 +4856,7 @@ function HhtModulePage({
   );
   const [reports, setReports] = useState<Array<Record<string, unknown>>>([]);
   const [windows, setWindows] = useState<Array<Record<string, unknown>>>([]);
+  const [targets, setTargets] = useState<Array<Record<string, unknown>>>([]);
   const [publications, setPublications] = useState<Array<Record<string, unknown>>>([]);
   const [publicationUrl, setPublicationUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -4866,11 +4867,13 @@ function HhtModulePage({
         companies: Array<Record<string, unknown>>;
         reports: Array<Record<string, unknown>>;
         windows: Array<Record<string, unknown>>;
+        targets: Array<Record<string, unknown>>;
         publications: Array<Record<string, unknown>>;
       }>("/v1/hht");
       setCompanies(data.companies);
       setReports(data.reports);
       setWindows(data.windows);
+      setTargets(data.targets);
       setPublications(data.publications);
     } catch (requestError) {
       setError(
@@ -5003,6 +5006,16 @@ function HhtModulePage({
       setPending(false);
     }
   }
+  async function saveReferenceTarget(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault(); const values = new FormData(event.currentTarget); const year = Number(values.get("year")); const site = String(values.get("site") ?? "");
+    const existing = targets.find((target) => target.year === year && target.site === site);
+    setPending(true); setError(null);
+    try {
+      await api("/v1/hht/reference-targets", { method: "PUT", body: JSON.stringify({ year, site, refTrifr: Number(values.get("refTrifr")), refLtifr: Number(values.get("refLtifr")), refLtifr13: Number(values.get("refLtifr13")), refLtisr: Number(values.get("refLtisr")), expectedVersion: typeof existing?.version === "number" ? existing.version : undefined }) });
+      await load();
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível salvar as metas HHT."); }
+    finally { setPending(false); }
+  }
   async function closeWindow(year: number, month: number, expectedVersion: number): Promise<void> {
     setPending(true); setError(null);
     try { await api(`/v1/hht/windows/${year}/${month}/close`, { method: "POST", body: JSON.stringify({ expectedVersion }) }); await load(); }
@@ -5041,6 +5054,16 @@ function HhtModulePage({
       {publicationUrl && <p className="section-note">Link público gerado: <a href={publicationUrl} target="_blank" rel="noreferrer">Abrir consolidado HHT</a></p>}
       {canManage && (
         <>
+          <form className="inline-form admin-section" onSubmit={saveReferenceTarget}>
+            <label>Ano<input name="year" type="number" min="2000" max="2200" defaultValue={today.getFullYear()} required /></label>
+            <label>Local<input name="site" minLength={2} maxLength={120} defaultValue="Principal" required /></label>
+            <label>Meta TRIFR<input name="refTrifr" type="number" min="0" step="0.0001" required /></label>
+            <label>Meta LTIFR<input name="refLtifr" type="number" min="0" step="0.0001" required /></label>
+            <label>Meta LTIFR13<input name="refLtifr13" type="number" min="0" step="0.0001" required /></label>
+            <label>Meta LTISR<input name="refLtisr" type="number" min="0" step="0.0001" required /></label>
+            <button className="primary-button compact" type="submit" disabled={pending}>{pending ? "Salvando…" : "Salvar metas"}</button>
+          </form>
+          {targets.length > 0 && <section className="admin-section"><h2>Metas de referência</h2><ul className="nested-list">{targets.map((target) => <li key={stringValue(target.id) ?? recordTitle(target)}>{String(target.year)} · {String(target.site)} · TRIFR {String(target.refTrifr)} · LTIFR {String(target.refLtifr)} · LTISR {String(target.refLtisr)}</li>)}</ul></section>}
           <form className="inline-form admin-section" onSubmit={createCompany}>
             <label>
               Empresa/unidade

@@ -152,6 +152,7 @@ model Organization {
   groups      TenantGroup[]
   groupMemberships TenantGroupMembership[]
   settings    TenantSetting[]
+  hhtReferenceTargets HhtReferenceTarget[]
   auditLogs   AuditLog[]
   outbox      OutboxEvent[]
   domainEventProjections DomainEventProjection[]
@@ -788,6 +789,25 @@ model HhtReportWindow {
 
   @@unique([organizationId, year, month])
   @@map("hht_report_windows")
+}
+
+model HhtReferenceTarget {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  year           Int
+  site           String       @db.VarChar(120)
+  refTrifr       Decimal      @map("ref_trifr") @db.Decimal(12, 4)
+  refLtifr       Decimal      @map("ref_ltifr") @db.Decimal(12, 4)
+  refLtifr13     Decimal      @map("ref_ltifr13") @db.Decimal(12, 4)
+  refLtisr       Decimal      @map("ref_ltisr") @db.Decimal(12, 4)
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, year, site])
+  @@index([organizationId, year, site])
+  @@map("hht_reference_targets")
 }
 
 model HhtPeriodPublication {

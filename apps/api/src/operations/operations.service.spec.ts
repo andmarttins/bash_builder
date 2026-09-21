@@ -329,6 +329,16 @@ describe('calculateHhtRates', () => {
     expect(tx.hhtReport.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1, status: 'DRAFT' } }));
   });
 
+  it('stores a tenant-scoped HHT reference target with optimistic concurrency and audit outbox', async () => {
+    const target = { id: eventId, year: 2026, site: 'Principal', refTrifr: new Prisma.Decimal(2.79), refLtifr: new Prisma.Decimal(1.79), refLtifr13: new Prisma.Decimal(1.07), refLtisr: new Prisma.Decimal(59), version: 2 };
+    const tx = { hhtReferenceTarget: { findFirst: vi.fn().mockResolvedValue(target), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(target) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.upsertHhtReferenceTarget(identity, { year: 2026, site: 'Principal', refTrifr: 2.79, refLtifr: 1.79, refLtifr13: 1.07, refLtisr: 59, expectedVersion: 1 })).resolves.toMatchObject({ refTrifr: 2.79, version: 2 });
+    expect(tx.hhtReferenceTarget.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 } }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'hht_reference_target.updated', resourceId: eventId }) }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_reference_target.updated', aggregateId: eventId }) }));
+  });
+
   it('closes an elapsed HHT window once and locks only its submitted reports', async () => {
     const windowId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a23';
     const tx = {
