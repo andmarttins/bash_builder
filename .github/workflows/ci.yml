@@ -30,6 +30,10 @@ jobs:
       TEST_DATABASE_URL: postgresql://app_migrator:migrator-test-password@localhost:5432/builder_test
       TEST_RUNTIME_DATABASE_URL: postgresql://app_runtime:runtime-test-password@localhost:5432/builder_test
       TEST_WORKER_DATABASE_URL: postgresql://app_worker:worker-test-password@localhost:5432/builder_test
+      E2E_MIGRATOR_DATABASE_URL: postgresql://app_migrator:migrator-test-password@localhost:5432/builder_e2e
+      E2E_RUNTIME_DATABASE_URL: postgresql://app_runtime:runtime-test-password@localhost:5432/builder_e2e
+      E2E_REDIS_URL: redis://:redis-e2e-password@localhost:6380
+      E2E_ALLOW_DESTRUCTIVE: 'true'
       TEST_REDIS_URL: redis://:redis-test-password@localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +53,17 @@ jobs:
           sleep 1;
           done;
           exit 1
+      - name: Start isolated Redis for browser E2E
+        run: >-
+          docker run --detach --rm --name builder-redis-e2e -p 6380:6379
+          redis:7.4.2-alpine redis-server --requirepass redis-e2e-password
+      - name: Wait for browser E2E Redis authentication
+        run: >-
+          for attempt in {1..20}; do
+          docker exec builder-redis-e2e redis-cli --no-auth-warning -a redis-e2e-password ping && exit 0;
+          sleep 1;
+          done;
+          exit 1
       - name: Validate PostgreSQL bootstrap script through its production URL path
         run: >-
           docker run --rm --network host
@@ -64,5 +79,35 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
+      - name: Create isolated database for browser E2E
+        run: >-
+          docker run --rm --network host
+          -e PGPASSWORD=bootstrap-test-password
+          postgres:18.1-alpine psql -h 127.0.0.1 -U postgres_bootstrap -d postgres
+          --set=ON_ERROR_STOP=1 --command "CREATE DATABASE builder_e2e"
+      - name: Bootstrap isolated browser E2E database roles
+        run: >-
+          docker run --rm --network host
+          -e BOOTSTRAP_DATABASE_URL=postgresql://postgres_bootstrap:bootstrap-test-password@127.0.0.1:5432/builder_e2e
+          -e POSTGRES_DB=builder_e2e
+          -e APP_MIGRATOR_DB_PASSWORD=migrator-test-password
+          -e APP_RUNTIME_DB_PASSWORD=runtime-test-password
+          -e APP_WORKER_DB_PASSWORD=worker-test-password
+          -v "${{ github.workspace }}/infra/postgres/01-create-runtime-role.sh:/init.sh:ro"
+          postgres:18.1-alpine sh /init.sh
+      - name: Build API for browser E2E
+        run: npm run build -w @builder/contracts && npm run build -w @builder/api
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            test-results
+            playwright-report
+          if-no-files-found: ignore
       - run: npm run test:integration
       - run: npm run build

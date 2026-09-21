@@ -20,6 +20,7 @@
     "test": "npm run build -w @builder/contracts && vitest run",
     "test:unit": "npm run build -w @builder/contracts && vitest run --exclude apps/api/src/platform/database/rls.integration.spec.ts --exclude apps/api/src/platform/redis/redis.integration.spec.ts",
     "test:integration": "npm run build -w @builder/contracts && vitest run apps/api/src/platform/database/rls.integration.spec.ts apps/api/src/platform/redis/redis.integration.spec.ts",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
+    "@playwright/test": "^1.63.0",
     "@types/node": "24.10.1",
     "@types/pg": "8.15.6",
     "@typescript-eslint/eslint-plugin": "8.46.4",
