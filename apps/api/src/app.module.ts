@@ -24,6 +24,7 @@ import { PublicFormAccessService } from './platform/public-access/public-form-ac
 import { PublicDashboardAccessService } from './platform/public-access/public-dashboard-access.service.js';
 import { PublicTvDisplayAccessService } from './platform/public-access/public-tv-display-access.service.js';
 import { PublicTvPlaylistAccessService } from './platform/public-access/public-tv-playlist-access.service.js';
+import { PublicHhtAccessService } from './platform/public-access/public-hht-access.service.js';
 import { ObjectStorageService } from './platform/storage/object-storage.service.js';
 import { MalwareScannerService } from './platform/storage/malware-scanner.service.js';
 import { FileUploadCleanupService } from './platform/storage/file-upload-cleanup.service.js';
@@ -32,11 +33,12 @@ import { OperationsService } from './operations/operations.service.js';
 import { PublicDashboardsController } from './operations/public-dashboards.controller.js';
 import { PublicTvDisplaysController } from './operations/public-tv-displays.controller.js';
 import { PublicTvPlaylistsController } from './operations/public-tv-playlists.controller.js';
+import { PublicHhtController } from './operations/public-hht.controller.js';
 import { NotificationsController } from './notifications/notifications.controller.js';
 import { NotificationsService } from './notifications/notifications.service.js';
 
 @Module({
-  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, PublicTvDisplaysController, PublicTvPlaylistsController, NotificationsController],
+  controllers: [HealthController, IdentityController, OrganizationAccessController, OrganizationInvitationController, FormsController, PublicFormsController, OperationsController, PublicDashboardsController, PublicTvDisplaysController, PublicTvPlaylistsController, PublicHhtController, NotificationsController],
   providers: [
     PrismaService,
     RedisService,
@@ -57,6 +59,7 @@ import { NotificationsService } from './notifications/notifications.service.js';
     PublicDashboardAccessService,
     PublicTvDisplayAccessService,
     PublicTvPlaylistAccessService,
+    PublicHhtAccessService,
     ObjectStorageService,
     MalwareScannerService,
     FileUploadCleanupService,

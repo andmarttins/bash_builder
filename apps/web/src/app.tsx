@@ -4685,6 +4685,8 @@ function HhtModulePage({
   );
   const [reports, setReports] = useState<Array<Record<string, unknown>>>([]);
   const [windows, setWindows] = useState<Array<Record<string, unknown>>>([]);
+  const [publications, setPublications] = useState<Array<Record<string, unknown>>>([]);
+  const [publicationUrl, setPublicationUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const load = useCallback(async (): Promise<void> => {
@@ -4693,10 +4695,12 @@ function HhtModulePage({
         companies: Array<Record<string, unknown>>;
         reports: Array<Record<string, unknown>>;
         windows: Array<Record<string, unknown>>;
+        publications: Array<Record<string, unknown>>;
       }>("/v1/hht");
       setCompanies(data.companies);
       setReports(data.reports);
       setWindows(data.windows);
+      setPublications(data.publications);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -4834,6 +4838,21 @@ function HhtModulePage({
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível encerrar a janela HHT."); }
     finally { setPending(false); }
   }
+  async function publishPeriod(year: number, month: number, expectedVersion?: number): Promise<void> {
+    setPending(true); setError(null);
+    try {
+      const response = await api<{ url: string | null }>(`/v1/hht/publications/${year}/${month}`, { method: "POST", body: JSON.stringify({ published: true, expectedVersion }) });
+      setPublicationUrl(response.url); await load();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível publicar o consolidado HHT.");
+    } finally { setPending(false); }
+  }
+  async function revokePeriod(year: number, month: number, expectedVersion: number): Promise<void> {
+    setPending(true); setError(null);
+    try { await api(`/v1/hht/publications/${year}/${month}`, { method: "POST", body: JSON.stringify({ published: false, expectedVersion }) }); setPublicationUrl(null); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível revogar a publicação HHT."); }
+    finally { setPending(false); }
+  }
   const today = new Date();
   return (
     <>
@@ -4848,6 +4867,7 @@ function HhtModulePage({
           {error}
         </p>
       )}
+      {publicationUrl && <p className="section-note">Link público gerado: <a href={publicationUrl} target="_blank" rel="noreferrer">Abrir consolidado HHT</a></p>}
       {canManage && (
         <>
           <form className="inline-form admin-section" onSubmit={createCompany}>
@@ -5011,7 +5031,9 @@ function HhtModulePage({
         {windows.length > 0 && <ul className="nested-list">{windows.map((window) => {
           const version = typeof window.version === "number" ? window.version : 0;
           const ended = new Date(String(window.closesAt)).getTime() <= Date.now();
-          return <li key={String(window.id)}>{String(window.month).padStart(2, "0")}/{String(window.year)} · {String(window.status)} {canManage && window.status === "OPEN" && ended && <button className="secondary-button compact" type="button" disabled={pending || version < 1} onClick={() => void closeWindow(Number(window.year), Number(window.month), version)}>Encerrar e bloquear enviados</button>}</li>;
+          const publication = publications.find((item) => Number(item.year) === Number(window.year) && Number(item.month) === Number(window.month));
+          const publicationVersion = typeof publication?.version === "number" ? publication.version : undefined;
+          return <li key={String(window.id)}>{String(window.month).padStart(2, "0")}/{String(window.year)} · {String(window.status)} {canManage && window.status === "OPEN" && ended && <button className="secondary-button compact" type="button" disabled={pending || version < 1} onClick={() => void closeWindow(Number(window.year), Number(window.month), version)}>Encerrar e bloquear enviados</button>} {canManage && window.status === "CLOSED" && (publication?.published ? <button className="secondary-button compact" type="button" disabled={pending || publicationVersion === undefined} onClick={() => { if (publicationVersion !== undefined) void revokePeriod(Number(window.year), Number(window.month), publicationVersion); }}>Revogar publicação</button> : <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void publishPeriod(Number(window.year), Number(window.month), publicationVersion)}>Publicar consolidado</button>)}</li>;
         })}</ul>}
         {reports.length === 0 ? (
           <p className="section-note">Nenhum relatório registrado.</p>

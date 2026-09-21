@@ -163,6 +163,7 @@ model Organization {
   hhtCompanies HhtCompany[]
   hhtReports HhtReport[]
   hhtWindows HhtReportWindow[]
+  hhtPublications HhtPeriodPublication[]
   dashboards Dashboard[]
   tvDisplays TvDisplay[]
   tvPlaylists TvPlaylist[]
@@ -716,6 +717,27 @@ model HhtReportWindow {
 
   @@unique([organizationId, year, month])
   @@map("hht_report_windows")
+}
+
+model HhtPeriodPublication {
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  year            Int
+  month           Int
+  published       Boolean      @default(false)
+  publicTokenHash String?      @unique @map("public_token_hash") @db.Char(64)
+  publicSnapshot  Json?        @map("public_snapshot")
+  publicPublishedAt DateTime?  @map("public_published_at") @db.Timestamptz(6)
+  publicExpiresAt DateTime?    @map("public_expires_at") @db.Timestamptz(6)
+  publicRevokedAt DateTime?    @map("public_revoked_at") @db.Timestamptz(6)
+  version         Int          @default(1)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, year, month])
+  @@index([organizationId, published, year, month])
+  @@map("hht_period_publications")
 }
 
 model Dashboard {

@@ -45,6 +45,10 @@ const reportSchema = z.object({ companyId: uuid, year: z.number().int().min(2000
 const reportStatusSchema = z.object({ status: z.enum(['SUBMITTED', 'LOCKED']), expectedVersion });
 const windowSchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12), opensAt: z.coerce.date(), closesAt: z.coerce.date() }).refine((input) => input.opensAt < input.closesAt, 'A abertura deve ocorrer antes do encerramento.');
 const hhtWindowCloseSchema = z.object({ expectedVersion });
+const hhtPublicationSchema = z.object({ published: z.boolean(), expectedVersion: expectedVersion.optional(), expiresAt: z.coerce.date().optional().nullable() }).superRefine((input, context) => {
+  if (input.published && input.expiresAt && input.expiresAt <= new Date()) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'A expiração deve estar no futuro.' });
+  if (!input.published && input.expiresAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Uma publicação revogada não pode ter expiração.' });
+});
 const analyticsSourceKeys = ['safety.open_events', 'changes.by_status', 'hht.latest_rates', 'bash.by_stage'] as const;
 const analyticsSourceSchema = z.enum(analyticsSourceKeys);
 const analyticsMetrics: Record<z.infer<typeof analyticsSourceSchema>, readonly string[]> = {
@@ -386,8 +390,8 @@ export class OperationsService {
 
   public listHht(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => {
-      const [companies, reports, windows] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] })]);
-      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows };
+      const [companies, reports, windows, publications] = await Promise.all([tx.hhtCompany.findMany({ orderBy: { name: 'asc' } }), tx.hhtReport.findMany({ include: { company: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtReportWindow.findMany({ orderBy: [{ year: 'desc' }, { month: 'desc' }] }), tx.hhtPeriodPublication.findMany({ select: { id: true, year: true, month: true, published: true, publicExpiresAt: true, version: true, updatedAt: true }, orderBy: [{ year: 'desc' }, { month: 'desc' }] })]);
+      return { companies, reports: reports.map((report) => ({ ...report, hhtWorked: Number(report.hhtWorked), hhtMeal: Number(report.hhtMeal), rates: calculateHhtRates({ hhtWorked: Number(report.hhtWorked), lostDays: report.lostDays, lti: report.lti }) })), windows, publications };
     });
   }
 
@@ -471,12 +475,49 @@ export class OperationsService {
       if (!window) throw new NotFoundException('Janela HHT não encontrada.');
       if (window.status === 'CLOSED') throw new ConflictException('A janela HHT já está encerrada.');
       if (new Date() < window.closesAt) throw new BadRequestException('A janela HHT só pode ser encerrada após o horário de fechamento.');
+      if (await tx.hhtReport.count({ where: { year, month, status: 'DRAFT' } }) > 0) throw new BadRequestException('Conclua ou envie todos os rascunhos HHT antes de encerrar a janela.');
       const closed = await tx.hhtReportWindow.updateMany({ where: { id: window.id, status: 'OPEN', version: data.expectedVersion }, data: { status: 'CLOSED', closedAt: new Date(), closedById: identity.user.id, version: { increment: 1 } } });
       if (closed.count !== 1) throw new ConflictException('A janela HHT foi alterada por outra pessoa. Atualize a página antes de tentar novamente.');
       const reports = await tx.hhtReport.updateMany({ where: { year, month, status: 'SUBMITTED' }, data: { status: 'LOCKED', version: { increment: 1 } } });
       const result = await tx.hhtReportWindow.findFirstOrThrow({ where: { id: window.id } });
       await this.record(tx, identity, 'hht_window.closed', 'hht_window', window.id, { year, month, lockedReports: reports.count });
       return { window: result, lockedReports: reports.count };
+    });
+  }
+
+  public publishHhtPeriod(identity: SessionIdentity, yearInput: string, monthInput: string, input: unknown) {
+    const year = Number(yearInput); const month = Number(monthInput); const data = this.parse(hhtPublicationSchema, input);
+    if (!Number.isInteger(year) || year < 2000 || year > 2200 || !Number.isInteger(month) || month < 1 || month > 12) throw new BadRequestException('Período HHT inválido.');
+    return this.withTenant(identity, async (tx) => {
+      await this.lockHhtPeriod(tx, identity.organization.id, year, month);
+      const existing = await tx.hhtPeriodPublication.findFirst({ where: { year, month } });
+      if (existing && data.expectedVersion === undefined) throw new BadRequestException('Informe a versão atual para alterar a publicação HHT.');
+      if (!data.published) {
+        if (!existing) throw new NotFoundException('Publicação HHT não encontrada.');
+        const revoked = await tx.hhtPeriodPublication.updateMany({ where: { id: existing.id, version: data.expectedVersion }, data: { published: false, publicTokenHash: null, publicSnapshot: Prisma.DbNull, publicRevokedAt: new Date(), version: { increment: 1 } } });
+        if (revoked.count !== 1) throw new ConflictException('A publicação HHT foi alterada por outra pessoa.');
+        const publication = await tx.hhtPeriodPublication.findFirstOrThrow({ where: { id: existing.id } });
+        await this.record(tx, identity, 'hht_period.publication_revoked', 'hht_period_publication', publication.id, { year, month });
+        return { publication, url: null };
+      }
+      const window = await tx.hhtReportWindow.findFirst({ where: { year, month }, select: { status: true, closedAt: true } });
+      if (!window || window.status !== 'CLOSED') throw new BadRequestException('Encerre a janela HHT antes de publicar o consolidado.');
+      const incomplete = await tx.hhtReport.count({ where: { year, month, status: { not: 'LOCKED' } } });
+      const total = await tx.hhtReport.count({ where: { year, month, status: 'LOCKED' } });
+      if (total === 0 || incomplete > 0) throw new BadRequestException('O período HHT precisa ter relatórios bloqueados e nenhum relatório pendente antes da publicação.');
+      const totals = await tx.hhtReport.aggregate({ where: { year, month, status: 'LOCKED' }, _sum: { hhtWorked: true, hhtMeal: true, workforce: true, lostDays: true, lti: true } });
+      const snapshot = { year, month, closedAt: window.closedAt?.toISOString() ?? null, companies: total, hhtWorked: Number(totals._sum.hhtWorked ?? 0), hhtMeal: Number(totals._sum.hhtMeal ?? 0), workforce: totals._sum.workforce ?? 0, lostDays: totals._sum.lostDays ?? 0, lti: totals._sum.lti ?? 0, rates: calculateHhtRates({ hhtWorked: Number(totals._sum.hhtWorked ?? 0), lostDays: totals._sum.lostDays ?? 0, lti: totals._sum.lti ?? 0 }) };
+      const token = randomBytes(32).toString('base64url'); const tokenHash = this.publicationTokenHash(token);
+      let publication;
+      if (existing) {
+        const updated = await tx.hhtPeriodPublication.updateMany({ where: { id: existing.id, version: data.expectedVersion }, data: { published: true, publicTokenHash: tokenHash, publicSnapshot: snapshot as Prisma.InputJsonValue, publicPublishedAt: new Date(), publicExpiresAt: data.expiresAt ?? null, publicRevokedAt: null, version: { increment: 1 } } });
+        if (updated.count !== 1) throw new ConflictException('A publicação HHT foi alterada por outra pessoa.');
+        publication = await tx.hhtPeriodPublication.findFirstOrThrow({ where: { id: existing.id } });
+      } else {
+        publication = await tx.hhtPeriodPublication.create({ data: { organizationId: identity.organization.id, year, month, published: true, publicTokenHash: tokenHash, publicSnapshot: snapshot as Prisma.InputJsonValue, publicPublishedAt: new Date(), publicExpiresAt: data.expiresAt ?? null } });
+      }
+      await this.record(tx, identity, 'hht_period.published', 'hht_period_publication', publication.id, { year, month, companies: total });
+      return { publication, url: `/api/v1/public/hht/${token}` };
     });
   }
 

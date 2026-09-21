@@ -86,6 +86,8 @@ export class OperationsController {
   public upsertHhtWindow(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.upsertHhtWindow(request.identity, input).then((window) => ({ window })); }
   @Post('hht/windows/:year/:month/close') @RequiredCapabilities('hht.manage')
   public closeHhtWindow(@Req() request: AuthenticatedRequest, @Param('year') year: string, @Param('month') month: string, @Body() input: unknown) { return this.operations.closeHhtWindow(request.identity, year, month, input); }
+  @Post('hht/publications/:year/:month') @RequiredCapabilities('hht.manage')
+  public publishHhtPeriod(@Req() request: AuthenticatedRequest, @Param('year') year: string, @Param('month') month: string, @Body() input: unknown) { return this.operations.publishHhtPeriod(request.identity, year, month, input); }
 
   @Get('dashboards') @RequiredCapabilities('dashboards.view')
   public dashboards(@Req() request: AuthenticatedRequest) { return this.operations.listDashboards(request.identity).then((dashboards) => ({ dashboards })); }

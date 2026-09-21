@@ -259,15 +259,32 @@ describe('calculateHhtRates', () => {
     const windowId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a23';
     const tx = {
       $executeRaw: vi.fn(), hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ id: windowId, status: 'OPEN', closesAt: new Date(Date.now() - 1_000), version: 3 }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: windowId, status: 'CLOSED' }) },
-      hhtReport: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
+      hhtReport: { count: vi.fn().mockResolvedValue(0), updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.closeHhtWindow(identity, '2026', '9', { expectedVersion: 3 })).resolves.toMatchObject({ lockedReports: 2 });
     expect(tx.hhtReport.updateMany).toHaveBeenCalledWith({ where: { year: 2026, month: 9, status: 'SUBMITTED' }, data: { status: 'LOCKED', version: { increment: 1 } } });
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'hht_window.closed', resourceId: windowId, metadata: expect.objectContaining({ lockedReports: 2 }) }) }));
+    tx.hhtReport.count.mockResolvedValue(1);
+    await expect(service.closeHhtWindow(identity, '2026', '9', { expectedVersion: 3 })).rejects.toBeInstanceOf(BadRequestException);
     tx.hhtReportWindow.findFirst.mockResolvedValue({ id: windowId, status: 'OPEN', closesAt: new Date(Date.now() + 60_000), version: 3 });
     await expect(service.closeHhtWindow(identity, '2026', '9', { expectedVersion: 3 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('publishes only a closed, fully locked HHT period as an aggregate snapshot', async () => {
+    const publicationId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a24';
+    const tx = {
+      $executeRaw: vi.fn(), hhtPeriodPublication: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: publicationId, version: 1 }) },
+      hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ status: 'CLOSED', closedAt: new Date('2026-09-30T00:00:00.000Z') }) },
+      hhtReport: { count: vi.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(2), aggregate: vi.fn().mockResolvedValue({ _sum: { hhtWorked: 400_000, hhtMeal: 12_000, workforce: 80, lostDays: 3, lti: 1 } }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    const result = await service.publishHhtPeriod(identity, '2026', '9', { published: true });
+    expect(result.url).toMatch(/^\/api\/v1\/public\/hht\/[A-Za-z0-9_-]{43}$/);
+    expect(tx.hhtPeriodPublication.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ year: 2026, month: 9, published: true, publicSnapshot: expect.objectContaining({ companies: 2, rates: { trifr: 2.5, ltifr: 2.5, ltisr: 7.5 } }) }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'hht_period.published', resourceId: publicationId }) }));
   });
 
   it('requires a version before editing an existing HHT report', async () => {
