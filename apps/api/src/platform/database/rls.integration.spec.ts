@@ -221,7 +221,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       const listed = await service.listSubmissions(identity, formId, { pageSize: 25 });
       expect(listed.submissions).toHaveLength(1);
       await expect(service.updateSubmissionStatus(identity, formId, listed.submissions[0]!.id, { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' })).resolves.toMatchObject({ status: 'IN_REVIEW' });
-      expect((await bootstrap.query('SELECT action, metadata FROM "audit_logs" WHERE resource_type = \'form_submission\' ORDER BY occurred_at DESC LIMIT 1')).rows).toEqual([expect.objectContaining({ action: 'form_submission.status_updated', metadata: { from: 'RECEIVED', to: 'IN_REVIEW' } })]);
+      expect((await bootstrap.query('SELECT action, metadata FROM "audit_logs" WHERE resource_type = \'form_submission\' ORDER BY occurred_at DESC LIMIT 1')).rows).toEqual([expect.objectContaining({ action: 'form_submission.status_updated', metadata: expect.objectContaining({ from: 'RECEIVED', to: 'IN_REVIEW' }) })]);
     } finally {
       await prisma.$disconnect();
     }
