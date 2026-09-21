@@ -1940,7 +1940,12 @@ export function App(): React.JSX.Element {
               }
             />
           ) : workspaceView === "operations" ? (
-            <OperationsHealthPage />
+            <OperationsHealthPage
+              canManage={
+                identity.membership.role === "OWNER" ||
+                identity.membership.role === "ADMIN"
+              }
+            />
           ) : (
             <OperationalModulePage
               view={workspaceView}
@@ -2206,13 +2211,36 @@ export function App(): React.JSX.Element {
   );
 }
 
-function OperationsHealthPage(): React.JSX.Element {
+function OperationsHealthPage({ canManage }: { canManage: boolean }): React.JSX.Element {
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
+  const [deadLetters, setDeadLetters] = useState<Array<Record<string, unknown>>>([]);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async (): Promise<void> => { try { setSummary(await api<Record<string, unknown>>("/v1/operations/summary")); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível carregar o resumo operacional."); } }, []);
+  const [pending, setPending] = useState(false);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const [summaryResponse, deadLetterResponse] = await Promise.all([
+        api<Record<string, unknown>>("/v1/operations/summary"),
+        api<{ events: Array<Record<string, unknown>> }>("/v1/operations/outbox/dead-letter"),
+      ]);
+      setSummary(summaryResponse);
+      setDeadLetters(deadLetterResponse.events);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível carregar o resumo operacional.");
+    }
+  }, []);
   useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
-  const outbox = summary?.outbox;
-  return <><p className="eyebrow">Operação segura</p><h1 id="dashboard-title">Saúde operacional</h1><p className="description">Acompanhe a fila da sua organização antes do piloto. Dados de outras empresas e payloads de eventos não são expostos.</p>{error && <p className="form-error" role="alert">{error}</p>}{isRecord(outbox) && <section className="overview-grid"><article className="overview-card"><span>Pendentes</span><strong>{String(outbox.pending ?? 0)}</strong></article><article className="overview-card"><span>Processando</span><strong>{String(outbox.processing ?? 0)}</strong></article><article className="overview-card"><span>Falhas</span><strong>{String(outbox.failed ?? 0)}</strong></article><article className="overview-card"><span>DLQ</span><strong>{String(outbox.deadLetter ?? 0)}</strong></article><article className="overview-card"><span>Leases vencidos</span><strong>{String(outbox.expiredLeases ?? 0)}</strong></article></section>}<button className="secondary-button compact" type="button" onClick={() => void load()}>Atualizar</button></>;
+  const outbox = isRecord(summary?.outbox) ? summary.outbox : undefined;
+  const sli = isRecord(outbox?.sli) ? outbox.sli : undefined;
+  const status = stringValue(sli?.status) ?? "HEALTHY";
+  const age = typeof sli?.actionableAgeSeconds === "number" ? sli.actionableAgeSeconds : 0;
+  async function redrive(eventId: string): Promise<void> {
+    if (!window.confirm("Reenfileirar este evento após confirmar que a causa foi corrigida?")) return;
+    setPending(true); setError(null);
+    try { await api(`/v1/operations/outbox/dead-letter/${eventId}/redrive`, { method: "POST" }); await load(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível reenfileirar o evento."); }
+    finally { setPending(false); }
+  }
+  return <><p className="eyebrow">Operação segura</p><h1 id="dashboard-title">Saúde operacional</h1><p className="description">Acompanhe a fila da sua organização antes do piloto. Dados de outras empresas e payloads de eventos não são expostos.</p>{error && <p className="form-error" role="alert">{error}</p>}{isRecord(outbox) && <><section className="overview-grid"><article className="overview-card"><span>Estado SLI</span><strong aria-live="polite">{status}</strong><small>Meta: itens acionáveis em até {String(sli?.targetMaximumAgeSeconds ?? 300)} s.</small></article><article className="overview-card"><span>Idade acionável</span><strong>{age}s</strong><small>Crítico a partir de {String(sli?.criticalMaximumAgeSeconds ?? 900)} s.</small></article><article className="overview-card"><span>Pendentes</span><strong>{String(outbox.pending ?? 0)}</strong></article><article className="overview-card"><span>Processando</span><strong>{String(outbox.processing ?? 0)}</strong></article><article className="overview-card"><span>Falhas</span><strong>{String(outbox.failed ?? 0)}</strong></article><article className="overview-card"><span>DLQ</span><strong>{String(outbox.deadLetter ?? 0)}</strong></article><article className="overview-card"><span>Leases vencidos</span><strong>{String(outbox.expiredLeases ?? 0)}</strong></article></section>{deadLetters.length > 0 && <section className="admin-section"><h2>Eventos em DLQ</h2><p className="section-note">Corrija a causa antes de reenfileirar. Payloads não são exibidos.</p><ul className="nested-list">{deadLetters.map((event) => { const eventId = stringValue(event.id); return <li key={eventId ?? recordTitle(event)}>{stringValue(event.eventType) ?? "Evento"} · tentativa {String(event.attemptCount ?? 0)}{canManage && eventId && <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void redrive(eventId)}>Reenfileirar</button>}</li>; })}</ul></section>}</>}<button className="secondary-button compact" type="button" onClick={() => void load()} disabled={pending}>Atualizar</button></>;
 }
 
 function ProfilePage({

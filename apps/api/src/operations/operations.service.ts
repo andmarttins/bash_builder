@@ -94,6 +94,8 @@ const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png', 'applica
 const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.enum(allowedFileTypes), byteSize: z.number().int().positive().max(10 * 1024 * 1024), checksum: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Informe o SHA-256 hexadecimal do arquivo.') });
 
 type HhtRate = { trifr: number; ltifr: number; ltisr: number };
+type OutboxHealthStatus = 'HEALTHY' | 'DEGRADED' | 'CRITICAL';
+export const outboxOperationalThresholds = { targetMaximumAgeSeconds: 300, criticalMaximumAgeSeconds: 900 } as const;
 const dashboardSummarySelect = { id: true, title: true, description: true, widgets: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true } satisfies Prisma.DashboardSelect;
 const tvDisplaySummarySelect = { id: true, dashboardId: true, name: true, refreshSeconds: true, active: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true, dashboard: { select: { title: true } } } satisfies Prisma.TvDisplaySelect;
 const tvPlaylistSummarySelect = { id: true, name: true, active: true, intervalSeconds: true, items: true, published: true, version: true, publicPublishedAt: true, publicExpiresAt: true, publicRevokedAt: true, createdAt: true, updatedAt: true } satisfies Prisma.TvPlaylistSelect;
@@ -105,6 +107,12 @@ export function calculateHhtRates(input: { hhtWorked: number; lostDays: number; 
     ltifr: Number(((input.lti * 1_000_000) / input.hhtWorked).toFixed(4)),
     ltisr: Number(((input.lostDays * 1_000_000) / input.hhtWorked).toFixed(4))
   };
+}
+
+export function classifyOutboxHealth(input: { failed: number; deadLetter: number; expiredLeases: number; actionableAgeSeconds: number }): OutboxHealthStatus {
+  if (input.deadLetter > 0 || input.expiredLeases > 0 || input.actionableAgeSeconds >= outboxOperationalThresholds.criticalMaximumAgeSeconds) return 'CRITICAL';
+  if (input.failed > 0 || input.actionableAgeSeconds >= outboxOperationalThresholds.targetMaximumAgeSeconds) return 'DEGRADED';
+  return 'HEALTHY';
 }
 
 @Injectable()
@@ -877,19 +885,23 @@ export class OperationsService {
   }
 
   public listDeadLetters(identity: SessionIdentity) {
-    return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, lastError: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
+    return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
   }
 
   public operationalSummary(identity: SessionIdentity) {
     return this.withTenant(identity, async (tx) => {
       const now = new Date();
-      const [byStatus, oldestPending, expiredLeases] = await Promise.all([
+      const [byStatus, oldestActionable, expiredLeases] = await Promise.all([
         tx.outboxEvent.groupBy({ by: ['status'], _count: { _all: true } }),
-        tx.outboxEvent.findFirst({ where: { status: { in: ['PENDING', 'FAILED'] } }, select: { createdAt: true }, orderBy: { createdAt: 'asc' } }),
+        tx.outboxEvent.findFirst({ where: { status: { in: ['PENDING', 'FAILED'] }, availableAt: { lte: now } }, select: { availableAt: true }, orderBy: { availableAt: 'asc' } }),
         tx.outboxEvent.count({ where: { status: 'PROCESSING', leasedUntil: { lt: now } } })
       ]);
       const counts = Object.fromEntries(byStatus.map((item) => [item.status, item._count._all]));
-      return { generatedAt: now.toISOString(), outbox: { pending: counts.PENDING ?? 0, processing: counts.PROCESSING ?? 0, failed: counts.FAILED ?? 0, deadLetter: counts.DEAD_LETTER ?? 0, published: counts.PUBLISHED ?? 0, expiredLeases, oldestPendingAt: oldestPending?.createdAt.toISOString() ?? null } };
+      const oldestActionableAt = oldestActionable?.availableAt.toISOString() ?? null;
+      const actionableAgeSeconds = oldestActionable ? Math.max(0, Math.floor((now.getTime() - oldestActionable.availableAt.getTime()) / 1_000)) : 0;
+      const failed = counts.FAILED ?? 0;
+      const deadLetter = counts.DEAD_LETTER ?? 0;
+      return { generatedAt: now.toISOString(), outbox: { pending: counts.PENDING ?? 0, processing: counts.PROCESSING ?? 0, failed, deadLetter, published: counts.PUBLISHED ?? 0, expiredLeases, oldestActionableAt, sli: { status: classifyOutboxHealth({ failed, deadLetter, expiredLeases, actionableAgeSeconds }), actionableAgeSeconds, ...outboxOperationalThresholds } } };
     });
   }
 

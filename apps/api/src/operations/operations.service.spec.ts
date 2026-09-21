@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-import { calculateHhtRates, OperationsService } from './operations.service.js';
+import { calculateHhtRates, classifyOutboxHealth, OperationsService } from './operations.service.js';
 
 const identity = {
   user: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'owner@example.com' },
@@ -46,6 +46,15 @@ describe('calculateHhtRates', () => {
     expect(tx.safetyEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 3 }, data: expect.objectContaining({ status: 'IN_REVIEW' }) }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'safety_event.status_changed', resourceId: eventId }) }));
     expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'safety_event.status_changed', aggregateId: eventId }) }));
+  });
+
+  it('classifies actionable outbox age, failures, expired leases, and dead letters conservatively', () => {
+    expect(classifyOutboxHealth({ failed: 0, deadLetter: 0, expiredLeases: 0, actionableAgeSeconds: 299 })).toBe('HEALTHY');
+    expect(classifyOutboxHealth({ failed: 0, deadLetter: 0, expiredLeases: 0, actionableAgeSeconds: 300 })).toBe('DEGRADED');
+    expect(classifyOutboxHealth({ failed: 1, deadLetter: 0, expiredLeases: 0, actionableAgeSeconds: 0 })).toBe('DEGRADED');
+    expect(classifyOutboxHealth({ failed: 0, deadLetter: 1, expiredLeases: 0, actionableAgeSeconds: 0 })).toBe('CRITICAL');
+    expect(classifyOutboxHealth({ failed: 0, deadLetter: 0, expiredLeases: 1, actionableAgeSeconds: 0 })).toBe('CRITICAL');
+    expect(classifyOutboxHealth({ failed: 0, deadLetter: 0, expiredLeases: 0, actionableAgeSeconds: 900 })).toBe('CRITICAL');
   });
 
   it('derives a bounded event SLA deadline and does not persist the input-only duration', async () => {
@@ -758,11 +767,23 @@ describe('calculateHhtRates', () => {
 
   it('summarizes only the active tenant outbox health without reading event payloads', async () => {
     const oldest = new Date('2026-09-21T00:00:00.000Z');
-    const tx = { outboxEvent: { groupBy: vi.fn().mockResolvedValue([{ status: 'PENDING', _count: { _all: 2 } }, { status: 'DEAD_LETTER', _count: { _all: 1 } }]), findFirst: vi.fn().mockResolvedValue({ createdAt: oldest }), count: vi.fn().mockResolvedValue(3) } };
+    const tx = { outboxEvent: { groupBy: vi.fn().mockResolvedValue([{ status: 'PENDING', _count: { _all: 2 } }, { status: 'DEAD_LETTER', _count: { _all: 1 } }]), findFirst: vi.fn().mockResolvedValue({ availableAt: oldest }), count: vi.fn().mockResolvedValue(3) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const summary = await new OperationsService(tenants as never).operationalSummary(identity);
-    expect(summary.outbox).toEqual({ pending: 2, processing: 0, failed: 0, deadLetter: 1, published: 0, expiredLeases: 3, oldestPendingAt: oldest.toISOString() });
+    expect(summary.outbox).toMatchObject({ pending: 2, processing: 0, failed: 0, deadLetter: 1, published: 0, expiredLeases: 3, oldestActionableAt: oldest.toISOString(), sli: { status: 'CRITICAL', targetMaximumAgeSeconds: 300, criticalMaximumAgeSeconds: 900 } });
     expect(tx.outboxEvent.groupBy).toHaveBeenCalledWith({ by: ['status'], _count: { _all: true } });
-    expect(tx.outboxEvent.findFirst.mock.calls[0]![0]).toEqual(expect.objectContaining({ where: { status: { in: ['PENDING', 'FAILED'] } }, select: { createdAt: true } }));
+    expect(tx.outboxEvent.findFirst.mock.calls[0]![0]).toEqual(expect.objectContaining({ where: expect.objectContaining({ status: { in: ['PENDING', 'FAILED'] }, availableAt: expect.objectContaining({ lte: expect.any(Date) }) }), select: { availableAt: true }, orderBy: { availableAt: 'asc' } }));
+  });
+
+  it('does not age a scheduled retry before it becomes actionable', async () => {
+    const tx = { outboxEvent: { groupBy: vi.fn().mockResolvedValue([{ status: 'FAILED', _count: { _all: 1 } }]), findFirst: vi.fn().mockResolvedValue(null), count: vi.fn().mockResolvedValue(0) } };
+    const summary = await new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never).operationalSummary(identity);
+    expect(summary.outbox).toMatchObject({ failed: 1, oldestActionableAt: null, sli: { actionableAgeSeconds: 0, status: 'DEGRADED' } });
+  });
+
+  it('lists DLQ operational identifiers without exposing dependency error details', async () => {
+    const tx = { outboxEvent: { findMany: vi.fn().mockResolvedValue([]) } };
+    await expect(new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never).listDeadLetters(identity)).resolves.toEqual([]);
+    expect(tx.outboxEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.not.objectContaining({ lastError: expect.anything() }) }));
   });
 });
