@@ -1,5 +1,9 @@
 # Plano de paridade empresarial — Builder Solutions
 
+> Histórico de planejamento em 19/09/2026. A execução atual, os deltas
+> remanescentes e os gates de piloto/corte estão em
+> [ENTERPRISE_COMPLETION_PLAN.md](ENTERPRISE_COMPLETION_PLAN.md).
+
 **Fonte analisada:** `source-review/` no commit `a4a0e0637ba7d47901b7d2c626ac5e2595f24` (Buildersolutions v9).  
 **Estado da plataforma nova em 19/09/2026:** identidade, sessões, organizações, convites, RLS, auditoria, outbox, health e o processo base do worker existem. Ainda não existem modelos nem páginas dos domínios de negócio.
 

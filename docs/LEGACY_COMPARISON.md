@@ -1,5 +1,8 @@
 # Comparação com Builder Solutions 9
 
+> Instantâneo histórico de 19/09/2026. O estado atual e a sequência executável
+> estão em [ENTERPRISE_COMPLETION_PLAN.md](ENTERPRISE_COMPLETION_PLAN.md).
+
 Data da análise: 19 de setembro de 2026.
 
 ## Escopo e método
