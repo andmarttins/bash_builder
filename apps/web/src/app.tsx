@@ -2952,11 +2952,6 @@ function IntegrationsModulePage({
             Tipo
             <select name="type" defaultValue="WEBHOOK">
               <option value="WEBHOOK">Webhook</option>
-              <option value="EMAIL">E-mail</option>
-              <option value="SMARTSHEET">Smartsheet</option>
-              <option value="WHATSAPP">WhatsApp</option>
-              <option value="OBJECT_STORAGE">Armazenamento de objetos</option>
-              <option value="AI">IA</option>
             </select>
           </label>
           <label>
@@ -2991,9 +2986,9 @@ function IntegrationsModulePage({
       <section className="admin-section">
         <h2>Conexões da organização</h2>
         <p className="section-note">
-          Webhooks exigem somente uma URL HTTPS pública no JSON. O teste valida
-          a configuração e a presença da variável protegida; não expõe segredos
-          nem faz chamadas externas.
+          Somente webhooks possuem adapter de entrega aprovado. Eles exigem uma
+          URL HTTPS pública no JSON. A verificação valida a configuração e a
+          presença da variável protegida; não expõe segredos nem envia eventos.
         </p>
         {integrations.length === 0 ? (
           <p className="section-note">Nenhuma integração configurada.</p>
@@ -3007,6 +3002,7 @@ function IntegrationsModulePage({
               const state = integrationId
                 ? configurationStates[integrationId]
                 : undefined;
+              const supportsDelivery = integration.type === "WEBHOOK";
               return (
                 <article
                   className="form-row event-detail"
@@ -3024,6 +3020,12 @@ function IntegrationsModulePage({
                     {state && (
                       <p className="section-note">
                         Verificação: {integrationConfigurationLabel(state)}
+                      </p>
+                    )}
+                    {!supportsDelivery && (
+                      <p className="section-note">
+                        Este tipo está registrado apenas como inventário e deve
+                        permanecer desativado até existir um adapter aprovado.
                       </p>
                     )}
                     {canManage && integrationId && (
@@ -3049,11 +3051,15 @@ function IntegrationsModulePage({
                             <select
                               name="status"
                               defaultValue={String(
-                                integration.status ?? "DISABLED",
+                                supportsDelivery
+                                  ? integration.status ?? "DISABLED"
+                                  : "DISABLED",
                               )}
                             >
                               <option value="DISABLED">Desativada</option>
-                              <option value="ACTIVE">Ativa</option>
+                              {supportsDelivery && (
+                                <option value="ACTIVE">Ativa</option>
+                              )}
                             </select>
                           </label>
                           <label>
@@ -3123,6 +3129,8 @@ function integrationConfigurationLabel(state: string): string {
     return "informe uma referência de segredo antes de ativar.";
   if (state === "WEBHOOK_CONFIG_INVALID")
     return "webhook exige uma URL HTTPS pública válida no JSON.";
+  if (state === "UNSUPPORTED_TYPE")
+    return "este tipo ainda não possui adapter de entrega aprovado e deve permanecer desativado.";
   return "variável protegida não encontrada na API; salve-a no Dokploy e faça deploy novamente.";
 }
 

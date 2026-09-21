@@ -17,6 +17,9 @@ const changeStatuses = ['DRAFT', 'IN_REVIEW', 'APPROVED', 'IMPLEMENTING', 'COMPL
 const bashStages = ['BACKLOG', 'DESIGN', 'IN_PROGRESS', 'REVIEW', 'DONE'] as const;
 const integrationTypes = ['WEBHOOK', 'EMAIL', 'SMARTSHEET', 'WHATSAPP', 'OBJECT_STORAGE', 'AI'] as const;
 const integrationStatuses = ['DISABLED', 'ACTIVE', 'ERROR'] as const;
+// The catalog retains legacy/provider inventory, but outbound delivery is only
+// permitted for types with a reviewed worker adapter.
+const activatableIntegrationTypes = ['WEBHOOK'] as const;
 
 const approvedClassificationCategories = ['event_classification'] as const;
 const classificationCategorySchema = z.enum(approvedClassificationCategories);
@@ -803,7 +806,10 @@ export class OperationsService {
     const data = this.parse(integrationSchema, input); this.assertNonSecretConfig(data.config);
     const config = this.normalizeIntegrationConfig(data.type, data.config);
     if (data.secretRef) this.assertSecretReferenceForOrganization(identity, data.secretRef);
-    if (data.status === 'ACTIVE' && !this.isSecretReferenceConfigured(identity, data.secretRef)) throw new BadRequestException('A variável protegida desta integração não está configurada no runtime.');
+    if (data.status === 'ACTIVE') {
+      this.assertIntegrationCanBeActive(data.type);
+      if (!this.isSecretReferenceConfigured(identity, data.secretRef)) throw new BadRequestException('A variável protegida desta integração não está configurada no runtime.');
+    }
     return this.withTenant(identity, async (tx) => {
       const integration = await tx.integration.create({ data: { organizationId: identity.organization.id, name: data.name, type: data.type as IntegrationType, status: (data.status ?? 'DISABLED') as IntegrationStatus, config: config as Prisma.InputJsonValue, secretRef: data.secretRef ?? null } });
       await this.record(tx, identity, 'integration.created', 'integration', integration.id, { type: integration.type, status: integration.status, hasSecretReference: Boolean(integration.secretRef) });
@@ -821,6 +827,7 @@ export class OperationsService {
       const nextConfig = data.config === undefined ? current.config : this.normalizeIntegrationConfig(current.type, data.config);
       if (nextSecretRef) this.assertSecretReferenceForOrganization(identity, nextSecretRef);
       if ((data.status ?? current.status) === 'ACTIVE') {
+        this.assertIntegrationCanBeActive(current.type);
         this.assertIntegrationConfig(current.type, nextConfig);
         if (!nextSecretRef || !this.isSecretReferenceConfigured(identity, nextSecretRef)) throw new BadRequestException('Uma integração ativa exige uma variável protegida configurada no runtime.');
       }
@@ -836,7 +843,7 @@ export class OperationsService {
       const integration = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, type: true, secretRef: true, config: true } });
       if (!integration) throw new NotFoundException('Integração não encontrada.');
       if (integration.secretRef) this.assertSecretReferenceForOrganization(identity, integration.secretRef);
-      const state = !this.isIntegrationConfigValid(integration.type, integration.config) ? 'WEBHOOK_CONFIG_INVALID' : !integration.secretRef ? 'MISSING_SECRET_REFERENCE' : this.isSecretReferenceConfigured(identity, integration.secretRef) ? 'READY' : 'SECRET_NOT_CONFIGURED';
+      const state = !this.isIntegrationTypeActivatable(integration.type) ? 'UNSUPPORTED_TYPE' : !this.isIntegrationConfigValid(integration.type, integration.config) ? 'WEBHOOK_CONFIG_INVALID' : !integration.secretRef ? 'MISSING_SECRET_REFERENCE' : this.isSecretReferenceConfigured(identity, integration.secretRef) ? 'READY' : 'SECRET_NOT_CONFIGURED';
       const updated = await tx.integration.update({ where: { id: integrationId }, data: { lastTestedAt: new Date() } });
       await this.record(tx, identity, 'integration.configuration_checked', 'integration', integrationId, { type: integration.type, state, hasSecretReference: Boolean(integration.secretRef) });
       return { integration: updated, configuration: { state } };
@@ -1257,6 +1264,12 @@ export class OperationsService {
   }
   private assertIntegrationConfig(type: IntegrationType | string, config: unknown): void {
     this.normalizeIntegrationConfig(type, config);
+  }
+  private isIntegrationTypeActivatable(type: IntegrationType | string): boolean {
+    return (activatableIntegrationTypes as readonly string[]).includes(type);
+  }
+  private assertIntegrationCanBeActive(type: IntegrationType | string): void {
+    if (!this.isIntegrationTypeActivatable(type)) throw new BadRequestException('Este tipo de integração ainda não possui um adapter de entrega aprovado e deve permanecer desativado.');
   }
   private isIntegrationConfigValid(type: IntegrationType | string, config: unknown): boolean {
     try { this.assertIntegrationConfig(type, config); return true; } catch { return false; }

@@ -812,6 +812,29 @@ describe('calculateHhtRates', () => {
     expect(tx.integration.update).not.toHaveBeenCalled();
   });
 
+  it('keeps integration types without a reviewed adapter disabled', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new OperationsService(tenants as never);
+    expect(() => service.createIntegration(identity, { name: 'Email legado', type: 'EMAIL', status: 'ACTIVE', secretRef: 'INTEGRATION_ACME_EMAIL_SECRET', config: {} })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+
+    const tx = { integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'EMAIL', status: 'DISABLED', secretRef: null, config: {} }), update: vi.fn() } };
+    await expect(new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never).updateIntegration(identity, eventId, { status: 'ACTIVE' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.integration.update).not.toHaveBeenCalled();
+  });
+
+  it('reports an unsupported integration as inventory even when its secret exists', async () => {
+    const secretRef = 'INTEGRATION_ACME_EMAIL_SECRET';
+    const original = process.env[secretRef]; process.env[secretRef] = 'value-that-must-never-appear-in-audit';
+    const updated = { id: eventId, type: 'EMAIL', secretRef, lastTestedAt: new Date() };
+    const tx = { integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'EMAIL', secretRef, config: {} }), update: vi.fn().mockResolvedValue(updated) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    try {
+      await expect(new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never).checkIntegrationConfiguration(identity, eventId)).resolves.toEqual({ integration: updated, configuration: { state: 'UNSUPPORTED_TYPE' } });
+    } finally {
+      if (original === undefined) delete process.env[secretRef]; else process.env[secretRef] = original;
+    }
+  });
+
   it('reports a missing runtime variable without exposing or attempting to resolve another tenant namespace', async () => {
     const secretRef = 'INTEGRATION_ACME_UNCONFIGURED_WEBHOOK_SECRET';
     const original = process.env[secretRef]; delete process.env[secretRef];
