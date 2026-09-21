@@ -457,13 +457,30 @@ describe('calculateHhtRates', () => {
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
-    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn().mockResolvedValue(undefined) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn().mockResolvedValue(undefined), verifyObject: vi.fn().mockResolvedValue(true) };
     const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn().mockResolvedValue('CLEAN') };
 
     await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).resolves.toEqual(ready);
     expect(scanner.scan).toHaveBeenCalledWith(content);
     expect(storage.putObject).toHaveBeenCalledWith({ key: 'tenant/key', contentType: 'application/pdf', bytes: content, checksum: pending.checksum });
+    expect(storage.verifyObject).toHaveBeenCalledWith({ key: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: pending.checksum });
     expect(tx.fileAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, status: 'QUARANTINED' }, data: expect.objectContaining({ status: 'READY', scannedAt: expect.any(Date) }) }));
+  });
+
+  it('rejects and schedules cleanup when stored bytes cannot be verified', async () => {
+    const content = Buffer.from('%PDF-1.7');
+    const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
+    const tx = {
+      fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn().mockResolvedValue(undefined), verifyObject: vi.fn().mockResolvedValue(false) };
+    const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn().mockResolvedValue('CLEAN') };
+
+    await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(tx.fileAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, status: 'QUARANTINED' }, data: expect.objectContaining({ status: 'REJECTED', storageCleanupAt: null }) }));
+    expect(tx.fileAsset.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'READY' }) }));
   });
 
   it('rejects proxied bytes whose checksum differs from the original intent', async () => {
@@ -572,18 +589,18 @@ describe('calculateHhtRates', () => {
     const scanStarted = new Promise<void>((resolve) => { signalScanStarted = resolve; });
     const scanner = { isConfigured: vi.fn().mockReturnValue(true), scan: vi.fn(async () => { signalScanStarted(); return new Promise<'CLEAN'>((release) => { releaseScan = release; }); }) };
     const privateObjects = new Set<string>();
-    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn(async ({ key }: { key: string }) => { privateObjects.add(key); }), deleteObject: vi.fn(async (key: string) => { privateObjects.delete(key); }) };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn(async ({ key }: { key: string }) => { privateObjects.add(key); }), verifyObject: vi.fn().mockResolvedValue(true) };
     const service = new OperationsService(tenants as never, storage as never, scanner as never);
 
     const upload = service.uploadFileContent(identity, eventId, content);
     await scanStarted;
     await expect(service.cancelFileUpload(identity, eventId)).resolves.toMatchObject({ status: 'REJECTED' });
-    expect(committed.storageCleanupAt).toBeInstanceOf(Date);
+    expect(committed.storageCleanupAt).toBeNull();
     releaseScan('CLEAN');
 
     await expect(upload).rejects.toBeInstanceOf(ConflictException);
-    expect(privateObjects).toEqual(new Set());
-    expect(committed).toMatchObject({ status: 'REJECTED', storageCleanupAt: expect.any(Date) });
+    expect(privateObjects).toEqual(new Set(['tenant/racing-file']));
+    expect(committed).toMatchObject({ status: 'REJECTED', storageCleanupAt: null });
   });
 
   it('creates a one-time dashboard publication token, records its lifecycle, and never puts the token in the event payload', async () => {

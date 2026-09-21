@@ -111,7 +111,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     }
   });
 
-  it('isolates file assets while allowing only the bounded cleanup procedure to cross tenant rows', async () => {
+  it('isolates file assets and restricts cross-tenant cleanup procedures to app_worker', async () => {
     const fileA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a81';
     const fileB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a82';
     await bootstrap.query(
@@ -124,15 +124,16 @@ describeIntegration('PostgreSQL row-level security', () => {
     try {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
       expect((await runtime.query('SELECT id FROM "file_assets" ORDER BY id')).rows).toEqual([{ id: fileA }]);
-      // app_runtime can execute the bounded SECURITY DEFINER procedure, but
-      // cannot otherwise enumerate the other tenant's file row through RLS.
-      const expired = await runtime.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id');
-      expect(expired.rows.filter((row) => row.id === fileA || row.id === fileB)).toEqual([{ id: fileA }, { id: fileB }]);
+      await expect(runtime.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id')).rejects.toThrow(/restricted to app_worker/i);
+      await expect(runtime.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileB])).rejects.toThrow(/restricted to app_worker/i);
     } finally {
       await runtime.query('ROLLBACK');
     }
-    expect((await bootstrap.query('SELECT id, status::text FROM "file_assets" WHERE id IN ($1, $2) ORDER BY id', [fileA, fileB])).rows).toEqual([
-      { id: fileA, status: 'PENDING' }, { id: fileB, status: 'PENDING' }
+    const expired = await worker.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id');
+    expect(expired.rows.filter((row) => row.id === fileA || row.id === fileB)).toEqual([{ id: fileA }, { id: fileB }]);
+    await worker.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileA]);
+    expect((await bootstrap.query('SELECT id, status::text, storage_cleanup_at IS NOT NULL AS cleaned FROM "file_assets" WHERE id IN ($1, $2) ORDER BY id', [fileA, fileB])).rows).toEqual([
+      { id: fileA, status: 'REJECTED', cleaned: true }, { id: fileB, status: 'REJECTED', cleaned: false }
     ]);
   });
 

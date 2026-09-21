@@ -841,6 +841,14 @@ export class OperationsService {
       await this.resetQuarantinedUpload(identity, asset.id);
       throw error;
     }
+    let storedCorrectly = false;
+    try { storedCorrectly = await this.storage.verifyObject({ key: asset.storageKey, contentType: asset.contentType, byteSize: asset.byteSize, checksum: asset.checksum }); }
+    catch { storedCorrectly = false; }
+    if (!storedCorrectly) {
+      await this.rejectUnverifiedUpload(identity, asset.id);
+      await this.scheduleRejectedObjectCleanup(identity, asset.id);
+      throw new ServiceUnavailableException('Não foi possível verificar a integridade do arquivo armazenado. Tente novamente.');
+    }
 
     const readyAsset = await this.withTenant(identity, async (tx) => {
       const updated = await tx.fileAsset.updateMany({ where: { id: asset.id, status: 'QUARANTINED' }, data: { status: 'READY', uploadExpiresAt: null, processingLeaseExpiresAt: null, scannedAt: new Date() } });
@@ -852,7 +860,7 @@ export class OperationsService {
     if (!readyAsset) {
       // A cancellation or expiry may have won while the private object was
       // being written. This is intentionally outside the transaction.
-      await this.cleanupRejectedObject(identity, asset.id, asset.storageKey);
+      await this.scheduleRejectedObjectCleanup(identity, asset.id);
       throw new ConflictException('Este arquivo foi alterado por outra solicitação. Atualize a página.');
     }
     return readyAsset;
@@ -871,7 +879,7 @@ export class OperationsService {
       await this.record(tx, identity, 'file_asset.upload_cancelled', 'file_asset', asset.id, {});
       return { asset, result };
     });
-    await this.cleanupRejectedObject(identity, cancelled.asset.id, cancelled.asset.storageKey);
+    await this.scheduleRejectedObjectCleanup(identity, cancelled.asset.id);
     return cancelled.result;
   }
 
@@ -1140,23 +1148,18 @@ export class OperationsService {
       await tx.fileAsset.updateMany({ where: { id: assetId, status: 'QUARANTINED' }, data: { status: 'PENDING', processingLeaseExpiresAt: null } });
     });
   }
-  private async cleanupRejectedObject(identity: SessionIdentity, assetId: string, storageKey: string): Promise<void> {
-    // A previous cleanup might have run before an in-flight S3 put completed.
-    // Resetting this marker on a rejected row makes that rare interleaving
-    // retryable instead of permanently orphaning an object.
+  private async rejectUnverifiedUpload(identity: SessionIdentity, assetId: string): Promise<void> {
+    await this.withTenant(identity, async (tx) => {
+      const rejected = await tx.fileAsset.updateMany({ where: { id: assetId, status: 'QUARANTINED' }, data: { status: 'REJECTED', uploadExpiresAt: null, processingLeaseExpiresAt: null, scannedAt: new Date(), storageCleanupAt: null } });
+      if (rejected.count === 1) await this.record(tx, identity, 'file_asset.rejected', 'file_asset', assetId, { reason: 'storage_verification_failed' });
+    });
+  }
+  private async scheduleRejectedObjectCleanup(identity: SessionIdentity, assetId: string): Promise<void> {
+    // Deletion runs only under the dedicated worker credential. Keeping the
+    // marker null lets its bounded cleanup procedure retry an in-flight S3 put.
     await this.withTenant(identity, async (tx) => {
       await tx.fileAsset.updateMany({ where: { id: assetId, status: 'REJECTED' }, data: { storageCleanupAt: null } });
     });
-    if (!this.storage.isConfigured()) return;
-    try {
-      await this.storage.deleteObject(storageKey);
-      await this.withTenant(identity, async (tx) => {
-        await tx.fileAsset.updateMany({ where: { id: assetId, status: 'REJECTED', storageCleanupAt: null }, data: { storageCleanupAt: new Date() } });
-      });
-    } catch {
-      // The database marker stays null, so the bounded scheduled cleanup can
-      // retry later without exposing an object or turning the cancellation back.
-    }
   }
   private withTenant<T>(identity: SessionIdentity, work: (tx: TenantTransaction) => Promise<T>): Promise<T> { return this.tenants.withTenantTransaction({ tenantId: identity.organization.id, tenantSlug: identity.organization.slug, membershipId: identity.membership.id, actorId: identity.user.id }, work); }
   private id(value: string): string { const parsed = uuid.safeParse(value); if (!parsed.success) throw new BadRequestException('Identificador inválido.'); return parsed.data; }

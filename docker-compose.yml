@@ -129,6 +129,12 @@ services:
       KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-builder-worker-v1}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9464}
+      # Dedicated S3 identity with DeleteObject only. It is not shared with API uploads.
+      FILE_CLEANUP_S3_ENDPOINT: ${FILE_CLEANUP_S3_ENDPOINT:-}
+      FILE_CLEANUP_S3_REGION: ${FILE_CLEANUP_S3_REGION:-}
+      FILE_CLEANUP_S3_BUCKET: ${FILE_CLEANUP_S3_BUCKET:-}
+      FILE_CLEANUP_S3_ACCESS_KEY_ID: ${FILE_CLEANUP_S3_ACCESS_KEY_ID:-}
+      FILE_CLEANUP_S3_SECRET_ACCESS_KEY: ${FILE_CLEANUP_S3_SECRET_ACCESS_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

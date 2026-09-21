@@ -1,5 +1,5 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { z } from 'zod';
 
 const bucketName = z.string().regex(/^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])$/, 'S3_BUCKET is invalid.');
@@ -90,12 +90,6 @@ export class ObjectStorageService {
     } catch {
       throw new ServiceUnavailableException('Não foi possível preparar o download do arquivo. Tente novamente.');
     }
-  }
-
-  public async deleteObject(key: string): Promise<void> {
-    const { client, config } = this.requireClient();
-    try { await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key })); }
-    catch { throw new ServiceUnavailableException('Não foi possível remover o upload pendente. Tente novamente.'); }
   }
 
   private requireClient(): { client: S3Client; config: ObjectStorageRuntimeConfig } {

@@ -8,6 +8,8 @@ import { ChangeDeadlineMonitorService } from './kafka/change-deadline-monitor.se
 import { SafetyEventSlaMonitorService } from './kafka/safety-event-sla-monitor.service.js';
 import { BashDeadlineMonitorService } from './kafka/bash-deadline-monitor.service.js';
 import { WebhookDeliveryDispatcherService } from './kafka/webhook-delivery-dispatcher.service.js';
+import { FileCleanupStorageService } from './storage/file-cleanup-storage.service.js';
+import { FileUploadCleanupService } from './storage/file-upload-cleanup.service.js';
 
-@Module({ providers: [KafkaConsumerService, WorkerDatabaseHealthService, WorkerMetricsService, WorkerReadinessService, OutboxDispatcherService, ChangeDeadlineMonitorService, SafetyEventSlaMonitorService, BashDeadlineMonitorService, WebhookDeliveryDispatcherService] })
+@Module({ providers: [KafkaConsumerService, WorkerDatabaseHealthService, WorkerMetricsService, WorkerReadinessService, OutboxDispatcherService, ChangeDeadlineMonitorService, SafetyEventSlaMonitorService, BashDeadlineMonitorService, WebhookDeliveryDispatcherService, FileCleanupStorageService, FileUploadCleanupService] })
 export class WorkerModule {}
