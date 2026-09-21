@@ -145,7 +145,10 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...options,
     credentials: "include",
-    headers: { "content-type": "application/json", ...options?.headers },
+    headers: {
+      ...(options?.body == null ? {} : { "content-type": "application/json" }),
+      ...options?.headers,
+    },
   });
   const body = (await response.json().catch(() => ({}))) as {
     message?: string | string[];
