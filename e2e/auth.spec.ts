@@ -14,10 +14,18 @@ test('bootstrap forces password replacement, then supports login and logout', as
   await page.locator('input[name="newPassword"]').fill('Permanent-password-456');
   await page.getByRole('button', { name: /atualizar senha/i }).click();
   await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
-  await page.getByRole('button', { name: 'Sair' }).click();
+  const [logout] = await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/logout') && response.request().method() === 'POST'),
+    page.getByRole('button', { name: 'Sair' }).click(),
+  ]);
+  expect(logout.status()).toBe(201);
   await expect(page.getByText('Acesso à plataforma')).toBeVisible();
   await page.locator('input[name="email"]').fill('owner@empresa-e2e.test');
   await page.locator('input[name="password"]').fill('Permanent-password-456');
-  await page.getByRole('button', { name: 'Entrar' }).click();
+  const [login] = await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/login') && response.request().method() === 'POST'),
+    page.getByRole('button', { name: 'Entrar' }).click(),
+  ]);
+  expect(login.status()).toBe(201);
   await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
 });
