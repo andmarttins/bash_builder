@@ -786,4 +786,13 @@ describe('calculateHhtRates', () => {
     await expect(new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never).listDeadLetters(identity)).resolves.toEqual([]);
     expect(tx.outboxEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.not.objectContaining({ lastError: expect.anything() }) }));
   });
+
+  it('lists a bounded tenant audit feed without metadata or actor identifiers', async () => {
+    const entry = { id: eventId, action: 'safety_event.created', resourceType: 'safety_event', occurredAt: new Date() };
+    const tx = { auditLog: { findMany: vi.fn().mockResolvedValue([entry]) } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.listAuditEntries(identity, { resourceType: 'safety_event', limit: 10 })).resolves.toEqual([entry]);
+    expect(tx.auditLog.findMany).toHaveBeenCalledWith({ where: { resourceType: 'safety_event' }, select: { id: true, action: true, resourceType: true, occurredAt: true }, orderBy: { occurredAt: 'desc' }, take: 10 });
+    expect(() => service.listAuditEntries(identity, { limit: 101 })).toThrow(BadRequestException);
+  });
 });

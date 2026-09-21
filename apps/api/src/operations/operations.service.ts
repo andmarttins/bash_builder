@@ -34,6 +34,7 @@ const riskSchema = z.object({ hazard: text(2, 300), consequence: optionalText(10
 const approvalSchema = z.object({ approverName: text(2, 160), approverEmail: z.string().trim().toLowerCase().email().max(320), role: optionalText(120) });
 const approvalDecisionSchema = z.object({ decision: z.enum(['APPROVED', 'REJECTED']), comment: optionalText(10_000), expectedVersion }).superRefine((input, context) => { if (input.decision === 'REJECTED' && !input.comment) context.addIssue({ code: 'custom', path: ['comment'], message: 'Informe o motivo da reprovação.' }); });
 const evidenceSchema = z.object({ fileId: uuid, category: optionalText(80), description: optionalText(10_000) });
+const auditListQuerySchema = z.object({ resourceType: text(1, 120).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) });
 const workflowStepSchema = z.object({ notes: text(10, 10_000), data: z.record(z.string(), z.string().trim().max(10_000)).default({}), expectedVersion });
 const changeListQuerySchema = z.object({ status: z.enum(changeStatuses).optional(), search: z.string().trim().max(200).optional(), page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25) });
 const changeTransitionSchema = z.object({ status: z.enum(changeStatuses), expectedVersion });
@@ -886,6 +887,16 @@ export class OperationsService {
 
   public listDeadLetters(identity: SessionIdentity) {
     return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
+  }
+
+  public listAuditEntries(identity: SessionIdentity, input?: unknown) {
+    const query = this.parse(auditListQuerySchema, input ?? {});
+    return this.withTenant(identity, (tx) => tx.auditLog.findMany({
+      where: query.resourceType ? { resourceType: query.resourceType } : undefined,
+      select: { id: true, action: true, resourceType: true, occurredAt: true },
+      orderBy: { occurredAt: 'desc' },
+      take: query.limit
+    }));
   }
 
   public operationalSummary(identity: SessionIdentity) {
