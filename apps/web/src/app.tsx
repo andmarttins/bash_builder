@@ -69,6 +69,13 @@ type Invitation = {
   expiresAt: string;
   createdAt: string;
 };
+type TenantGroup = {
+  id: string;
+  name: string;
+  description: string | null;
+  version: number;
+  members: Array<{ id: string; email: string; role: string; status: string }>;
+};
 type FormFieldSummary = {
   key: string;
   label: string;
@@ -182,6 +189,7 @@ export function App(): React.JSX.Element {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [groups, setGroups] = useState<TenantGroup[]>([]);
   const [invitationToken] = useState(() =>
     new URLSearchParams(window.location.search).get("invite"),
   );
@@ -268,17 +276,22 @@ export function App(): React.JSX.Element {
           identity.membership.role === "OWNER" ||
           identity.membership.role === "ADMIN"
         ) {
-          const [memberResponse, invitationResponse] = await Promise.all([
+          const [memberResponse, invitationResponse, groupResponse] = await Promise.all([
             api<{ members: Member[] }>("/v1/organizations/current/members"),
             api<{ invitations: Invitation[] }>(
               "/v1/organizations/current/invitations",
             ),
+            identity.membership.role === "OWNER"
+              ? api<{ groups: TenantGroup[] }>("/v1/organizations/current/groups")
+              : Promise.resolve({ groups: [] }),
           ]);
           setMembers(memberResponse.members);
           setInvitations(invitationResponse.invitations);
+          setGroups(groupResponse.groups);
         } else {
           setMembers([]);
           setInvitations([]);
+          setGroups([]);
         }
       } catch (requestError) {
         setError(
@@ -685,6 +698,44 @@ export function App(): React.JSX.Element {
     } finally {
       setPending(false);
     }
+  }
+  async function createGroup(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    setPending(true);
+    setError(null);
+    try {
+      const result = await api<{ group: TenantGroup }>(
+        "/v1/organizations/current/groups",
+        { method: "POST", body: JSON.stringify({ name: values.get("name"), description: values.get("description") || null }) },
+      );
+      setGroups((current) => [...current, result.group].sort((left, right) => left.name.localeCompare(right.name)));
+      event.currentTarget.reset();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível criar o grupo.");
+    } finally { setPending(false); }
+  }
+  async function replaceGroupMembers(event: FormEvent<HTMLFormElement>, group: TenantGroup): Promise<void> {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    setPending(true);
+    setError(null);
+    try {
+      await api(`/v1/organizations/current/groups/${group.id}/members`, { method: "POST", body: JSON.stringify({ membershipIds: values.getAll("membershipIds"), expectedVersion: group.version }) });
+      setGroups((await api<{ groups: TenantGroup[] }>("/v1/organizations/current/groups")).groups);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível atualizar os membros do grupo.");
+    } finally { setPending(false); }
+  }
+  async function deleteGroup(group: TenantGroup): Promise<void> {
+    setPending(true);
+    setError(null);
+    try {
+      await api(`/v1/organizations/current/groups/${group.id}`, { method: "DELETE", body: JSON.stringify({ expectedVersion: group.version }) });
+      setGroups((current) => current.filter((item) => item.id !== group.id));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível excluir o grupo.");
+    } finally { setPending(false); }
   }
   async function createForm(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -1878,6 +1929,29 @@ export function App(): React.JSX.Element {
                         >
                           Salvar
                         </button>
+                      </form>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {identity.membership.role === "OWNER" && (
+                <section className="admin-section" aria-labelledby="groups-title">
+                  <h2 id="groups-title">Grupos</h2>
+                  <p className="section-note">Grupos organizam membros da organização. Eles ainda não concedem permissões; grants por recurso dependem de aprovação formal.</p>
+                  <form className="inline-form" onSubmit={createGroup}>
+                    <label>Nome do grupo<input name="name" minLength={2} maxLength={120} required placeholder="Investigação" /></label>
+                    <label>Descrição<input name="description" maxLength={2000} placeholder="Opcional" /></label>
+                    <button className="primary-button compact" type="submit" disabled={pending}>Criar grupo</button>
+                  </form>
+                  <div className="member-list">
+                    {groups.map((group) => (
+                      <form className="member-row" key={group.id} onSubmit={(event) => void replaceGroupMembers(event, group)}>
+                        <span><strong>{group.name}</strong>{group.description ? ` · ${group.description}` : ""}</span>
+                        <select name="membershipIds" multiple defaultValue={group.members.map((member) => member.id)} disabled={pending} aria-label={`Membros de ${group.name}`}>
+                          {members.filter((member) => member.status === "ACTIVE").map((member) => <option key={member.id} value={member.id}>{member.email} · {member.role}</option>)}
+                        </select>
+                        <button className="secondary-button compact" type="submit" disabled={pending}>Salvar membros</button>
+                        <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void deleteGroup(group)}>Excluir</button>
                       </form>
                     ))}
                   </div>

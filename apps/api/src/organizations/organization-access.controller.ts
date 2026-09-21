@@ -90,4 +90,41 @@ export class OrganizationAccessController {
   ): Promise<{ member: { id: string; role: string; status: string } }> {
     return { member: await this.organizations.updateCurrentMember(request.identity, membershipId, input) };
   }
+
+  @Get('current/groups')
+  @UseGuards(MembershipRoleGuard)
+  @RequiredRoles('OWNER')
+  public listGroups(@Req() request: AuthenticatedRequest) {
+    return this.organizations.listCurrentGroups(request.identity).then((groups) => ({ groups }));
+  }
+
+  @Post('current/groups')
+  @UseGuards(MembershipRoleGuard)
+  @RequiredRoles('OWNER')
+  public createGroup(@Body() input: unknown, @Req() request: AuthenticatedRequest) {
+    return this.organizations.createGroup(request.identity, input).then((group) => ({ group }));
+  }
+
+  @Patch('current/groups/:groupId')
+  @UseGuards(MembershipRoleGuard)
+  @RequiredRoles('OWNER')
+  public updateGroup(@Param('groupId') groupId: string, @Body() input: unknown, @Req() request: AuthenticatedRequest) {
+    return this.organizations.updateGroup(request.identity, groupId, input).then((group) => ({ group }));
+  }
+
+  @Post('current/groups/:groupId/members')
+  @UseGuards(MembershipRoleGuard)
+  @RequiredRoles('OWNER')
+  public replaceGroupMembers(@Param('groupId') groupId: string, @Body() input: unknown, @Req() request: AuthenticatedRequest) {
+    return this.organizations.replaceGroupMembers(request.identity, groupId, input).then((group) => ({ group }));
+  }
+
+  @Delete('current/groups/:groupId')
+  @UseGuards(MembershipRoleGuard)
+  @RequiredRoles('OWNER')
+  @HttpCode(200)
+  public async deleteGroup(@Param('groupId') groupId: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<{ ok: true }> {
+    await this.organizations.deleteGroup(request.identity, groupId, input);
+    return { ok: true };
+  }
 }

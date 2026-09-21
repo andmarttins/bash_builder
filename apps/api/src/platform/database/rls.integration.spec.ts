@@ -139,6 +139,22 @@ describeIntegration('PostgreSQL row-level security', () => {
     ]);
   });
 
+  it('isolates tenant groups and prevents a runtime transaction from creating a foreign group', async () => {
+    const groupA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a91'; const groupB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a92';
+    await bootstrap.query(
+      'INSERT INTO "tenant_groups" (id, organization_id, name, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',
+      [groupA, tenantA, 'Tenant A group', groupB, tenantB, 'Tenant B group']
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "tenant_groups" ORDER BY id')).rows).toEqual([{ id: groupA }]);
+      await expect(runtime.query('INSERT INTO "tenant_groups" (id, organization_id, name, updated_at) VALUES ($1, $2, $3, NOW())', ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a93', tenantB, 'forbidden'])).rejects.toThrow(/row-level security/i);
+    } finally {
+      await runtime.query('ROLLBACK');
+    }
+  });
+
   it('calculates an authorized analytics source only from the active tenant rows', async () => {
     await bootstrap.query(
       `INSERT INTO "safety_events" (id, organization_id, code, title, occurred_at, origin, status, updated_at)

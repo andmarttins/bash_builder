@@ -149,6 +149,8 @@ model Organization {
   createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships Membership[]
+  groups      TenantGroup[]
+  groupMemberships TenantGroupMembership[]
   settings    TenantSetting[]
   auditLogs   AuditLog[]
   outbox      OutboxEvent[]
@@ -248,8 +250,10 @@ model Membership {
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   identityUser   IdentityUser     @relation(fields: [identityUserId], references: [id], onDelete: Restrict)
   changeApprovals ChangeApproval[] @relation("ChangeApprovalMembership")
+  groupMemberships TenantGroupMembership[]
 
   @@unique([organizationId, identityUserId])
+  @@unique([id, organizationId])
   @@index([identityUserId, status])
   @@index([organizationId, status])
   @@map("memberships")
@@ -409,6 +413,37 @@ model FormSubmission {
   @@unique([id, organizationId, formId])
   @@unique([parentSubmissionId, organizationId, formId])
   @@map("form_submissions")
+}
+
+model TenantGroup {
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @map("organization_id") @db.Uuid
+  name           String                  @db.Citext
+  description    String?                 @db.Text
+  version        Int                     @default(1)
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  memberships    TenantGroupMembership[]
+
+  @@unique([organizationId, name])
+  @@unique([id, organizationId])
+  @@index([organizationId, name])
+  @@map("tenant_groups")
+}
+
+model TenantGroupMembership {
+  groupId        String      @map("group_id") @db.Uuid
+  membershipId   String      @map("membership_id") @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  group          TenantGroup @relation(fields: [groupId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  membership     Membership  @relation(fields: [membershipId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@id([groupId, membershipId])
+  @@index([organizationId, membershipId])
+  @@map("tenant_group_memberships")
 }
 
 model FormSubmissionAttachment {

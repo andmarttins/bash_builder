@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { OrganizationAccessService } from './organization-access.service.js';
 
@@ -79,5 +79,41 @@ describe('OrganizationAccessService', () => {
       membershipId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', organizationId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15',
       organizationName: 'Beta', organizationSlug: 'beta', role: 'MEMBER'
     });
+  });
+
+  it('creates a tenant group with audit and outbox records, without assigning capabilities', async () => {
+    const group = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', name: 'Investigação', description: 'Equipe de análise', version: 1 };
+    const tenantGroup = { create: vi.fn().mockResolvedValue(group) };
+    const auditLog = { create: vi.fn().mockResolvedValue({}) };
+    const outboxEvent = { create: vi.fn().mockResolvedValue({}) };
+    const { service } = serviceWith({ membership: {}, tenantGroup, auditLog, outboxEvent } as never);
+
+    await expect(service.createGroup(identity, { name: group.name, description: group.description })).resolves.toEqual({ ...group, members: [] });
+    expect(tenantGroup.create).toHaveBeenCalledWith({ data: { organizationId: identity.organization.id, name: group.name, description: group.description } });
+    expect(auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'tenant_group.created', resourceId: group.id }) }));
+    expect(outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tenant_group.created', aggregateId: group.id }) }));
+  });
+
+  it('replaces a group membership atomically only with active members of the active tenant', async () => {
+    const groupId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14'; const memberId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15';
+    const tenantGroup = { findFirst: vi.fn().mockResolvedValue({ id: groupId }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: groupId, version: 2 }) };
+    const membership = { findMany: vi.fn().mockResolvedValue([{ id: memberId }]) };
+    const tenantGroupMembership = { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), createMany: vi.fn().mockResolvedValue({ count: 1 }) };
+    const auditLog = { create: vi.fn().mockResolvedValue({}) }; const outboxEvent = { create: vi.fn().mockResolvedValue({}) };
+    const { service } = serviceWith({ membership, tenantGroup, tenantGroupMembership, auditLog, outboxEvent } as never);
+
+    await expect(service.replaceGroupMembers(identity, groupId, { membershipIds: [memberId], expectedVersion: 1 })).resolves.toEqual({ id: groupId, version: 2 });
+    expect(membership.findMany).toHaveBeenCalledWith({ where: { id: { in: [memberId] }, organizationId: identity.organization.id, status: 'ACTIVE' }, select: { id: true } });
+    expect(tenantGroupMembership.createMany).toHaveBeenCalledWith({ data: [{ groupId, membershipId: memberId, organizationId: identity.organization.id }] });
+  });
+
+  it('rejects membership replacement when an inactive or cross-tenant member is requested', async () => {
+    const groupId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14'; const foreignMember = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15';
+    const tenantGroup = { findFirst: vi.fn().mockResolvedValue({ id: groupId }), updateMany: vi.fn() };
+    const membership = { findMany: vi.fn().mockResolvedValue([]) };
+    const { service } = serviceWith({ membership, tenantGroup } as never);
+
+    await expect(service.replaceGroupMembers(identity, groupId, { membershipIds: [foreignMember], expectedVersion: 1 })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tenantGroup.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -62,6 +62,11 @@ const internalRoutes: RouteContract[] = [
   { method: 'DELETE', url: '/v1/organizations/current/invitations/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', expectedStatus: 200 },
   { method: 'POST', url: '/v1/organizations/current/invitations/accept', payload: {}, expectedStatus: 201 },
   { method: 'PATCH', url: '/v1/organizations/current/members/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 },
+  { method: 'GET', url: '/v1/organizations/current/groups', expectedStatus: 200 },
+  { method: 'POST', url: '/v1/organizations/current/groups', payload: {}, expectedStatus: 201 },
+  { method: 'PATCH', url: '/v1/organizations/current/groups/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 },
+  { method: 'POST', url: '/v1/organizations/current/groups/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/members', payload: {}, expectedStatus: 201 },
+  { method: 'DELETE', url: '/v1/organizations/current/groups/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', payload: {}, expectedStatus: 200 },
   { method: 'POST', url: '/v1/invitations/accept', payload: {}, expectedStatus: 201 },
   { method: 'GET', url: '/v1/forms', expectedStatus: 200 },
   { method: 'GET', url: '/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', expectedStatus: 200 },
@@ -169,7 +174,8 @@ describe('internal API surface contract', () => {
       listCurrentInvitations: vi.fn().mockResolvedValue([]),
       revokeCurrentInvitation: vi.fn().mockResolvedValue(undefined),
       acceptInvitationForExistingIdentity: vi.fn().mockResolvedValue({ membershipId: identity.membership.id, organizationId: identity.organization.id, organizationName: 'Acme', organizationSlug: 'acme', role: 'OWNER' }),
-      updateCurrentMember: vi.fn().mockResolvedValue({ id: identity.membership.id, role: 'MEMBER', status: 'ACTIVE' })
+      updateCurrentMember: vi.fn().mockResolvedValue({ id: identity.membership.id, role: 'MEMBER', status: 'ACTIVE' }),
+      listCurrentGroups: vi.fn().mockResolvedValue([]), createGroup: vi.fn().mockResolvedValue({}), updateGroup: vi.fn().mockResolvedValue({}), replaceGroupMembers: vi.fn().mockResolvedValue({}), deleteGroup: vi.fn().mockResolvedValue(undefined)
     };
     const forms = {
       list: vi.fn().mockResolvedValue([]), get: vi.fn().mockResolvedValue({}), create: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}),

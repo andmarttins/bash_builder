@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { membershipRoleSchema, membershipStatusSchema, organizationSlugSchema, type MembershipRole, type MembershipStatus } from '@builder/contracts';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { PrismaService } from '../platform/database/prisma.service.js';
-import { TenantTransactionService } from '../platform/tenant/tenant-transaction.service.js';
+import { TenantTransactionService, type TenantTransaction } from '../platform/tenant/tenant-transaction.service.js';
+import { Prisma } from '@prisma/client';
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(160),
@@ -15,6 +16,16 @@ const updateMemberSchema = z.object({
   status: membershipStatusSchema.optional()
 }).refine((value) => value.role !== undefined || value.status !== undefined, 'Provide a role or status change.');
 const membershipIdSchema = z.uuid();
+const groupIdSchema = z.uuid();
+const expectedGroupVersionSchema = z.number().int().positive();
+const groupNameSchema = z.string().trim().min(2).max(120);
+const groupDescriptionSchema = z.string().trim().max(2_000).nullable();
+const createGroupSchema = z.object({ name: groupNameSchema, description: groupDescriptionSchema.optional() });
+const updateGroupSchema = z.object({ name: groupNameSchema.optional(), description: groupDescriptionSchema.optional(), expectedVersion: expectedGroupVersionSchema })
+  .refine((value) => value.name !== undefined || value.description !== undefined, 'Provide a group name or description change.');
+const replaceGroupMembersSchema = z.object({ membershipIds: z.array(z.uuid()).max(500), expectedVersion: expectedGroupVersionSchema })
+  .refine((value) => new Set(value.membershipIds).size === value.membershipIds.length, 'Group members must be unique.');
+const deleteGroupSchema = z.object({ expectedVersion: expectedGroupVersionSchema });
 const createInvitationSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   role: membershipRoleSchema
@@ -219,6 +230,83 @@ export class OrganizationAccessService {
     });
   }
 
+  /** Groups are directories only; ResourceGrant authorization remains pending ADR approval. */
+  public listCurrentGroups(identity: SessionIdentity) {
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      const groups = await tx.tenantGroup.findMany({
+        where: { organizationId: identity.organization.id },
+        orderBy: { name: 'asc' },
+        include: { memberships: { include: { membership: { include: { identityUser: { select: { email: true } } } } }, orderBy: { createdAt: 'asc' } } }
+      });
+      return groups.map((group) => ({
+        id: group.id, name: group.name, description: group.description, version: group.version,
+        members: group.memberships.map((entry) => ({ id: entry.membership.id, email: entry.membership.identityUser.email, role: entry.membership.role, status: entry.membership.status }))
+      }));
+    });
+  }
+
+  public createGroup(identity: SessionIdentity, input: unknown) {
+    const data = this.validated(createGroupSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      try {
+        const group = await tx.tenantGroup.create({ data: { organizationId: identity.organization.id, name: data.name, description: data.description ?? null } });
+        await this.recordGroupMutation(tx, identity, 'tenant_group.created', group.id, { name: group.name });
+        return { id: group.id, name: group.name, description: group.description, version: group.version, members: [] };
+      } catch (error) {
+        if (this.isUniqueViolation(error)) throw new ConflictException('A group with this name already exists in this organization.');
+        throw error;
+      }
+    });
+  }
+
+  public updateGroup(identity: SessionIdentity, groupId: string, input: unknown) {
+    const id = this.validated(groupIdSchema, groupId);
+    const data = this.validated(updateGroupSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      try {
+        const updated = await tx.tenantGroup.updateMany({
+          where: { id, organizationId: identity.organization.id, version: data.expectedVersion },
+          data: { ...(data.name === undefined ? {} : { name: data.name }), ...(data.description === undefined ? {} : { description: data.description }), version: { increment: 1 } }
+        });
+        if (updated.count !== 1) throw new ConflictException('This group was changed or is not available in this organization. Refresh and try again.');
+        const group = await tx.tenantGroup.findFirstOrThrow({ where: { id, organizationId: identity.organization.id } });
+        await this.recordGroupMutation(tx, identity, 'tenant_group.updated', id, { nameChanged: data.name !== undefined, descriptionChanged: data.description !== undefined });
+        return { id: group.id, name: group.name, description: group.description, version: group.version };
+      } catch (error) {
+        if (this.isUniqueViolation(error)) throw new ConflictException('A group with this name already exists in this organization.');
+        throw error;
+      }
+    });
+  }
+
+  public replaceGroupMembers(identity: SessionIdentity, groupId: string, input: unknown) {
+    const id = this.validated(groupIdSchema, groupId);
+    const data = this.validated(replaceGroupMembersSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      const group = await tx.tenantGroup.findFirst({ where: { id, organizationId: identity.organization.id }, select: { id: true } });
+      if (!group) throw new BadRequestException('The selected group is not available in this organization.');
+      const members = await tx.membership.findMany({ where: { id: { in: data.membershipIds }, organizationId: identity.organization.id, status: 'ACTIVE' }, select: { id: true } });
+      if (members.length !== data.membershipIds.length) throw new BadRequestException('Every group member must be active and belong to this organization.');
+      const updated = await tx.tenantGroup.updateMany({ where: { id, organizationId: identity.organization.id, version: data.expectedVersion }, data: { version: { increment: 1 } } });
+      if (updated.count !== 1) throw new ConflictException('This group was changed. Refresh and try again.');
+      await tx.tenantGroupMembership.deleteMany({ where: { groupId: id, organizationId: identity.organization.id } });
+      if (members.length > 0) await tx.tenantGroupMembership.createMany({ data: members.map((member) => ({ groupId: id, membershipId: member.id, organizationId: identity.organization.id })) });
+      const result = await tx.tenantGroup.findFirstOrThrow({ where: { id, organizationId: identity.organization.id }, select: { id: true, version: true } });
+      await this.recordGroupMutation(tx, identity, 'tenant_group.members_replaced', id, { memberCount: members.length });
+      return result;
+    });
+  }
+
+  public deleteGroup(identity: SessionIdentity, groupId: string, input: unknown): Promise<void> {
+    const id = this.validated(groupIdSchema, groupId);
+    const data = this.validated(deleteGroupSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      const deleted = await tx.tenantGroup.deleteMany({ where: { id, organizationId: identity.organization.id, version: data.expectedVersion } });
+      if (deleted.count !== 1) throw new ConflictException('This group was changed or is not available in this organization. Refresh and try again.');
+      await this.recordGroupMutation(tx, identity, 'tenant_group.deleted', id, {});
+    });
+  }
+
   private assertManagementPolicy(
     actorRole: MembershipRole,
     targetRole: MembershipRole,
@@ -230,6 +318,11 @@ export class OrganizationAccessService {
     if (!manageAsAdmin || !keepBelowAdmin) {
       throw new ForbiddenException('Administrators can manage only members and viewers.');
     }
+  }
+
+  private async recordGroupMutation(tx: TenantTransaction, identity: SessionIdentity, action: string, groupId: string, metadata: Record<string, string | number | boolean>): Promise<void> {
+    await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action, resourceType: 'tenant_group', resourceId: groupId, metadata: metadata as Prisma.InputJsonValue } });
+    await tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: groupId, eventType: action, payload: metadata as Prisma.InputJsonValue } });
   }
 
   private requireTokenHash(token: string | undefined): string {
