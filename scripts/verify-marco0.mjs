@@ -4,12 +4,14 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const root = globalThis.process.cwd();
-const migrationDirectory = join(root, 'docs', 'migration');
+const migrationDirectory = resolve(root, globalThis.process.env.NODE_ENV === 'test' && globalThis.process.env.MIGRATION_DIRECTORY ? globalThis.process.env.MIGRATION_DIRECTORY : join('docs', 'migration'));
 const pilotsDirectory = resolve(root, globalThis.process.env.MIGRATION_PILOTS_DIRECTORY ?? join('docs', 'migration', 'pilots'));
 const assetsDirectory = resolve(root, globalThis.process.env.MIGRATION_ASSETS_DIRECTORY ?? join('docs', 'migration', 'assets'));
 const requireActive = globalThis.process.argv.includes('--require-active');
+const requireLegacyCheckout = globalThis.process.argv.includes('--require-legacy-checkout');
 const requiredApprovalRoles = ['BUSINESS', 'SECURITY', 'PRIVACY', 'OPERATIONS'];
 const classifications = new Set(['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED']);
+const manifestFile = 'legacy-path-manifest.txt';
 const failures = [];
 
 const readJson = async (path) => {
@@ -33,6 +35,16 @@ const validTimestamp = (value) => {
 const validOwner = (value) => reference(value) && /^external:\/\/people\/[a-z0-9._-]+$/i.test(value);
 const validApproval = (value) => reference(value?.approvalId) && validTimestamp(value?.approvedAt) && sha256(value?.evidenceSha256);
 const validReference = (value) => reference(value?.externalLocation) && sha256(value?.contentSha256) && classifications.has(value?.classification) && nonBlank(value?.retention) && validApproval(value?.approval);
+const canonicalJson = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+};
+const decisionDigest = (asset) => {
+  const unsignedAsset = { ...asset };
+  delete unsignedAsset.decisionSha256;
+  return createHash('sha256').update(canonicalJson(unsignedAsset)).digest('hex');
+};
 
 const baseline = await readJson(join(migrationDirectory, 'legacy-baseline.json'));
 const inventory = await readJson(join(migrationDirectory, 'legacy-inventory.json'));
@@ -42,12 +54,14 @@ if (baseline) {
   if (!Number.isInteger(baseline.trackedFileCount) || baseline.trackedFileCount < 1) fail('legacy-baseline.json', 'trackedFileCount inválido.');
   if (!Array.isArray(baseline.assetGroups) || baseline.assetGroups.length === 0 || new Set(baseline.assetGroups).size !== baseline.assetGroups.length) fail('legacy-baseline.json', 'assetGroups deve ser não vazio e sem duplicatas.');
 }
-if (!inventory || inventory.schemaVersion !== 1 || !baseline || inventory.baselineCommit !== baseline.baselineCommit || inventory.baselineTree !== baseline.baselineTree || inventory.trackedFileCount !== baseline.trackedFileCount || !nonBlank(inventory.pathManifestFile) || !sha256(inventory.pathManifestSha256) || !nonBlank(inventory.capturedBy)) fail('legacy-inventory.json', 'inventário deve referenciar integralmente o baseline e seu manifesto.');
-if (inventory?.pathManifestFile) {
+if (!inventory || inventory.schemaVersion !== 1 || !baseline || inventory.baselineCommit !== baseline.baselineCommit || inventory.baselineTree !== baseline.baselineTree || inventory.trackedFileCount !== baseline.trackedFileCount || inventory.pathManifestFile !== manifestFile || !sha256(inventory.pathManifestSha256) || !nonBlank(inventory.capturedBy)) fail('legacy-inventory.json', 'inventário deve referenciar integralmente o baseline e o manifesto canônico.');
+if (inventory?.pathManifestFile === manifestFile) {
   try {
     const manifestPaths = (await readFile(join(migrationDirectory, inventory.pathManifestFile), 'utf8')).trim().split(/\r?\n/).filter(Boolean);
     const manifestHash = createHash('sha256').update(`${manifestPaths.join('\n')}\n`).digest('hex');
-    if (manifestPaths.length !== inventory.trackedFileCount || new Set(manifestPaths).size !== manifestPaths.length || manifestPaths.some((path) => path !== path.trim()) || manifestHash !== inventory.pathManifestSha256) fail('legacy-path-manifest.txt', 'manifesto versionado não corresponde ao hash, à contagem ou à ordenação declarados.');
+    const validPath = (path) => path === path.trim() && path.length > 0 && !path.startsWith('/') && !path.includes('\\') && !path.includes('\0') && !path.split('/').includes('..');
+    const strictlySorted = manifestPaths.every((path, index) => index === 0 || manifestPaths[index - 1] < path);
+    if (manifestPaths.length !== inventory.trackedFileCount || new Set(manifestPaths).size !== manifestPaths.length || manifestPaths.some((path) => !validPath(path)) || !strictlySorted || manifestHash !== inventory.pathManifestSha256) fail('legacy-path-manifest.txt', 'manifesto versionado não corresponde ao hash, à contagem, aos paths relativos ou à ordenação declarados.');
   } catch (error) { fail('legacy-path-manifest.txt', `não foi possível verificar (${error instanceof Error ? error.message : 'erro desconhecido'}).`); }
 }
 
@@ -59,6 +73,8 @@ for (const file of await files(assetsDirectory)) {
   assetDecisions.set(asset.assetGroup, asset);
   if (asset.schemaVersion !== 1 || !['MIGRATE', 'SUBSTITUTE', 'DECOMMISSION'].includes(asset.decision) || asset.status !== 'APPROVED' || !reference(asset.decisionId) || !sha256(asset.decisionSha256)) fail(`assets/${file}`, 'schemaVersion, decisão, decisionId/hash imutáveis e status APPROVED são obrigatórios.');
   if (!validOwner(asset.businessOwner) || !validReference(asset.evidence) || !classifications.has(asset.classification) || !nonBlank(asset.retention) || !validApproval(asset.approval) || !validReference(asset.reconciliation)) fail(`assets/${file}`, 'owner, evidência, classificação, retenção, aprovação e reconciliação estruturados são obrigatórios.');
+  if (baseline && !baseline.assetGroups.includes(asset.assetGroup)) fail(`assets/${file}`, 'assetGroup deve pertencer ao baseline canônico.');
+  if (sha256(asset.decisionSha256) && asset.decisionSha256 !== decisionDigest(asset)) fail(`assets/${file}`, 'decisionSha256 deve corresponder ao conteúdo canônico da decisão.');
 }
 
 const pilots = [];
@@ -96,11 +112,12 @@ for (const { file, pilot } of activePilots) {
 }
 
 const checkout = globalThis.process.env.LEGACY_BASELINE_CHECKOUT;
+if (requireLegacyCheckout && !checkout) fail('Gate Marco 0', 'LEGACY_BASELINE_CHECKOUT autorizado é obrigatório para extração, carga ou corte.');
 if (checkout && baseline && inventory) {
   try {
     const commit = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     const tree = execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
-    const paths = execFileSync('git', ['-C', checkout, 'ls-tree', '-r', '--name-only', 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+    const paths = execFileSync('git', ['-C', checkout, 'ls-tree', '-rz', '--name-only', 'HEAD']).toString('utf8').split('\0').filter(Boolean).sort();
     const manifest = createHash('sha256').update(`${paths.join('\n')}\n`).digest('hex');
     if (commit !== baseline.baselineCommit || tree !== baseline.baselineTree || paths.length !== baseline.trackedFileCount || manifest !== inventory.pathManifestSha256) fail('legacy checkout', 'não reproduz o commit, tree ou manifesto do baseline.');
   } catch (error) { fail('legacy checkout', `não foi possível verificar (${error instanceof Error ? error.message : 'erro desconhecido'}).`); }

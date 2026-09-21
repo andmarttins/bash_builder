@@ -16,7 +16,8 @@ tokens, URLs assinadas ou conteúdo de arquivos.
 - `pilots/`: uma carta JSON por piloto. Somente uma pode estar `ACTIVE`.
 - `assets/`: decisões aprovadas por grupo legado. Uma carta `ACTIVE` só pode
   incluir IDs do baseline que possuam decisão `APPROVED` de migração ou
-  substituição e uma referência imutável (`decisionId` + hash) neste diretório.
+  substituição e uma referência imutável (`decisionId` + hash de todo o JSON
+  canônico, sem o próprio hash) neste diretório.
 
 Mapeamentos contendo PII, extratos e evidências assinadas ficam em repositório
 externo criptografado com acesso mínimo. A carta referencia somente URI/ID
@@ -29,7 +30,10 @@ não houver piloto ativo, o comando passa deliberadamente, mas informa que o
 gate para carga permanece fechado. Antes de qualquer extração, carga ou corte,
 execute `npm run migration:gate-marco0`; ele exige uma única carta `ACTIVE`
 sem campos pendentes, com aprovações, escopo/dependências e referências de
-identidade, acesso, exceções e reconciliação.
+identidade, acesso, exceções e reconciliação. Este comando também exige
+`LEGACY_BASELINE_CHECKOUT` apontando para um checkout autorizado do commit
+legado: ele não libera extração, carga ou corte com a validação interna da CI
+apenas.
 
 Uma aprovação humana continua externa, porém a referência, data, papel do
 aprovador e hash da evidência precisam constar da carta. O protocolo completo

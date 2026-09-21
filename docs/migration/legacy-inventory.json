@@ -4,7 +4,7 @@
   "baselineTree": "90ce153c920deb0414afadee1ef6af2fe10ca282",
   "trackedFileCount": 346,
   "pathManifestFile": "legacy-path-manifest.txt",
-  "pathManifestSha256": "b7e51633c3d86add95196643925dee4a52dc92b8d76b51c0bd0e9fed98c96059",
+  "pathManifestSha256": "ffd8a6732538f7aac40c770063d83114b47b2381137a39cd962fe0655f47ba31",
   "capturedAt": "2026-09-21",
   "capturedBy": "git fetch legacy-origin main; git ls-tree -r --name-only",
   "scope": ["all tracked paths", "Prisma schema", "route groups", "pages", "services"]

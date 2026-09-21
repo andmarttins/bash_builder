@@ -4,7 +4,7 @@
   "decision": "SUBSTITUTE",
   "status": "APPROVED",
   "decisionId": "external://asset-decisions/FOR-01/v1",
-  "decisionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "decisionSha256": "1597583e80366b187f0dc835213daadb46fdfee520de4265cb62e2dac3e3aa34",
   "businessOwner": "external://people/business-owner-example",
   "evidence": { "externalLocation": "external://evidence/usage-example", "contentSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/asset-evidence-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } },
   "classification": "CONFIDENTIAL",
