@@ -98,6 +98,45 @@ describe('calculateHhtRates', () => {
     await expect(service.addCardAttachment(identity, eventId, { fileId })).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('links only a ready tenant file to a safety event and records the audit event', async () => {
+    const fileId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a23';
+    const attachmentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a24';
+    const tx = {
+      safetyEvent: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
+      fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: fileId }) },
+      safetyEventAttachment: { create: vi.fn().mockResolvedValue({ id: attachmentId, fileId }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.addEventAttachment(identity, eventId, { fileId, category: 'foto' })).resolves.toMatchObject({ id: attachmentId });
+    expect(tx.fileAsset.findFirst).toHaveBeenCalledWith({ where: { id: fileId, status: 'READY' }, select: { id: true } });
+    expect(tx.safetyEventAttachment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventId, fileId, organizationId: identity.organization.id }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'safety_event.attachment_linked', resourceId: attachmentId }) }));
+    tx.fileAsset.findFirst.mockResolvedValue(null);
+    await expect(service.addEventAttachment(identity, eventId, { fileId })).rejects.toBeInstanceOf(NotFoundException);
+    tx.fileAsset.findFirst.mockResolvedValue({ id: fileId });
+    tx.safetyEventAttachment.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('duplicate', { code: 'P2002', clientVersion: '6.19.3' }));
+    await expect(service.addEventAttachment(identity, eventId, { fileId })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('prepares a download only for a ready attachment belonging to the requested safety event', async () => {
+    const attachmentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a25';
+    const tx = {
+      safetyEventAttachment: { findFirst: vi.fn().mockResolvedValue({ id: attachmentId, fileId: eventId, file: { status: 'READY', storageKey: 'acme/evidence.pdf', originalName: 'evidence.pdf' } }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const storage = { isConfigured: vi.fn().mockReturnValue(true), openDownload: vi.fn().mockResolvedValue({ body: Buffer.from('ok'), contentType: 'application/pdf', contentLength: 2 }) };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, storage as never);
+    await expect(service.openEventAttachmentDownload(identity, eventId, attachmentId)).resolves.toMatchObject({ filename: 'evidence.pdf', contentType: 'application/pdf' });
+    expect(tx.safetyEventAttachment.findFirst).toHaveBeenCalledWith({ where: { id: attachmentId, eventId }, include: { file: true } });
+    expect(storage.openDownload).toHaveBeenCalledWith('acme/evidence.pdf', 'evidence.pdf');
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'safety_event.attachment_download_prepared', resourceId: attachmentId }) }));
+    tx.safetyEventAttachment.findFirst.mockResolvedValue(null);
+    await expect(service.openEventAttachmentDownload(identity, eventId, attachmentId)).rejects.toBeInstanceOf(NotFoundException);
+    const unavailableStorage = { isConfigured: vi.fn().mockReturnValue(false) };
+    await expect(new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, unavailableStorage as never).openEventAttachmentDownload(identity, eventId, attachmentId)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('does not approve a change while an approval decision is pending', async () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },

@@ -3227,15 +3227,18 @@ function EventsModulePage({
   canManage: boolean;
 }): React.JSX.Element {
   const [events, setEvents] = useState<Array<Record<string, unknown>>>([]);
+  const [readyFiles, setReadyFiles] = useState<Array<Record<string, unknown>>>([]);
   const [eventClasses, setEventClasses] = useState<Array<{ id: string; label: string; active: boolean }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const load = useCallback(async (): Promise<void> => {
     try {
-      setEvents(
-        (await api<{ events: Array<Record<string, unknown>> }>("/v1/events"))
-          .events,
-      );
+      const response = await api<{ events: Array<Record<string, unknown>> }>("/v1/events");
+      setEvents(response.events);
+      if (canManage) {
+        const files = await api<{ files: Array<Record<string, unknown>> }>("/v1/files");
+        setReadyFiles(files.files.filter((file) => file.status === "READY"));
+      } else setReadyFiles([]);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -3243,7 +3246,7 @@ function EventsModulePage({
           : "Não foi possível carregar os eventos.",
       );
     }
-  }, []);
+  }, [canManage]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -3313,6 +3316,18 @@ function EventsModulePage({
     } finally {
       setPending(false);
     }
+  }
+  async function attach(eventId: string, event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const fileId = new FormData(event.currentTarget).get("fileId");
+    if (typeof fileId !== "string" || !fileId) return;
+    setPending(true); setError(null);
+    try {
+      await api(`/v1/events/${eventId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) });
+      event.currentTarget.reset(); await load();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível vincular o arquivo.");
+    } finally { setPending(false); }
   }
   async function completeAction(
     eventId: string,
@@ -3455,6 +3470,9 @@ function EventsModulePage({
               const actions = Array.isArray(safetyEvent.actions)
                 ? safetyEvent.actions.filter(isRecord)
                 : [];
+              const attachments = Array.isArray(safetyEvent.attachments)
+                ? safetyEvent.attachments.filter(isRecord)
+                : [];
               return (
                 <article
                   className="form-row event-detail"
@@ -3508,6 +3526,16 @@ function EventsModulePage({
                         ))}
                       </ul>
                     )}
+                    {attachments.length > 0 && (
+                      <ul className="nested-list">
+                        {attachments.map((attachment) => {
+                          const file = isRecord(attachment.file) ? attachment.file : undefined;
+                          const attachmentId = stringValue(attachment.id);
+                          const fileName = file ? stringValue(file.originalName) ?? "Arquivo" : "Arquivo indisponível";
+                          return <li key={attachmentId ?? recordTitle(attachment)}>{eventId && attachmentId && file ? <a href={`/api/v1/events/${eventId}/attachments/${attachmentId}/download`}>{fileName}</a> : fileName}{stringValue(attachment.category) ? ` · ${stringValue(attachment.category)}` : ""}</li>;
+                        })}
+                      </ul>
+                    )}
                     {canManage && eventId && (
                       <>
                         <form
@@ -3541,6 +3569,12 @@ function EventsModulePage({
                             Adicionar ação
                           </button>
                         </form>
+                        {readyFiles.length > 0 && (
+                          <form className="inline-form compact-form" onSubmit={(formEvent) => void attach(eventId, formEvent)}>
+                            <label>Anexar arquivo validado<select name="fileId" required defaultValue=""><option value="" disabled>Selecione um arquivo</option>{readyFiles.map((file) => <option key={String(file.id)} value={String(file.id)}>{recordTitle(file)}</option>)}</select></label>
+                            <button className="secondary-button compact" type="submit" disabled={pending}>Vincular</button>
+                          </form>
+                        )}
                         <div className="action-row">
                           <select
                             aria-label="Novo estado do evento"

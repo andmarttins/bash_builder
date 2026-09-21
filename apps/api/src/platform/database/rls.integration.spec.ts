@@ -44,6 +44,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     await bootstrap.query('DELETE FROM "audit_logs"');
     await bootstrap.query('DELETE FROM "organization_invitations"');
     await bootstrap.query('DELETE FROM "safety_event_actions"');
+    await bootstrap.query('DELETE FROM "safety_event_attachments"');
     await bootstrap.query('DELETE FROM "safety_events"');
     await bootstrap.query('DELETE FROM "bash_card_attachments"');
     await bootstrap.query('DELETE FROM "change_evidence"');
@@ -398,7 +399,7 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
-    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'bash_card_attachments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'hht_period_publications', 'dashboards', 'integrations', 'file_assets', 'form_submission_attachments', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
+    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'safety_event_attachments', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'bash_card_attachments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'hht_period_publications', 'dashboards', 'integrations', 'file_assets', 'form_submission_attachments', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
       "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1::text[]) ORDER BY tablename",
       [tableNames]
@@ -413,15 +414,28 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect(rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
 
     const eventA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a71';
+    const eventB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a74';
     const classificationA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a72';
     const classificationB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a73';
+    const fileA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a75';
+    const fileB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a76';
+    const attachmentA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a77';
+    const attachmentB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a78';
     await bootstrap.query("INSERT INTO \"classification_items\" (id, organization_id, category, label, value, updated_at) VALUES ($1, $2, 'event_classification', 'Tenant A', 'tenant-a', NOW()), ($3, $4, 'event_classification', 'Tenant B', 'tenant-b', NOW())", [classificationA, tenantA, classificationB, tenantB]);
     await bootstrap.query("INSERT INTO \"safety_events\" (id, organization_id, code, title, occurred_at, origin, actual_classification_id, updated_at) VALUES ($1, $2, 'EV-A', 'Event A', NOW(), 'TEST', $3, NOW())", [eventA, tenantA, classificationA]);
+    await bootstrap.query("INSERT INTO \"safety_events\" (id, organization_id, code, title, occurred_at, origin, updated_at) VALUES ($1, $2, 'EV-B', 'Event B', NOW(), 'TEST', NOW())", [eventB, tenantB]);
+    await bootstrap.query("INSERT INTO \"file_assets\" (id, organization_id, storage_key, original_name, content_type, byte_size, status, updated_at) VALUES ($1, $2, 'tenant-a/event.pdf', 'event.pdf', 'application/pdf', 1, 'READY', NOW()), ($3, $4, 'tenant-b/event.pdf', 'event.pdf', 'application/pdf', 1, 'READY', NOW())", [fileA, tenantA, fileB, tenantB]);
+    await bootstrap.query('INSERT INTO "safety_event_attachments" (id, organization_id, event_id, file_id) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)', [attachmentA, tenantA, eventA, fileA, attachmentB, tenantB, eventB, fileB]);
+    await expect(bootstrap.query('INSERT INTO "safety_event_attachments" (organization_id, event_id, file_id) VALUES ($1, $2, $3)', [tenantA, eventA, fileB])).rejects.toThrow(/foreign key/i);
     await expect(bootstrap.query('UPDATE "safety_events" SET actual_classification_id = $1 WHERE id = $2', [classificationB, eventA])).rejects.toThrow(/foreign key/i);
     await runtime.query('BEGIN');
     try {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
       expect((await runtime.query('SELECT id, actual_classification_id FROM "safety_events"')).rows).toEqual([{ id: eventA, actual_classification_id: classificationA }]);
+      expect((await runtime.query('SELECT id FROM "safety_event_attachments"')).rows).toEqual([{ id: attachmentA }]);
+      expect((await runtime.query('UPDATE "safety_event_attachments" SET category = \'forbidden\' WHERE id = $1 RETURNING id', [attachmentB])).rows).toEqual([]);
+      expect((await runtime.query('DELETE FROM "safety_event_attachments" WHERE id = $1 RETURNING id', [attachmentB])).rows).toEqual([]);
+      await expect(runtime.query('INSERT INTO "safety_event_attachments" (organization_id, event_id, file_id) VALUES ($1, $2, $3)', [tenantB, eventB, fileB])).rejects.toThrow(/row-level security/i);
       await expect(runtime.query("INSERT INTO \"safety_event_actions\" (organization_id, event_id, title, updated_at) VALUES ($1, $2, 'forbidden', NOW())", [tenantB, eventA])).rejects.toThrow(/row-level security|foreign key/i);
       await expect(runtime.query("INSERT INTO \"classification_items\" (organization_id, category, label, value, updated_at) VALUES ($1, 'event_type', 'cross', 'cross', NOW())", [tenantB])).rejects.toThrow(/row-level security/i);
     } finally {

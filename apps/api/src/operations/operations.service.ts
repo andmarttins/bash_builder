@@ -125,7 +125,7 @@ export class OperationsService {
   }
 
   public listEvents(identity: SessionIdentity) {
-    return this.withTenant(identity, (tx) => tx.safetyEvent.findMany({ include: { actions: { orderBy: { dueAt: 'asc' } } }, orderBy: { occurredAt: 'desc' } }));
+    return this.withTenant(identity, (tx) => tx.safetyEvent.findMany({ include: { actions: { orderBy: { dueAt: 'asc' } }, attachments: { include: { file: { select: { id: true, originalName: true, contentType: true, byteSize: true } } }, orderBy: { createdAt: 'desc' } } }, orderBy: { occurredAt: 'desc' } }));
   }
 
   public createEvent(identity: SessionIdentity, input: unknown) {
@@ -463,6 +463,36 @@ export class OperationsService {
       const window = await tx.hhtReportWindow.upsert({ where: { organizationId_year_month: { organizationId: identity.organization.id, year: data.year, month: data.month } }, create: { organizationId: identity.organization.id, ...data }, update: data });
       await this.record(tx, identity, 'hht_window.upserted', 'hht_window', window.id, { year: window.year, month: window.month });
       return window;
+    });
+  }
+
+  public addEventAttachment(identity: SessionIdentity, eventIdInput: string, input: unknown) {
+    const eventId = this.id(eventIdInput); const data = this.parse(evidenceSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      await this.eventExists(tx, eventId);
+      if (!await tx.fileAsset.findFirst({ where: { id: data.fileId, status: 'READY' }, select: { id: true } })) throw new NotFoundException('Arquivo pronto não encontrado nesta organização.');
+      let attachment;
+      try {
+        attachment = await tx.safetyEventAttachment.create({ data: { organizationId: identity.organization.id, eventId, ...data }, include: { file: true } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Este arquivo já está vinculado ao evento.');
+        throw error;
+      }
+      await this.record(tx, identity, 'safety_event.attachment_linked', 'safety_event_attachment', attachment.id, { eventId, fileId: data.fileId });
+      return attachment;
+    });
+  }
+
+  public openEventAttachmentDownload(identity: SessionIdentity, eventIdInput: string, attachmentIdInput: string) {
+    const eventId = this.id(eventIdInput); const attachmentId = this.id(attachmentIdInput);
+    return this.withTenant(identity, async (tx) => {
+      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const attachment = await tx.safetyEventAttachment.findFirst({ where: { id: attachmentId, eventId }, include: { file: true } });
+      if (!attachment || attachment.file.status !== 'READY') throw new NotFoundException('Anexo pronto para download não encontrado.');
+      const filename = this.safeFilename(attachment.file.originalName);
+      const download = await this.storage.openDownload(attachment.file.storageKey, filename);
+      await this.record(tx, identity, 'safety_event.attachment_download_prepared', 'safety_event_attachment', attachment.id, { eventId, fileId: attachment.fileId });
+      return { ...download, filename };
     });
   }
 

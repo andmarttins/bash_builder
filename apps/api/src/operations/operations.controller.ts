@@ -21,6 +21,17 @@ export class OperationsController {
   public createEvent(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createEvent(request.identity, input).then((event) => ({ event })); }
   @Post('events/:eventId/actions') @RequiredCapabilities('events.manage')
   public addEventAction(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string, @Body() input: unknown) { return this.operations.addEventAction(request.identity, eventId, input).then((action) => ({ action })); }
+  @Post('events/:eventId/attachments') @RequiredCapabilities('events.manage')
+  public addEventAttachment(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string, @Body() input: unknown) { return this.operations.addEventAttachment(request.identity, eventId, input).then((attachment) => ({ attachment })); }
+  @Get('events/:eventId/attachments/:attachmentId/download') @RequiredCapabilities('events.view')
+  public eventAttachmentDownload(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string, @Param('attachmentId') attachmentId: string, @Res({ passthrough: true }) reply: FastifyReply) {
+    return this.operations.openEventAttachmentDownload(request.identity, eventId, attachmentId).then((download) => {
+      reply.header('content-type', download.contentType ?? 'application/octet-stream');
+      if (download.contentLength !== undefined) reply.header('content-length', download.contentLength);
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`);
+      return download.body;
+    });
+  }
   @Patch('events/:eventId/actions/:actionId/complete') @RequiredCapabilities('events.manage')
   public completeEventAction(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string, @Param('actionId') actionId: string) { return this.operations.completeEventAction(request.identity, eventId, actionId).then((action) => ({ action })); }
   @Post('events/:eventId/status') @RequiredCapabilities('events.manage')
