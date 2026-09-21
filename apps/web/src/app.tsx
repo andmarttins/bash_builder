@@ -43,6 +43,7 @@ type WorkspaceView =
   | "dashboards"
   | "tv"
   | "integrations"
+  | "operations"
   | "classifications"
   | "files"
   | "organization"
@@ -1938,6 +1939,8 @@ export function App(): React.JSX.Element {
                 identity.membership.role === "ADMIN"
               }
             />
+          ) : workspaceView === "operations" ? (
+            <OperationsHealthPage />
           ) : (
             <OperationalModulePage
               view={workspaceView}
@@ -2201,6 +2204,15 @@ export function App(): React.JSX.Element {
       </section>
     </main>
   );
+}
+
+function OperationsHealthPage(): React.JSX.Element {
+  const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async (): Promise<void> => { try { setSummary(await api<Record<string, unknown>>("/v1/operations/summary")); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível carregar o resumo operacional."); } }, []);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
+  const outbox = summary?.outbox;
+  return <><p className="eyebrow">Operação segura</p><h1 id="dashboard-title">Saúde operacional</h1><p className="description">Acompanhe a fila da sua organização antes do piloto. Dados de outras empresas e payloads de eventos não são expostos.</p>{error && <p className="form-error" role="alert">{error}</p>}{isRecord(outbox) && <section className="overview-grid"><article className="overview-card"><span>Pendentes</span><strong>{String(outbox.pending ?? 0)}</strong></article><article className="overview-card"><span>Processando</span><strong>{String(outbox.processing ?? 0)}</strong></article><article className="overview-card"><span>Falhas</span><strong>{String(outbox.failed ?? 0)}</strong></article><article className="overview-card"><span>DLQ</span><strong>{String(outbox.deadLetter ?? 0)}</strong></article><article className="overview-card"><span>Leases vencidos</span><strong>{String(outbox.expiredLeases ?? 0)}</strong></article></section>}<button className="secondary-button compact" type="button" onClick={() => void load()}>Atualizar</button></>;
 }
 
 function ProfilePage({
@@ -2480,6 +2492,7 @@ type OperationalView = Exclude<
   | "dashboards"
   | "tv"
   | "integrations"
+  | "operations"
   | "files"
   | "organization"
   | "profile"

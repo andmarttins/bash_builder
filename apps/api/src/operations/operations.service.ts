@@ -850,6 +850,19 @@ export class OperationsService {
     return this.withTenant(identity, (tx) => tx.outboxEvent.findMany({ where: { status: 'DEAD_LETTER' }, select: { id: true, eventType: true, aggregateId: true, attemptCount: true, lastError: true, createdAt: true }, orderBy: { createdAt: 'desc' } }));
   }
 
+  public operationalSummary(identity: SessionIdentity) {
+    return this.withTenant(identity, async (tx) => {
+      const now = new Date();
+      const [byStatus, oldestPending, expiredLeases] = await Promise.all([
+        tx.outboxEvent.groupBy({ by: ['status'], _count: { _all: true } }),
+        tx.outboxEvent.findFirst({ where: { status: { in: ['PENDING', 'FAILED'] } }, select: { createdAt: true }, orderBy: { createdAt: 'asc' } }),
+        tx.outboxEvent.count({ where: { status: 'PROCESSING', leasedUntil: { lt: now } } })
+      ]);
+      const counts = Object.fromEntries(byStatus.map((item) => [item.status, item._count._all]));
+      return { generatedAt: now.toISOString(), outbox: { pending: counts.PENDING ?? 0, processing: counts.PROCESSING ?? 0, failed: counts.FAILED ?? 0, deadLetter: counts.DEAD_LETTER ?? 0, published: counts.PUBLISHED ?? 0, expiredLeases, oldestPendingAt: oldestPending?.createdAt.toISOString() ?? null } };
+    });
+  }
+
   public redriveDeadLetter(identity: SessionIdentity, eventIdInput: string) {
     const eventId = this.id(eventIdInput);
     return this.withTenant(identity, async (tx) => {

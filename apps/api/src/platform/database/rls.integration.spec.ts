@@ -595,6 +595,17 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect((await worker.query<{ claimed: boolean }>('SELECT app.claim_worker_event_receipt($1::uuid, $2::uuid, $3, $4) AS claimed', [eventId, tenantA, 'test-consumer', 30])).rows).toEqual([{ claimed: false }]);
   });
 
+  it('isolates operational outbox aggregates to the active tenant', async () => {
+    const pendingA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380e11'; const processingA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380e12'; const pendingB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380e13';
+    await bootstrap.query("INSERT INTO \"outbox_events\" (id, organization_id, aggregate_id, event_type, payload, status, leased_until) VALUES ($1, $2, $1, 'summary.a', '{}', 'PENDING', NULL), ($3, $2, $3, 'summary.a', '{}', 'PROCESSING', NOW() - INTERVAL '1 minute'), ($4, $5, $4, 'summary.b', '{}', 'PENDING', NULL)", [pendingA, tenantA, processingA, pendingB, tenantB]);
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query("SELECT status::text, count(*)::int AS total FROM \"outbox_events\" GROUP BY status ORDER BY status")).rows).toEqual([{ status: 'PENDING', total: 1 }, { status: 'PROCESSING', total: 1 }]);
+      expect((await runtime.query("SELECT count(*)::int AS total FROM \"outbox_events\" WHERE status = 'PROCESSING' AND leased_until < NOW()")).rows).toEqual([{ total: 1 }]);
+    } finally { await runtime.query('ROLLBACK'); }
+  });
+
   it('grants worker queue procedures without direct queue table access', async () => {
     const permissions = await bootstrap.query<{ worker: boolean; runtime: boolean; legacy_failure: boolean }>(
       "SELECT has_function_privilege('app_worker', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS worker, has_function_privilege('app_runtime', 'app.claim_outbox_events(integer,integer)', 'EXECUTE') AS runtime, has_function_privilege('app_worker', 'app.mark_outbox_failed(uuid,integer)', 'EXECUTE') AS legacy_failure"

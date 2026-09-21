@@ -716,4 +716,14 @@ describe('calculateHhtRates', () => {
       if (original === undefined) delete process.env[secretRef]; else process.env[secretRef] = original;
     }
   });
+
+  it('summarizes only the active tenant outbox health without reading event payloads', async () => {
+    const oldest = new Date('2026-09-21T00:00:00.000Z');
+    const tx = { outboxEvent: { groupBy: vi.fn().mockResolvedValue([{ status: 'PENDING', _count: { _all: 2 } }, { status: 'DEAD_LETTER', _count: { _all: 1 } }]), findFirst: vi.fn().mockResolvedValue({ createdAt: oldest }), count: vi.fn().mockResolvedValue(3) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const summary = await new OperationsService(tenants as never).operationalSummary(identity);
+    expect(summary.outbox).toEqual({ pending: 2, processing: 0, failed: 0, deadLetter: 1, published: 0, expiredLeases: 3, oldestPendingAt: oldest.toISOString() });
+    expect(tx.outboxEvent.groupBy).toHaveBeenCalledWith({ by: ['status'], _count: { _all: true } });
+    expect(tx.outboxEvent.findFirst.mock.calls[0]![0]).toEqual(expect.objectContaining({ where: { status: { in: ['PENDING', 'FAILED'] } }, select: { createdAt: true } }));
+  });
 });

@@ -146,6 +146,8 @@ export class OperationsController {
 
   @Get('operations/outbox/dead-letter') @RequiredCapabilities('operations.view')
   public deadLetters(@Req() request: AuthenticatedRequest) { return this.operations.listDeadLetters(request.identity).then((events) => ({ events })); }
+  @Get('operations/summary') @RequiredCapabilities('operations.view')
+  public operationalSummary(@Req() request: AuthenticatedRequest) { return this.operations.operationalSummary(request.identity); }
   @Post('operations/outbox/dead-letter/:eventId/redrive') @RequiredCapabilities('operations.manage')
   public redriveDeadLetter(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string) { return this.operations.redriveDeadLetter(request.identity, eventId).then((event) => ({ event })); }
 }
