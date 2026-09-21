@@ -5,6 +5,7 @@ import { request } from 'node:https';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { getWorkerRuntimeConfig } from '../config/runtime-config.js';
 import { type WebhookDelivery, WorkerDatabaseHealthService } from '../health/worker-database-health.service.js';
+import { WorkerMetricsService } from '../health/worker-metrics.service.js';
 import { retryDelaySeconds } from './outbox-dispatcher.service.js';
 
 type ResolvedAddress = { address: string; family: number };
@@ -104,7 +105,7 @@ export class WebhookDeliveryDispatcherService implements OnModuleInit, OnModuleD
   private timer: NodeJS.Timeout | undefined;
   private running = false;
 
-  public constructor(private readonly database: WorkerDatabaseHealthService) {}
+  public constructor(private readonly database: WorkerDatabaseHealthService, private readonly metrics?: WorkerMetricsService) {}
 
   public async onModuleInit(): Promise<void> {
     const config = getWorkerRuntimeConfig();
@@ -146,9 +147,11 @@ export class WebhookDeliveryDispatcherService implements OnModuleInit, OnModuleD
       await postWebhook(endpoint, delivery.event_id, body, signature, remainingMs, config.WEBHOOK_DELIVERY_MAX_BYTES);
       const delivered = await this.database.markWebhookDeliveryDelivered(delivery.id, delivery.lease_token);
       if (!delivered) this.logger.warn(`Webhook delivery ${delivery.id} lost its lease after HTTP success; receiver deduplication may observe a retry.`);
+      else this.metrics?.increment('webhook_delivered');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown webhook delivery failure';
       const failed = await this.database.markWebhookDeliveryFailed(delivery.id, delivery.lease_token, retryDelaySeconds(delivery.attempt_count), config.WEBHOOK_DELIVERY_MAX_ATTEMPTS, message);
+      if (failed) this.metrics?.increment('webhook_failed');
       if (!failed) this.logger.warn(`Webhook delivery ${delivery.id} could not be transitioned after failure.`);
     }
   }

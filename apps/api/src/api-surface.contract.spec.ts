@@ -3,6 +3,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import cookie from '@fastify/cookie';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HealthController } from './health/health.controller.js';
+import { RuntimeMetricsService } from './health/runtime-metrics.service.js';
 import { IdentityController } from './identity/identity.controller.js';
 import { IdentityService } from './identity/identity.service.js';
 import { MembershipRoleGuard } from './identity/membership-role.guard.js';
@@ -41,6 +42,7 @@ type RouteContract = { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; url:
 // controllers must extend it in the same change, otherwise CI identifies a missing route.
 const internalRoutes: RouteContract[] = [
   { method: 'GET', url: '/health', expectedStatus: 200 },
+  { method: 'GET', url: '/metrics', expectedStatus: 404 },
   { method: 'GET', url: '/ready', expectedStatus: 200 },
   { method: 'GET', url: '/v1/meta', expectedStatus: 200 },
   { method: 'GET', url: '/v1/auth/bootstrap-status', expectedStatus: 200 },
@@ -197,6 +199,7 @@ describe('internal API surface contract', () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: PrismaService, useValue: { $queryRaw: vi.fn().mockResolvedValue([{ ok: 1 }]) } },
         { provide: RedisService, useValue: { ping: vi.fn().mockResolvedValue('PONG') } },
+        { provide: RuntimeMetricsService, useValue: { isAuthorized: vi.fn().mockReturnValue(false), render: vi.fn() } },
         { provide: SessionContextGuard, useValue: { canActivate: () => true } },
         { provide: MembershipRoleGuard, useValue: { canActivate: () => true } },
         { provide: CapabilityGuard, useValue: { canActivate: () => true } }

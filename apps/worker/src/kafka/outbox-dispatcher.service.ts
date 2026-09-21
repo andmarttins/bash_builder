@@ -3,6 +3,7 @@ import { Kafka, Producer } from 'kafkajs';
 import { outboxEventSchema } from '@builder/contracts';
 import { WorkerDatabaseHealthService } from '../health/worker-database-health.service.js';
 import { getWorkerRuntimeConfig } from '../config/runtime-config.js';
+import { WorkerMetricsService } from '../health/worker-metrics.service.js';
 
 type ClaimedEvent = { id: string; organization_id: string; aggregate_id: string; event_type: string; schema_version: number; payload: Record<string, unknown>; created_at: Date; attempt_count: number };
 
@@ -17,7 +18,7 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
 
-  public constructor(private readonly database: WorkerDatabaseHealthService) {}
+  public constructor(private readonly database: WorkerDatabaseHealthService, private readonly metrics?: WorkerMetricsService) {}
 
   public async onModuleInit(): Promise<void> {
     const config = getWorkerRuntimeConfig();
@@ -49,11 +50,13 @@ export class OutboxDispatcherService implements OnModuleInit, OnModuleDestroy {
       const payload = outboxEventSchema.parse({ eventId: event.id, eventType: event.event_type, schemaVersion: event.schema_version, tenantId: event.organization_id, aggregateId: event.aggregate_id, occurredAt: event.created_at.toISOString(), payload: event.payload });
       await this.producer?.send({ topic: 'builder.domain-events.v1', messages: [{ key: payload.eventId, value: JSON.stringify(payload), headers: { 'event-type': payload.eventType, 'schema-version': String(payload.schemaVersion) } }] });
       await this.database.query<{ marked: boolean }>('SELECT app.mark_outbox_published($1::uuid) AS marked', [event.id]);
+      this.metrics?.increment('outbox_published');
     } catch (error) {
       const delay = retryDelaySeconds(event.attempt_count);
       const config = getWorkerRuntimeConfig();
       const message = error instanceof Error ? error.message : 'unknown worker error';
       await this.database.query<{ marked: boolean }>('SELECT app.mark_outbox_failed($1::uuid, $2, $3, $4) AS marked', [event.id, delay, config.OUTBOX_MAX_ATTEMPTS, message]);
+      this.metrics?.increment('outbox_failed');
       throw error;
     }
   }

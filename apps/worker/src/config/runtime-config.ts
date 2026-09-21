@@ -8,6 +8,8 @@ const workerEnvironmentSchema = z.object({
   KAFKA_BROKERS: z.string().min(1),
   KAFKA_CLIENT_ID: z.string().min(3).max(80),
   KAFKA_GROUP_ID: z.string().min(3).max(120),
+  METRICS_TOKEN: z.preprocess((value) => value === '' ? undefined : value, z.string().min(32).optional()),
+  WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   OUTBOX_DISPATCH_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(2_000),
   OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(900).default(60),

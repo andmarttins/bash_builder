@@ -8,6 +8,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyRequest } from 'fastify';
 import { AppModule } from './app.module.js';
+import { RuntimeMetricsService } from './health/runtime-metrics.service.js';
 import { getApiRuntimeConfig, trustedAppOrigins } from './platform/config/runtime-config.js';
 import { isTrustedMutationOrigin } from './platform/http/origin-policy.js';
 
@@ -28,6 +29,14 @@ async function bootstrap(): Promise<void> {
   await app.register(cors, {
     origin: origins.length === 0 ? false : origins,
     credentials: true
+  });
+  const metrics = app.get(RuntimeMetricsService);
+  const requestStartedAt = new WeakMap<object, number>();
+  app.getHttpAdapter().getInstance().addHook('onRequest', async (request: FastifyRequest) => { requestStartedAt.set(request, performance.now()); });
+  app.getHttpAdapter().getInstance().addHook('onResponse', async (request: FastifyRequest, reply) => {
+    const startedAt = requestStartedAt.get(request);
+    if (startedAt === undefined) return;
+    metrics.recordRequest(request.method, request.routeOptions.url ?? '/unknown', reply.statusCode, performance.now() - startedAt);
   });
   // MinIO remains private; binary uploads are proxied through the authenticated API.
   app.getHttpAdapter().getInstance().addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));

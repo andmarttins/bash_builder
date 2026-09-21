@@ -37,6 +37,7 @@ Cadastre os valores de `.env.example` na interface Environment do serviço Compo
 - `MIGRATOR_DATABASE_URL`: URL interna de `app_migrator`. Ela é usada somente por `migrate` e possui `CREATE` de schema para aplicar migrations.
 - `DATABASE_URL`: URL interna de `app_runtime`, usada somente pela API e limitada por RLS ao tenant da sessão.
 - `WORKER_DATABASE_URL`: URL interna de `app_worker`, usada somente pelo worker. Esta role não é proprietária, não tem `BYPASSRLS` e só pode acessar a fila por procedimentos armazenados; não reutilize `DATABASE_URL`.
+- `METRICS_TOKEN`: secret opcional, distinto dos demais, com no mínimo 32 caracteres. Ao configurá-lo, o scraper interno usa `Authorization: Bearer` em `api:3000/metrics` e em `worker:<WORKER_METRICS_PORT>/metrics`; sem ele, ambos ficam desativados. Consulte [METRICS_ALERTS.md](METRICS_ALERTS.md) antes de habilitar.
 
 ## Armazenamento de objetos privado
 

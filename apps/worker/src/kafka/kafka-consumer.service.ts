@@ -3,6 +3,7 @@ import { Kafka, Consumer } from 'kafkajs';
 import { outboxEventSchema } from '@builder/contracts';
 import { getWorkerRuntimeConfig } from '../config/runtime-config.js';
 import { WorkerDatabaseHealthService } from '../health/worker-database-health.service.js';
+import { WorkerMetricsService } from '../health/worker-metrics.service.js';
 
 @Injectable()
 export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
@@ -10,7 +11,7 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
   private consumer: Consumer | undefined;
   private ready = false;
 
-  public constructor(private readonly database: WorkerDatabaseHealthService) {}
+  public constructor(private readonly database: WorkerDatabaseHealthService, private readonly metrics?: WorkerMetricsService) {}
 
   public async onModuleInit(): Promise<void> {
     const config = getWorkerRuntimeConfig();
@@ -23,6 +24,7 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
       eachMessage: async ({ message }) => {
         if (!message.value) return;
         const event = outboxEventSchema.parse(JSON.parse(message.value.toString()));
+        this.metrics?.increment('kafka_events');
         const consumerName = 'domain-projection-v1';
         const firstDelivery = await this.database.claimReceipt(event.eventId, event.tenantId, consumerName, 60);
         if (firstDelivery) {

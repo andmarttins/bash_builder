@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HealthController } from './health/health.controller.js';
+import { RuntimeMetricsService } from './health/runtime-metrics.service.js';
 import { IdentityController } from './identity/identity.controller.js';
 import { BootstrapAuthorizationService } from './identity/bootstrap-authorization.service.js';
 import { IdentityService } from './identity/identity.service.js';
@@ -65,6 +66,7 @@ import { NotificationsService } from './notifications/notifications.service.js';
     FileUploadCleanupService,
     OperationsService,
     NotificationsService
+    ,RuntimeMetricsService
   ]
 })
 export class AppModule {}
