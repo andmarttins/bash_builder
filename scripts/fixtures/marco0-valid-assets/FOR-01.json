@@ -3,10 +3,12 @@
   "assetGroup": "FOR-01",
   "decision": "SUBSTITUTE",
   "status": "APPROVED",
+  "decisionId": "external://asset-decisions/FOR-01/v1",
+  "decisionSha256": "1212121212121212121212121212121212121212121212121212121212121212",
   "businessOwner": "external://people/business-owner",
-  "evidence": "external://evidence/forms-usage",
+  "evidence": { "externalLocation": "external://evidence/forms-usage", "contentSha256": "1313131313131313131313131313131313131313131313131313131313131313", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/forms-usage", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "1414141414141414141414141414141414141414141414141414141414141414" } },
   "classification": "CONFIDENTIAL",
   "retention": "RETENTION-SYNTHETIC",
   "approval": { "approvalId": "external://approvals/forms", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-  "reconciliation": "external://evidence/forms-reconciliation"
+  "reconciliation": { "externalLocation": "external://evidence/forms-reconciliation", "contentSha256": "1515151515151515151515151515151515151515151515151515151515151515", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/forms-reconciliation", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "1616161616161616161616161616161616161616161616161616161616161616" } }
 }

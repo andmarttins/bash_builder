@@ -15,6 +15,7 @@
   },
   "scope": {
     "assetGroups": ["FOR-01"],
+    "assetDecisionReferences": [{ "assetGroup": "FOR-01", "decisionId": "external://asset-decisions/FOR-01/v1", "decisionSha256": "1212121212121212121212121212121212121212121212121212121212121212" }],
     "capabilities": ["forms"],
     "dependencies": [{ "id": "identity-readiness", "kind": "READINESS", "evidence": { "externalLocation": "external://evidence/identity", "contentSha256": "3333333333333333333333333333333333333333333333333333333333333333", "classification": "CONFIDENTIAL", "retention": "RETENTION-SYNTHETIC", "approval": { "approvalId": "external://approvals/identity", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "4444444444444444444444444444444444444444444444444444444444444444" } } }]
   },

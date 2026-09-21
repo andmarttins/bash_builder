@@ -2,48 +2,28 @@
   "schemaVersion": 1,
   "id": "pilot-example-2026-01",
   "status": "DRAFT",
-  "baseline": {
-    "repository": "https://github.com/andmarttins/builder-solutions-9",
-    "commit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24"
-  },
-  "pilot": {
-    "tenantReference": "external://tenant-registry/example",
-    "classification": "CONFIDENTIAL",
-    "retention": "RETENTION-POLICY-EXAMPLE",
-    "volumesReference": "external://migration-evidence/volume-example"
-  },
+  "baseline": { "repository": "https://github.com/andmarttins/builder-solutions-9", "commit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24", "tree": "90ce153c920deb0414afadee1ef6af2fe10ca282" },
+  "pilot": { "tenantReference": "external://tenant-registry/example", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "volumes": { "externalLocation": "external://migration-evidence/volume-example", "contentSha256": "1111111111111111111111111111111111111111111111111111111111111111", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/volumes-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "2222222222222222222222222222222222222222222222222222222222222222" } } },
   "scope": {
-    "assetGroups": ["FOR-01", "FOR-02", "FIL-01"],
-    "capabilities": ["forms", "files"],
-    "dependencies": [
-      { "id": "identity-readiness", "status": "APPROVED" },
-      { "id": "storage-readiness", "status": "APPROVED" }
-    ]
+    "assetGroups": ["FOR-01"],
+    "assetDecisionReferences": [{ "assetGroup": "FOR-01", "decisionId": "external://asset-decisions/FOR-01/v1", "decisionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    "capabilities": ["forms"],
+    "dependencies": [{ "id": "identity-readiness", "kind": "READINESS", "evidence": { "externalLocation": "external://migration-evidence/identity-example", "contentSha256": "3333333333333333333333333333333333333333333333333333333333333333", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/identity-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "4444444444444444444444444444444444444444444444444444444444444444" } } }]
   },
-  "ownership": {
-    "businessOwner": "external://people/business-owner-example",
-    "securityOwner": "external://people/security-owner-example",
-    "privacyOwner": "external://people/privacy-owner-example",
-    "cutoverOperator": "external://people/operator-example"
-  },
+  "ownership": { "businessOwner": "external://people/business-owner-example", "securityOwner": "external://people/security-owner-example", "privacyOwner": "external://people/privacy-owner-example", "cutoverOperator": "external://people/operator-example" },
   "approvals": [
-    { "role": "BUSINESS", "approvalId": "external://approvals/business-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "role": "SECURITY", "approvalId": "external://approvals/security-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-    { "role": "PRIVACY", "approvalId": "external://approvals/privacy-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
-    { "role": "OPERATIONS", "approvalId": "external://approvals/operations-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+    { "role": "BUSINESS", "approvalId": "external://approvals/business-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "5555555555555555555555555555555555555555555555555555555555555555" },
+    { "role": "SECURITY", "approvalId": "external://approvals/security-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "6666666666666666666666666666666666666666666666666666666666666666" },
+    { "role": "PRIVACY", "approvalId": "external://approvals/privacy-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "7777777777777777777777777777777777777777777777777777777777777777" },
+    { "role": "OPERATIONS", "approvalId": "external://approvals/operations-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "8888888888888888888888888888888888888888888888888888888888888888" }
   ],
   "references": {
-    "identityReadiness": "external://migration-evidence/identity-example",
-    "tenantMapping": "external://migration-evidence/tenant-map-example",
-    "exceptionRegister": "external://migration-evidence/exceptions-example",
-    "reconciliationPlan": "external://migration-evidence/reconciliation-example",
-    "accessPolicy": "external://migration-evidence/access-policy-example",
-    "cutoverRunbook": "external://migration-evidence/cutover-example"
+    "identityReadiness": { "externalLocation": "external://migration-evidence/identity-example", "contentSha256": "9999999999999999999999999999999999999999999999999999999999999999", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/identity-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+    "tenantMapping": { "externalLocation": "external://migration-evidence/tenant-map-example", "contentSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "classification": "RESTRICTED", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/tenant-map-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } },
+    "exceptionRegister": { "externalLocation": "external://migration-evidence/exceptions-example", "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/exceptions-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } },
+    "reconciliationPlan": { "externalLocation": "external://migration-evidence/reconciliation-example", "contentSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/reconciliation-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "1111111111111111111111111111111111111111111111111111111111111111" } },
+    "accessPolicy": { "externalLocation": "external://migration-evidence/access-policy-example", "contentSha256": "2222222222222222222222222222222222222222222222222222222222222222", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/access-policy-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "3333333333333333333333333333333333333333333333333333333333333333" } },
+    "cutoverRunbook": { "externalLocation": "external://migration-evidence/cutover-example", "contentSha256": "4444444444444444444444444444444444444444444444444444444444444444", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/cutover-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "5555555555555555555555555555555555555555555555555555555555555555" } }
   },
-  "cutover": {
-    "rpoMinutes": 15,
-    "rtoMinutes": 60,
-    "incidentChannel": "external://incident-channels/migration-example",
-    "returnCriteria": "external://migration-evidence/return-criteria-example"
-  }
+  "cutover": { "rpoMinutes": 15, "rtoMinutes": 60, "incidentChannel": { "externalLocation": "external://incident-channels/migration-example", "contentSha256": "6666666666666666666666666666666666666666666666666666666666666666", "classification": "INTERNAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/incident-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "7777777777777777777777777777777777777777777777777777777777777777" } }, "returnCriteria": { "externalLocation": "external://migration-evidence/return-example", "contentSha256": "8888888888888888888888888888888888888888888888888888888888888888", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/return-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "9999999999999999999999999999999999999999999999999999999999999999" } } }
 }

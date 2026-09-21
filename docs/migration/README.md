@@ -14,7 +14,8 @@ tokens, URLs assinadas ou conteúdo de arquivos.
   ativo, identidade, RACI/ADR, de-para, exceção, reconciliação e corte.
 - `pilots/`: uma carta JSON por piloto. Somente uma pode estar `ACTIVE`.
 - `assets/`: decisões aprovadas por grupo legado. Uma carta `ACTIVE` só pode
-  incluir IDs do baseline que possuam decisão `APPROVED` neste diretório.
+  incluir IDs do baseline que possuam decisão `APPROVED` de migração ou
+  substituição e uma referência imutável (`decisionId` + hash) neste diretório.
 
 Mapeamentos contendo PII, extratos e evidências assinadas ficam em repositório
 externo criptografado com acesso mínimo. A carta referencia somente URI/ID
@@ -33,7 +34,13 @@ Uma aprovação humana continua externa, porém a referência, data, papel do
 aprovador e hash da evidência precisam constar da carta. O protocolo completo
 é [ETL_MIGRATION_PROTOCOL.md](../ETL_MIGRATION_PROTOCOL.md).
 
-Os schemas em `schemas/` documentam o formato canônico. A validação também
+Antes de executar carga, o operador confere no repositório externo controlado
+que cada URI, hash, aprovação e responsável da carta correspondem ao artefato
+imutável exibido. `external://` é apenas um identificador auditável: não é uma
+prova automaticamente resolvida pela CI. Decisões `DECOMMISSION` exigem aceite
+e data de retirada em fluxo separado e nunca liberam capacidade de piloto.
+
+O validador executável é a especificação canônica. A validação também
 pode confirmar um checkout local do legado com
 `LEGACY_BASELINE_CHECKOUT=<diretório>`; ela compara commit, tree, contagem e
 hash do manifesto de paths ao baseline versionado.

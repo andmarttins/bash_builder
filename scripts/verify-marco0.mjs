@@ -24,7 +24,14 @@ const nonBlank = (value) => typeof value === 'string' && value.trim().length > 0
 const sha256 = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
 const reference = (value) => nonBlank(value) && /^external:\/\//.test(value) && !/\b(TBD|TODO)\b/i.test(value);
 const fail = (scope, message) => failures.push(`${scope}: ${message}`);
-const validApproval = (value) => reference(value?.approvalId) && nonBlank(value?.approvedAt) && sha256(value?.evidenceSha256);
+const validTimestamp = (value) => {
+  const match = nonBlank(value) && /^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.exec(value);
+  if (!match) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().startsWith(match[1]);
+};
+const validOwner = (value) => reference(value) && /^external:\/\/people\/[a-z0-9._-]+$/i.test(value);
+const validApproval = (value) => reference(value?.approvalId) && validTimestamp(value?.approvedAt) && sha256(value?.evidenceSha256);
 const validReference = (value) => reference(value?.externalLocation) && sha256(value?.contentSha256) && classifications.has(value?.classification) && nonBlank(value?.retention) && validApproval(value?.approval);
 
 const baseline = await readJson(join(migrationDirectory, 'legacy-baseline.json'));
@@ -43,8 +50,8 @@ for (const file of await files(assetsDirectory)) {
   if (!asset) continue;
   if (!nonBlank(asset.assetGroup) || assetDecisions.has(asset.assetGroup)) { fail(`assets/${file}`, 'assetGroup é obrigatório e único.'); continue; }
   assetDecisions.set(asset.assetGroup, asset);
-  if (asset.schemaVersion !== 1 || !['MIGRATE', 'SUBSTITUTE', 'DECOMMISSION'].includes(asset.decision) || asset.status !== 'APPROVED') fail(`assets/${file}`, 'schemaVersion, decision válida e status APPROVED são obrigatórios.');
-  if (!reference(asset.businessOwner) || !reference(asset.evidence) || !classifications.has(asset.classification) || !nonBlank(asset.retention) || !validApproval(asset.approval) || !reference(asset.reconciliation)) fail(`assets/${file}`, 'owner, evidência, classificação, retenção, aprovação e reconciliação estruturados são obrigatórios.');
+  if (asset.schemaVersion !== 1 || !['MIGRATE', 'SUBSTITUTE', 'DECOMMISSION'].includes(asset.decision) || asset.status !== 'APPROVED' || !reference(asset.decisionId) || !sha256(asset.decisionSha256)) fail(`assets/${file}`, 'schemaVersion, decisão, decisionId/hash imutáveis e status APPROVED são obrigatórios.');
+  if (!validOwner(asset.businessOwner) || !validReference(asset.evidence) || !classifications.has(asset.classification) || !nonBlank(asset.retention) || !validApproval(asset.approval) || !validReference(asset.reconciliation)) fail(`assets/${file}`, 'owner, evidência, classificação, retenção, aprovação e reconciliação estruturados são obrigatórios.');
 }
 
 const pilots = [];
@@ -64,8 +71,16 @@ for (const { file, pilot } of activePilots) {
   const dependencies = pilot.scope?.dependencies;
   if (!Array.isArray(dependencies) || dependencies.length === 0 || dependencies.some((item) => !nonBlank(item?.id) || !['ASSET', 'READINESS'].includes(item?.kind) || !validReference(item?.evidence) || (item.kind === 'ASSET' && !baseline?.assetGroups.includes(item.assetGroup)))) fail(file, 'dependências devem ter tipo, ID e evidência estruturada; ASSET deve pertencer ao baseline.');
   const assetIds = new Set([...(Array.isArray(scopedAssets) ? scopedAssets : []), ...(Array.isArray(dependencies) ? dependencies.filter((item) => item.kind === 'ASSET').map((item) => item.assetGroup) : [])]);
-  for (const id of assetIds) if (!assetDecisions.has(id)) fail(file, `decisão APPROVED ausente para ${id}.`);
-  for (const role of ['businessOwner', 'securityOwner', 'privacyOwner', 'cutoverOperator']) if (!reference(pilot.ownership?.[role])) fail(file, `ownership.${role} deve referenciar responsável externo.`);
+  const decisionReferences = pilot.scope?.assetDecisionReferences;
+  if (!Array.isArray(decisionReferences) || decisionReferences.length !== assetIds.size || new Set(decisionReferences.map((item) => item?.assetGroup)).size !== decisionReferences.length) fail(file, 'scope.assetDecisionReferences deve vincular cada ativo a uma decisão imutável.');
+  for (const id of assetIds) {
+    const decision = assetDecisions.get(id);
+    const decisionReference = Array.isArray(decisionReferences) ? decisionReferences.find((item) => item?.assetGroup === id) : undefined;
+    if (!decision) fail(file, `decisão APPROVED ausente para ${id}.`);
+    else if (!['MIGRATE', 'SUBSTITUTE'].includes(decision.decision)) fail(file, `${id} deve ter decisão MIGRATE ou SUBSTITUTE para compor um piloto ACTIVE.`);
+    if (!decisionReference || decisionReference.decisionId !== decision?.decisionId || decisionReference.decisionSha256 !== decision?.decisionSha256) fail(file, `referência imutável da decisão ausente ou divergente para ${id}.`);
+  }
+  for (const role of ['businessOwner', 'securityOwner', 'privacyOwner', 'cutoverOperator']) if (!validOwner(pilot.ownership?.[role])) fail(file, `ownership.${role} deve referenciar uma pessoa externa identificável.`);
   const approvedRoles = new Set((Array.isArray(pilot.approvals) ? pilot.approvals : []).filter((item) => validApproval(item)).map((item) => item.role));
   for (const role of requiredApprovalRoles) if (!approvedRoles.has(role)) fail(file, `aprovação válida ausente para ${role}.`);
   for (const key of ['identityReadiness', 'tenantMapping', 'exceptionRegister', 'reconciliationPlan', 'accessPolicy', 'cutoverRunbook']) if (!validReference(pilot.references?.[key])) fail(file, `references.${key} deve ser estruturada e aprovada.`);

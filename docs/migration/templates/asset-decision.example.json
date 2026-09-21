@@ -2,15 +2,14 @@
   "schemaVersion": 1,
   "assetGroup": "FOR-01",
   "decision": "SUBSTITUTE",
+  "status": "APPROVED",
+  "decisionId": "external://asset-decisions/FOR-01/v1",
+  "decisionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "businessOwner": "external://people/business-owner-example",
-  "evidence": "external://evidence/usage-example",
+  "evidence": { "externalLocation": "external://evidence/usage-example", "contentSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/asset-evidence-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } },
   "classification": "CONFIDENTIAL",
   "retention": "RETENTION-POLICY-EXAMPLE",
-  "approval": {
-    "id": "external://approvals/asset-example",
-    "approvedAt": "2026-01-15T12:00:00Z",
-    "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
+  "approval": { "approvalId": "external://approvals/asset-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
   "target": "Form, FormVersion, FieldDefinition",
-  "reconciliation": "external://migration-evidence/forms-reconciliation-example"
+  "reconciliation": { "externalLocation": "external://migration-evidence/forms-reconciliation-example", "contentSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "classification": "CONFIDENTIAL", "retention": "RETENTION-POLICY-EXAMPLE", "approval": { "approvalId": "external://approvals/asset-reconciliation-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" } }
 }
