@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
@@ -78,6 +78,24 @@ describe('calculateHhtRates', () => {
     expect(tx.safetyEvent.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ actualClassificationId: classId, potentialClassificationId: potentialId, actualClass: 'near-miss', potentialClass: 'serious' }) }));
     tx.classificationItem.findMany.mockResolvedValue([]);
     await expect(service.createEvent(identity, { code: 'EVT-INVALID', title: 'Inválido', origin: 'MANUAL', occurredAt: '2026-09-20T12:00:00.000Z', actualClassificationId: classId })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('links only a ready tenant file to a BASH card and records the audit event', async () => {
+    const fileId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a21';
+    const attachmentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';
+    const tx = {
+      bashCard: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
+      fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: fileId }) },
+      bashCardAttachment: { create: vi.fn().mockResolvedValue({ id: attachmentId, fileId }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.addCardAttachment(identity, eventId, { fileId, category: 'photo' })).resolves.toMatchObject({ id: attachmentId });
+    expect(tx.fileAsset.findFirst).toHaveBeenCalledWith({ where: { id: fileId, status: 'READY' }, select: { id: true } });
+    expect(tx.bashCardAttachment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ cardId: eventId, fileId, organizationId: identity.organization.id }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'bash_card.attachment_linked', resourceId: attachmentId }) }));
+    tx.fileAsset.findFirst.mockResolvedValue(null);
+    await expect(service.addCardAttachment(identity, eventId, { fileId })).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('does not approve a change while an approval decision is pending', async () => {

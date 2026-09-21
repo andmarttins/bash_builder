@@ -154,6 +154,7 @@ model Organization {
   changeWorkflowSteps ChangeWorkflowStep[]
   bashCards BashCard[]
   bashComments BashComment[]
+  bashCardAttachments BashCardAttachment[]
   hhtCompanies HhtCompany[]
   hhtReports HhtReport[]
   hhtWindows HhtReportWindow[]
@@ -610,6 +611,7 @@ model BashCard {
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   comments       BashComment[]
+  attachments    BashCardAttachment[]
 
   @@unique([id, organizationId])
   @@index([organizationId, stage, position])
@@ -629,6 +631,24 @@ model BashComment {
 
   @@index([organizationId, cardId, createdAt])
   @@map("bash_comments")
+}
+
+model BashCardAttachment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  cardId         String       @map("card_id") @db.Uuid
+  fileId         String       @map("file_id") @db.Uuid
+  category       String?      @db.VarChar(80)
+  description    String?      @db.Text
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  card           BashCard     @relation(fields: [cardId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  file           FileAsset    @relation(fields: [fileId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@unique([cardId, fileId])
+  @@unique([id, organizationId])
+  @@index([organizationId, cardId, createdAt(sort: Desc)])
+  @@map("bash_card_attachments")
 }
 
 model HhtCompany {
@@ -798,6 +818,7 @@ model FileAsset {
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   changeEvidence ChangeEvidence[]
   formSubmissionAttachments FormSubmissionAttachment[]
+  bashCardAttachments BashCardAttachment[]
 
   @@unique([id, organizationId])
   @@unique([organizationId, storageKey])

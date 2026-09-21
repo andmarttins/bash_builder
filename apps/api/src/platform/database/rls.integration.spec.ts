@@ -44,6 +44,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     await bootstrap.query('DELETE FROM "organization_invitations"');
     await bootstrap.query('DELETE FROM "safety_event_actions"');
     await bootstrap.query('DELETE FROM "safety_events"');
+    await bootstrap.query('DELETE FROM "bash_card_attachments"');
     await bootstrap.query('DELETE FROM "change_evidence"');
     await bootstrap.query('DELETE FROM "change_approvals"');
     await bootstrap.query('DELETE FROM "change_workflow_steps"');
@@ -343,7 +344,7 @@ describeIntegration('PostgreSQL row-level security', () => {
   });
 
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
-    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'form_submission_attachments', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
+    const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'bash_card_attachments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'dashboards', 'integrations', 'file_assets', 'form_submission_attachments', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
       "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1::text[]) ORDER BY tablename",
       [tableNames]

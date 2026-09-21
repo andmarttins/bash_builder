@@ -4384,15 +4384,18 @@ function BashModulePage({
   canManage: boolean;
 }): React.JSX.Element {
   const [cards, setCards] = useState<Array<Record<string, unknown>>>([]);
+  const [readyFiles, setReadyFiles] = useState<Array<Record<string, unknown>>>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const stages = ["BACKLOG", "DESIGN", "IN_PROGRESS", "REVIEW", "DONE"];
   const load = useCallback(async (): Promise<void> => {
     try {
-      setCards(
-        (await api<{ cards: Array<Record<string, unknown>> }>("/v1/bash/cards"))
-          .cards,
-      );
+      const cardResponse = await api<{ cards: Array<Record<string, unknown>> }>("/v1/bash/cards");
+      setCards(cardResponse.cards);
+      if (canManage) {
+        const fileResponse = await api<{ files: Array<Record<string, unknown>> }>("/v1/files");
+        setReadyFiles(fileResponse.files.filter((file) => file.status === "READY"));
+      } else setReadyFiles([]);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -4400,7 +4403,7 @@ function BashModulePage({
           : "Não foi possível carregar o quadro BASH.",
       );
     }
-  }, []);
+  }, [canManage]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -4459,6 +4462,18 @@ function BashModulePage({
     } finally {
       setPending(false);
     }
+  }
+  async function attach(cardId: string, event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const fileId = new FormData(event.currentTarget).get("fileId");
+    if (typeof fileId !== "string" || !fileId) return;
+    setPending(true); setError(null);
+    try {
+      await api(`/v1/bash/cards/${cardId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) });
+      event.currentTarget.reset(); await load();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível vincular o arquivo.");
+    } finally { setPending(false); }
   }
   async function move(
     cardId: string,
@@ -4551,6 +4566,9 @@ function BashModulePage({
                   const comments = Array.isArray(card.comments)
                     ? card.comments.filter(isRecord)
                     : [];
+                  const attachments = Array.isArray(card.attachments)
+                    ? card.attachments.filter(isRecord)
+                    : [];
                   return (
                     <article
                       className="board-card"
@@ -4570,6 +4588,17 @@ function BashModulePage({
                               {stringValue(item.content) ?? ""}
                             </li>
                           ))}
+                        </ul>
+                      )}
+                      {attachments.length > 0 && (
+                        <ul className="nested-list">
+                          {attachments.map((attachment) => {
+                            const file = isRecord(attachment.file) ? attachment.file : undefined;
+                            const fileId = file ? stringValue(file.id) : undefined;
+                            const fileName = file ? stringValue(file.originalName) ?? "Arquivo" : "Arquivo indisponível";
+                            const attachmentId = stringValue(attachment.id);
+                            return <li key={attachmentId ?? recordTitle(attachment)}>{fileId && attachmentId && cardId ? <a href={`/api/v1/bash/cards/${cardId}/attachments/${attachmentId}/download`}>{fileName}</a> : fileName}{stringValue(attachment.category) ? ` · ${stringValue(attachment.category)}` : ""}</li>;
+                          })}
                         </ul>
                       )}
                       {canManage && cardId && (
@@ -4597,6 +4626,12 @@ function BashModulePage({
                               Comentar
                             </button>
                           </form>
+                          {readyFiles.length > 0 && (
+                            <form className="inline-form compact-form" onSubmit={(formEvent) => void attach(cardId, formEvent)}>
+                              <label>Anexar arquivo validado<select name="fileId" required defaultValue=""><option value="" disabled>Selecione um arquivo</option>{readyFiles.map((file) => <option key={String(file.id)} value={String(file.id)}>{recordTitle(file)}</option>)}</select></label>
+                              <button className="secondary-button compact" type="submit" disabled={pending}>Vincular</button>
+                            </form>
+                          )}
                           <div className="action-row">
                             <select
                               aria-label="Coluna do cartão"

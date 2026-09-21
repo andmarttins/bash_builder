@@ -60,6 +60,17 @@ export class OperationsController {
   public createCard(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createCard(request.identity, input).then((card) => ({ card })); }
   @Post('bash/cards/:cardId/comments') @RequiredCapabilities('bash.manage')
   public addCardComment(@Req() request: AuthenticatedRequest, @Param('cardId') cardId: string, @Body() input: unknown) { return this.operations.addCardComment(request.identity, cardId, input).then((comment) => ({ comment })); }
+  @Post('bash/cards/:cardId/attachments') @RequiredCapabilities('bash.manage')
+  public addCardAttachment(@Req() request: AuthenticatedRequest, @Param('cardId') cardId: string, @Body() input: unknown) { return this.operations.addCardAttachment(request.identity, cardId, input).then((attachment) => ({ attachment })); }
+  @Get('bash/cards/:cardId/attachments/:attachmentId/download') @RequiredCapabilities('bash.view')
+  public cardAttachmentDownload(@Req() request: AuthenticatedRequest, @Param('cardId') cardId: string, @Param('attachmentId') attachmentId: string, @Res({ passthrough: true }) reply: FastifyReply) {
+    return this.operations.openCardAttachmentDownload(request.identity, cardId, attachmentId).then((download) => {
+      reply.header('content-type', download.contentType ?? 'application/octet-stream');
+      if (download.contentLength !== undefined) reply.header('content-length', download.contentLength);
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`);
+      return download.body;
+    });
+  }
   @Patch('bash/cards/:cardId/move') @RequiredCapabilities('bash.manage')
   public moveCard(@Req() request: AuthenticatedRequest, @Param('cardId') cardId: string, @Body() input: unknown) { return this.operations.moveCard(request.identity, cardId, input).then((card) => ({ card })); }
 

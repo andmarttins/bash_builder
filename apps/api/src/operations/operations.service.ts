@@ -334,7 +334,7 @@ export class OperationsService {
   }
 
   public listCards(identity: SessionIdentity) {
-    return this.withTenant(identity, (tx) => tx.bashCard.findMany({ include: { comments: { orderBy: { createdAt: 'asc' } } }, orderBy: [{ stage: 'asc' }, { position: 'asc' }] }));
+    return this.withTenant(identity, (tx) => tx.bashCard.findMany({ include: { comments: { orderBy: { createdAt: 'asc' } }, attachments: { include: { file: { select: { id: true, originalName: true, contentType: true, byteSize: true } } }, orderBy: { createdAt: 'desc' } } }, orderBy: [{ stage: 'asc' }, { position: 'asc' }] }));
   }
 
   public createCard(identity: SessionIdentity, input: unknown) {
@@ -926,6 +926,35 @@ export class OperationsService {
     const potential = potentialId ? byId.get(potentialId) : potentialValue ? byValue.get(potentialValue) : undefined;
     if ((actualId || actualValue) && !actual || (potentialId || potentialValue) && !potential) throw new BadRequestException('Selecione uma classificação ativa cadastrada para eventos.');
     return { actual, potential };
+  }
+
+  public addCardAttachment(identity: SessionIdentity, cardIdInput: string, input: unknown) {
+    const cardId = this.id(cardIdInput); const data = this.parse(evidenceSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      await this.cardExists(tx, cardId);
+      if (!await tx.fileAsset.findFirst({ where: { id: data.fileId, status: 'READY' }, select: { id: true } })) throw new NotFoundException('Arquivo pronto não encontrado nesta organização.');
+      let attachment;
+      try {
+        attachment = await tx.bashCardAttachment.create({ data: { organizationId: identity.organization.id, cardId, ...data }, include: { file: true } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Este arquivo já está vinculado ao cartão.');
+        throw error;
+      }
+      await this.record(tx, identity, 'bash_card.attachment_linked', 'bash_card_attachment', attachment.id, { cardId, fileId: data.fileId });
+      return attachment;
+    });
+  }
+
+  public openCardAttachmentDownload(identity: SessionIdentity, cardIdInput: string, attachmentIdInput: string) {
+    const cardId = this.id(cardIdInput); const attachmentId = this.id(attachmentIdInput);
+    return this.withTenant(identity, async (tx) => {
+      if (!this.storage.isConfigured()) throw new BadRequestException('O armazenamento de objetos ainda não está configurado.');
+      const attachment = await tx.bashCardAttachment.findFirst({ where: { id: attachmentId, cardId }, include: { file: true } });
+      if (!attachment || attachment.file.status !== 'READY') throw new NotFoundException('Anexo pronto para download não encontrado.');
+      const download = await this.storage.openDownload(attachment.file.storageKey, this.safeFilename(attachment.file.originalName));
+      await this.record(tx, identity, 'bash_card.attachment_download_prepared', 'bash_card_attachment', attachment.id, { cardId, fileId: attachment.fileId });
+      return { ...download, filename: this.safeFilename(attachment.file.originalName) };
+    });
   }
   private async changeExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.changeRequest.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Mudança não encontrada.'); }
   private async cardExists(tx: TenantTransaction, id: string): Promise<void> { if (!await tx.bashCard.findFirst({ where: { id }, select: { id: true } })) throw new NotFoundException('Cartão não encontrado.'); }
