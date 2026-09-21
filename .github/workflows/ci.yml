@@ -37,12 +37,6 @@ jobs:
       TEST_REDIS_URL: redis://:redis-test-password@localhost:6379
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout immutable legacy baseline
-        run: >-
-          git init "$RUNNER_TEMP/legacy-baseline" &&
-          git -C "$RUNNER_TEMP/legacy-baseline" remote add origin https://github.com/andmarttins/builder-solutions-9.git &&
-          git -C "$RUNNER_TEMP/legacy-baseline" fetch --depth=1 origin a4a0e0637ba7d47901b71b7d2c626ac5e2595f24 &&
-          git -C "$RUNNER_TEMP/legacy-baseline" checkout --detach FETCH_HEAD
       - uses: actions/setup-node@v4
         with:
           node-version: 24.15.0
@@ -83,10 +77,8 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:validate
       - run: npm run db:verify-acl
-      - name: Verify Marco 0 against the immutable legacy checkout
+      - name: Verify Marco 0 immutable inventory manifest
         run: npm run migration:verify-marco0
-        env:
-          LEGACY_BASELINE_CHECKOUT: ${{ runner.temp }}/legacy-baseline
       - run: npm run migration:test-marco0
       - run: npm run migration:test-marco0-negative
       - run: npm run lint

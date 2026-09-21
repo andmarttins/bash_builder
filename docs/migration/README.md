@@ -8,8 +8,9 @@ tokens, URLs assinadas ou conteúdo de arquivos.
 
 - `legacy-baseline.json`: repositório, commit, árvore e inventário técnico do
   legado revisado.
-- `legacy-inventory.json`: hash do manifesto ordenado de paths e proveniência
-  reproduzível do checkout do baseline.
+- `legacy-inventory.json` e `legacy-path-manifest.txt`: manifesto ordenado de
+  paths, hash e proveniência reproduzível do checkout do baseline. A CI valida
+  cada path, a ordem, a contagem e o hash; uma alteração exige revisão no diff.
 - `templates/`: formatos sem dados reais para carta de piloto, decisão por
   ativo, identidade, RACI/ADR, de-para, exceção, reconciliação e corte.
 - `pilots/`: uma carta JSON por piloto. Somente uma pode estar `ACTIVE`.
@@ -40,8 +41,10 @@ imutável exibido. `external://` é apenas um identificador auditável: não é 
 prova automaticamente resolvida pela CI. Decisões `DECOMMISSION` exigem aceite
 e data de retirada em fluxo separado e nunca liberam capacidade de piloto.
 
-O validador executável é a especificação canônica. A validação também
-pode confirmar um checkout local do legado com
+O repositório legado é privado e não recebe credenciais na CI deste projeto;
+por isso, a CI verifica o manifesto integral versionado e sua proveniência. O
+validador executável é a especificação canônica. A validação também pode
+confirmar um checkout local autorizado do legado com
 `LEGACY_BASELINE_CHECKOUT=<diretório>`; ela compara commit, tree, contagem e
 hash do manifesto de paths ao baseline versionado.
 

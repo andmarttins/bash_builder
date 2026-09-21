@@ -42,7 +42,14 @@ if (baseline) {
   if (!Number.isInteger(baseline.trackedFileCount) || baseline.trackedFileCount < 1) fail('legacy-baseline.json', 'trackedFileCount inválido.');
   if (!Array.isArray(baseline.assetGroups) || baseline.assetGroups.length === 0 || new Set(baseline.assetGroups).size !== baseline.assetGroups.length) fail('legacy-baseline.json', 'assetGroups deve ser não vazio e sem duplicatas.');
 }
-if (!inventory || inventory.schemaVersion !== 1 || !baseline || inventory.baselineCommit !== baseline.baselineCommit || inventory.baselineTree !== baseline.baselineTree || inventory.trackedFileCount !== baseline.trackedFileCount || !sha256(inventory.pathManifestSha256) || !nonBlank(inventory.capturedBy)) fail('legacy-inventory.json', 'inventário deve referenciar integralmente o baseline e seu manifesto.');
+if (!inventory || inventory.schemaVersion !== 1 || !baseline || inventory.baselineCommit !== baseline.baselineCommit || inventory.baselineTree !== baseline.baselineTree || inventory.trackedFileCount !== baseline.trackedFileCount || !nonBlank(inventory.pathManifestFile) || !sha256(inventory.pathManifestSha256) || !nonBlank(inventory.capturedBy)) fail('legacy-inventory.json', 'inventário deve referenciar integralmente o baseline e seu manifesto.');
+if (inventory?.pathManifestFile) {
+  try {
+    const manifestPaths = (await readFile(join(migrationDirectory, inventory.pathManifestFile), 'utf8')).trim().split(/\r?\n/).filter(Boolean);
+    const manifestHash = createHash('sha256').update(`${manifestPaths.join('\n')}\n`).digest('hex');
+    if (manifestPaths.length !== inventory.trackedFileCount || new Set(manifestPaths).size !== manifestPaths.length || manifestPaths.some((path) => path !== path.trim()) || manifestHash !== inventory.pathManifestSha256) fail('legacy-path-manifest.txt', 'manifesto versionado não corresponde ao hash, à contagem ou à ordenação declarados.');
+  } catch (error) { fail('legacy-path-manifest.txt', `não foi possível verificar (${error instanceof Error ? error.message : 'erro desconhecido'}).`); }
+}
 
 const assetDecisions = new Map();
 for (const file of await files(assetsDirectory)) {
