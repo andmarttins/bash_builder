@@ -18,7 +18,10 @@ const bashStages = ['BACKLOG', 'DESIGN', 'IN_PROGRESS', 'REVIEW', 'DONE'] as con
 const integrationTypes = ['WEBHOOK', 'EMAIL', 'SMARTSHEET', 'WHATSAPP', 'OBJECT_STORAGE', 'AI'] as const;
 const integrationStatuses = ['DISABLED', 'ACTIVE', 'ERROR'] as const;
 
-const createClassificationSchema = z.object({ category: text(2, 80), label: text(2, 160), value: text(1, 120), position: z.number().int().nonnegative().optional() });
+const approvedClassificationCategories = ['event_classification'] as const;
+const classificationCategorySchema = z.enum(approvedClassificationCategories);
+const createClassificationSchema = z.object({ category: classificationCategorySchema, label: text(2, 160), value: text(1, 120).regex(/^[a-z0-9][a-z0-9-]*$/, 'O valor deve usar letras minúsculas, números e hífens.'), position: z.number().int().nonnegative().optional() });
+const updateClassificationSchema = z.object({ label: text(2, 160).optional(), position: z.number().int().nonnegative().optional(), active: z.boolean().optional(), expectedVersion }).refine((input) => input.label !== undefined || input.position !== undefined || input.active !== undefined, 'Informe alguma alteração.');
 const createEventSchema = z.object({
   code: text(2, 32).regex(/^[A-Z0-9][A-Z0-9-]*$/i, 'Código do evento inválido.'), title: text(2, 200), description: optionalText(10_000), occurredAt: z.coerce.date(),
   site: optionalText(160), area: optionalText(160), origin: text(2, 80), actualClassificationId: z.uuid().optional().nullable(), potentialClassificationId: z.uuid().optional().nullable(),
@@ -155,6 +158,17 @@ export class OperationsService {
       const event = await tx.safetyEvent.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, slaDueAt, ...eventData, actualClassificationId: classifications.actual?.id ?? null, potentialClassificationId: classifications.potential?.id ?? null, actualClass: classifications.actual?.value ?? null, potentialClass: classifications.potential?.value ?? null } });
       await this.record(tx, identity, 'safety_event.created', 'safety_event', event.id, { code: event.code, slaHours: slaHours ?? null, slaDueAt: slaDueAt?.toISOString() ?? null });
       return event;
+    });
+  }
+
+  public updateClassification(identity: SessionIdentity, classificationIdInput: string, input: unknown) {
+    const classificationId = this.id(classificationIdInput); const data = this.parse(updateClassificationSchema, input);
+    return this.withTenant(identity, async (tx) => {
+      const updated = await tx.classificationItem.updateMany({ where: { id: classificationId, version: data.expectedVersion }, data: { label: data.label, position: data.position, active: data.active, version: { increment: 1 } } });
+      if (updated.count !== 1) throw new ConflictException('A classificação foi alterada por outra pessoa ou não existe nesta organização. Atualize a lista antes de tentar novamente.');
+      const item = await tx.classificationItem.findFirstOrThrow({ where: { id: classificationId } });
+      await this.record(tx, identity, item.active ? 'classification.updated' : 'classification.retired', 'classification', item.id, { category: item.category, value: item.value, active: item.active });
+      return item;
     });
   }
 

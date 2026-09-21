@@ -2728,6 +2728,25 @@ function OperationalModulePage({
     }
   }
 
+  async function retireClassification(item: Record<string, unknown>): Promise<void> {
+    const id = stringValue(item.id);
+    const version = item.version;
+    if (!id || typeof version !== "number") {
+      setError("A lista está desatualizada. Atualize antes de desativar o item.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await api(`/v1/classifications/${id}`, { method: "PATCH", body: JSON.stringify({ active: false, expectedVersion: version }) });
+      await load();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível desativar o item.");
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <>
       <p className="eyebrow">Módulo empresarial</p>
@@ -2773,8 +2792,11 @@ function OperationalModulePage({
                 <Settings2 aria-hidden="true" />
                 <div>
                   <strong>{recordTitle(item)}</strong>
-                  <small>{recordSummary(item)}</small>
+                  <small>{recordSummary(item)}{view === "classifications" && item.active === false ? " · Inativo" : ""}</small>
                 </div>
+                {view === "classifications" && canManage && item.active !== false && (
+                  <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void retireClassification(item)}>Desativar</button>
+                )}
               </article>
             ))}
           </div>

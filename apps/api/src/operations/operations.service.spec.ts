@@ -98,6 +98,23 @@ describe('calculateHhtRates', () => {
     await expect(service.createEvent(identity, { code: 'EVT-INVALID', title: 'Inválido', origin: 'MANUAL', occurredAt: '2026-09-20T12:00:00.000Z', actualClassificationId: classId })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('retires an approved tenant classification with optimistic concurrency and an audit event', async () => {
+    const item = { id: eventId, category: 'event_classification', value: 'near-miss', active: false, version: 2 };
+    const tx = { classificationItem: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(item) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.updateClassification(identity, eventId, { active: false, expectedVersion: 1 })).resolves.toEqual(item);
+    expect(tx.classificationItem.updateMany).toHaveBeenCalledWith({ where: { id: eventId, version: 1 }, data: { label: undefined, position: undefined, active: false, version: { increment: 1 } } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'classification.retired', resourceId: eventId }) }));
+    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'classification.retired', aggregateId: eventId }) }));
+  });
+
+  it('rejects unapproved classification categories before the tenant transaction', () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new OperationsService(tenants as never);
+    expect(() => service.createClassification(identity, { category: 'unapproved', label: 'Não aprovada', value: 'unapproved' })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
   it('links only a ready tenant file to a BASH card and records the audit event', async () => {
     const fileId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a21';
     const attachmentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22';

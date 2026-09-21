@@ -14,6 +14,8 @@ export class OperationsController {
   public classifications(@Req() request: AuthenticatedRequest, @Query('category') category?: string) { return this.operations.listClassifications(request.identity, category).then((items) => ({ items })); }
   @Post('classifications') @RequiredCapabilities('operations.manage')
   public createClassification(@Req() request: AuthenticatedRequest, @Body() input: unknown) { return this.operations.createClassification(request.identity, input).then((item) => ({ item })); }
+  @Patch('classifications/:classificationId') @RequiredCapabilities('operations.manage')
+  public updateClassification(@Req() request: AuthenticatedRequest, @Param('classificationId') classificationId: string, @Body() input: unknown) { return this.operations.updateClassification(request.identity, classificationId, input).then((item) => ({ item })); }
 
   @Get('events') @RequiredCapabilities('events.view')
   public events(@Req() request: AuthenticatedRequest) { return this.operations.listEvents(request.identity).then((events) => ({ events })); }

@@ -473,6 +473,7 @@ model ClassificationItem {
   value          String       @db.VarChar(120)
   active         Boolean      @default(true)
   position       Int          @default(0)
+  version        Int          @default(1)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
