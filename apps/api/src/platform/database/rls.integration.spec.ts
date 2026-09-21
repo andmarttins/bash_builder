@@ -125,10 +125,10 @@ describeIntegration('PostgreSQL row-level security', () => {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
       expect((await runtime.query('SELECT id FROM "file_assets" ORDER BY id')).rows).toEqual([{ id: fileA }]);
       await expect(runtime.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id')).rejects.toThrow(/permission denied for function expire_file_uploads/i);
-      await expect(runtime.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileB])).rejects.toThrow(/permission denied for function mark_file_object_deleted/i);
     } finally {
       await runtime.query('ROLLBACK');
     }
+    await expect(runtime.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileB])).rejects.toThrow(/permission denied for function mark_file_object_deleted/i);
     const expired = await worker.query('SELECT id FROM app.expire_file_uploads(10) ORDER BY id');
     expect(expired.rows.filter((row) => row.id === fileA || row.id === fileB)).toEqual([{ id: fileA }, { id: fileB }]);
     await worker.query('SELECT app.mark_file_object_deleted($1::uuid)', [fileA]);
