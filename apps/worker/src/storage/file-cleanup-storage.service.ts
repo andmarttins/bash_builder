@@ -1,5 +1,6 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 const optionalEnvironmentValue = z.preprocess((value) => typeof value === 'string' && value.trim() === '' ? undefined : value, z.string().optional());
@@ -36,5 +37,24 @@ export class FileCleanupStorageService {
     if (!this.client || !this.config) throw new ServiceUnavailableException('O armazenamento de limpeza de arquivos ainda não está configurado.');
     try { await this.client.send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key })); }
     catch { throw new ServiceUnavailableException('Não foi possível remover o objeto privado pendente.'); }
+  }
+
+  /**
+   * DeleteObject is the only permission of this identity. Deleting a freshly
+   * generated key in the reserved system prefix is idempotent and cannot touch
+   * a tenant object, while still proving the credential is authorized.
+   */
+  public async probe(): Promise<void> {
+    const { client, config } = this.requireClient();
+    try {
+      await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: `builder-system/cleanup-probe/${randomUUID()}` }));
+    } catch {
+      throw new ServiceUnavailableException('A credencial exclusiva de remoção de arquivos não está pronta.');
+    }
+  }
+
+  private requireClient(): { client: S3Client; config: FileCleanupStorageConfig } {
+    if (!this.client || !this.config) throw new ServiceUnavailableException('O armazenamento de limpeza de arquivos ainda não está configurado.');
+    return { client: this.client, config: this.config };
   }
 }

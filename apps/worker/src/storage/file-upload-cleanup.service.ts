@@ -27,17 +27,19 @@ export class FileUploadCleanupService implements OnModuleInit, OnModuleDestroy {
     if (!this.database.isReady() || !this.storage.isConfigured()) return 0;
     const rows = await this.database.query<ExpiredFile>('SELECT id, storage_key FROM app.expire_file_uploads($1)', [50]);
     let deleted = 0;
+    let failed = false;
     for (const row of rows) {
       try {
         await this.storage.deleteObject(row.storage_key);
         await this.database.query('SELECT app.mark_file_object_deleted($1::uuid)', [row.id]);
         deleted += 1;
       } catch (error) {
+        failed = true;
         this.metrics.recordFileCleanupFailure();
         this.logger.error(`Could not remove private object for expired file asset ${row.id}.`, error instanceof Error ? error.stack : undefined);
       }
     }
-    this.metrics.recordFileCleanupSuccess();
+    if (!failed) this.metrics.recordFileCleanupSuccess();
     return deleted;
   }
 

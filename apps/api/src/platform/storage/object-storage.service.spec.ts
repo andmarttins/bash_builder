@@ -14,7 +14,7 @@ describe('object storage runtime configuration', () => {
 
   it('accepts an internal, S3-compatible configuration without exposing its credentials', () => {
     expect(getObjectStorageRuntimeConfig({
-      S3_ENDPOINT: 'http://minio:9000', S3_REGION: 'us-east-1', S3_BUCKET: 'builder-assets', S3_ACCESS_KEY_ID: 'runtime-user', S3_SECRET_ACCESS_KEY: 'a-secure-runtime-secret', S3_READINESS_KEY: 'builder-system/readiness'
+      S3_ENDPOINT: 'http://minio:9000', S3_REGION: 'us-east-1', S3_BUCKET: 'builder-assets', S3_ACCESS_KEY_ID: 'runtime-user', S3_SECRET_ACCESS_KEY: 'a-secure-runtime-secret', S3_READINESS_KEY: 'builder-system/readiness', FILE_CLEANUP_REQUIRED: 'true'
     })).toEqual(expect.objectContaining({ endpoint: 'http://minio:9000', bucket: 'builder-assets', region: 'us-east-1' }));
   });
 
@@ -27,14 +27,20 @@ describe('object storage runtime configuration', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
-    const keys = ['S3_ENDPOINT', 'S3_REGION', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_READINESS_KEY'] as const;
+    const keys = ['S3_ENDPOINT', 'S3_REGION', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_READINESS_KEY', 'FILE_CLEANUP_REQUIRED'] as const;
     const original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
-    Object.assign(process.env, { S3_ENDPOINT: `http://127.0.0.1:${port}`, S3_REGION: 'us-east-1', S3_BUCKET: 'builder-assets', S3_ACCESS_KEY_ID: 'runtime-user', S3_SECRET_ACCESS_KEY: 'a-secure-runtime-secret', S3_READINESS_KEY: 'builder-system/readiness' });
+    Object.assign(process.env, { S3_ENDPOINT: `http://127.0.0.1:${port}`, S3_REGION: 'us-east-1', S3_BUCKET: 'builder-assets', S3_ACCESS_KEY_ID: 'runtime-user', S3_SECRET_ACCESS_KEY: 'a-secure-runtime-secret', S3_READINESS_KEY: 'builder-system/readiness', FILE_CLEANUP_REQUIRED: 'true' });
     try {
       await expect(new ObjectStorageService().probe()).resolves.toBeUndefined();
     } finally {
       for (const key of keys) { const value = original[key]; if (value === undefined) delete process.env[key]; else process.env[key] = value; }
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+
+  it('refuses to enable storage unless the worker cleanup is explicitly required', () => {
+    expect(() => getObjectStorageRuntimeConfig({
+      S3_ENDPOINT: 'http://minio:9000', S3_REGION: 'us-east-1', S3_BUCKET: 'builder-assets', S3_ACCESS_KEY_ID: 'runtime-user', S3_SECRET_ACCESS_KEY: 'a-secure-runtime-secret', S3_READINESS_KEY: 'builder-system/readiness', FILE_CLEANUP_REQUIRED: 'false'
+    })).toThrow(/FILE_CLEANUP_REQUIRED=true/);
   });
 });

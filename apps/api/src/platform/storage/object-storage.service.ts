@@ -11,7 +11,8 @@ const storageEnvironmentSchema = z.object({
   S3_BUCKET: optionalEnvironmentValue,
   S3_ACCESS_KEY_ID: optionalEnvironmentValue.pipe(z.string().trim().min(3).max(256).optional()),
   S3_SECRET_ACCESS_KEY: optionalEnvironmentValue.pipe(z.string().trim().min(8).max(512).optional()),
-  S3_READINESS_KEY: optionalEnvironmentValue.pipe(z.string().trim().min(1).max(512).regex(/^[a-zA-Z0-9!_.*'()/-]+$/, 'S3_READINESS_KEY is invalid.').optional())
+  S3_READINESS_KEY: optionalEnvironmentValue.pipe(z.string().trim().min(1).max(512).regex(/^[a-zA-Z0-9!_.*'()/-]+$/, 'S3_READINESS_KEY is invalid.').optional()),
+  FILE_CLEANUP_REQUIRED: z.enum(['true', 'false']).default('false')
 }).superRefine((value, context) => {
   const configured = [value.S3_ENDPOINT, value.S3_REGION, value.S3_BUCKET, value.S3_ACCESS_KEY_ID, value.S3_SECRET_ACCESS_KEY].filter(Boolean);
   if (configured.length > 0 && configured.length < 5) {
@@ -19,6 +20,9 @@ const storageEnvironmentSchema = z.object({
   }
   if (value.S3_ENDPOINT && !value.S3_READINESS_KEY) {
     context.addIssue({ code: 'custom', message: 'S3_READINESS_KEY is required when S3 storage is enabled.', path: ['S3_READINESS_KEY'] });
+  }
+  if (value.S3_ENDPOINT && value.FILE_CLEANUP_REQUIRED !== 'true') {
+    context.addIssue({ code: 'custom', message: 'FILE_CLEANUP_REQUIRED=true is required when S3 storage is enabled.', path: ['FILE_CLEANUP_REQUIRED'] });
   }
   if (value.S3_BUCKET) {
     const parsed = bucketName.safeParse(value.S3_BUCKET);

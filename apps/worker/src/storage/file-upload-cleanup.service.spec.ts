@@ -29,6 +29,6 @@ describe('worker file upload cleanup', () => {
     expect(storage.deleteObject).toHaveBeenNthCalledWith(2, 'tenant/deleted');
     expect(database.query).toHaveBeenLastCalledWith('SELECT app.mark_file_object_deleted($1::uuid)', [second]);
     expect(metrics.recordFileCleanupFailure).toHaveBeenCalledOnce();
-    expect(metrics.recordFileCleanupSuccess).toHaveBeenCalledOnce();
+    expect(metrics.recordFileCleanupSuccess).not.toHaveBeenCalled();
   });
 });
