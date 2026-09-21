@@ -677,11 +677,14 @@ describeIntegration('PostgreSQL row-level security', () => {
     );
     await bootstrap.query(
       `INSERT INTO "outbox_events" (id, organization_id, aggregate_id, event_type, payload)
-       VALUES ($1, $2, $1, 'queue.restricted', '{"secret":"not-for-runtime"}');
-       INSERT INTO "webhook_deliveries" (id, organization_id, integration_id, event_id, event_type, aggregate_id, occurred_at, payload, endpoint, secret_ref, status)
-       VALUES ($3, $2, $4, $5, 'webhook.restricted', $3, NOW(), '{"secret":"not-for-runtime"}', 'https://example.test/hook', 'secret-a', 'DEAD_LETTER'),
-              ($6, $7, $8, $9, 'webhook.restricted', $6, NOW(), '{}', 'https://example.test/other', 'secret-b', 'DEAD_LETTER')`,
-      [outboxId, tenantA, deliveryA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef4', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef5', deliveryB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef6', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef7']
+       VALUES ($1, $2, $1, 'queue.restricted', '{"secret":"not-for-runtime"}')`,
+      [outboxId, tenantA]
+    );
+    await bootstrap.query(
+      `INSERT INTO "webhook_deliveries" (id, organization_id, integration_id, event_id, event_type, aggregate_id, occurred_at, payload, endpoint, secret_ref, status)
+       VALUES ($1, $2, $3, $4, 'webhook.restricted', $1, NOW(), '{"secret":"not-for-runtime"}', 'https://example.test/hook', 'secret-a', 'DEAD_LETTER'),
+              ($5, $6, $7, $8, 'webhook.restricted', $5, NOW(), '{}', 'https://example.test/other', 'secret-b', 'DEAD_LETTER')`,
+      [deliveryA, tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef4', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef5', deliveryB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef6', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef7']
     );
     await runtime.query('BEGIN');
     try {
