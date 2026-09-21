@@ -724,9 +724,10 @@ describe('calculateHhtRates', () => {
     const secretRef = 'INTEGRATION_ACME_TEST_CONFIGURATION_SECRET';
     const secretValue = 'value-that-must-never-appear-in-audit';
     const original = process.env[secretRef]; process.env[secretRef] = secretValue;
+    const config = { url: 'https://hooks.example.test/events' };
     const updated = { id: eventId, type: 'WEBHOOK', secretRef, lastTestedAt: new Date() };
     const tx = {
-      integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef }), update: vi.fn().mockResolvedValue(updated) },
+      integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef, config }), update: vi.fn().mockResolvedValue(updated) },
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
@@ -752,9 +753,10 @@ describe('calculateHhtRates', () => {
   it('reports a missing runtime variable without exposing or attempting to resolve another tenant namespace', async () => {
     const secretRef = 'INTEGRATION_ACME_UNCONFIGURED_WEBHOOK_SECRET';
     const original = process.env[secretRef]; delete process.env[secretRef];
+    const config = { url: 'https://hooks.example.test/events' };
     const updated = { id: eventId, type: 'WEBHOOK', secretRef, lastTestedAt: new Date() };
     const tx = {
-      integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef }), update: vi.fn().mockResolvedValue(updated) },
+      integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef, config }), update: vi.fn().mockResolvedValue(updated) },
       auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
@@ -763,6 +765,30 @@ describe('calculateHhtRates', () => {
     } finally {
       if (original === undefined) delete process.env[secretRef]; else process.env[secretRef] = original;
     }
+  });
+
+  it('requires a minimal public HTTPS URL before a webhook can be configured or activated', async () => {
+    const tenants = { withTenantTransaction: vi.fn() };
+    const service = new OperationsService(tenants as never);
+    for (const url of ['http://hooks.example.test/events', 'https://localhost/events', 'https://localhost./events', 'https://foo.localhost/events', 'https://127.0.0.1/events', 'https://user:pass@hooks.example.test/events', 'https://hooks.example.test:8443/events', 'https://hooks.example.test/events?token=secret', 'https://hooks.example.test/events#secret']) {
+      expect(() => service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', config: { url } })).toThrow(BadRequestException);
+    }
+    expect(() => service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', config: { url: 'https://hooks.example.test/events', extra: true } })).toThrow(BadRequestException);
+    expect(tenants.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('canonicalizes an allowed webhook URL before persistence and keeps legacy disabled integrations editable', async () => {
+    const created = { id: eventId, type: 'WEBHOOK', config: { url: 'https://hooks.example.test/events' } };
+    const updated = { id: eventId, name: 'Renamed', status: 'DISABLED', config: {} };
+    const tx = {
+      integration: { create: vi.fn().mockResolvedValue(created), findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', status: 'DISABLED', secretRef: null, config: {} }), update: vi.fn().mockResolvedValue(updated) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+    await expect(service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', config: { url: 'HTTPS://Hooks.Example.Test:443/events' } })).resolves.toEqual(created);
+    expect(tx.integration.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ config: { url: 'https://hooks.example.test/events' } }) }));
+    await expect(service.updateIntegration(identity, eventId, { name: 'Renamed' })).resolves.toEqual(updated);
+    expect(tx.integration.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ name: 'Renamed' }) }));
   });
 
   it('summarizes only the active tenant outbox health without reading event payloads', async () => {

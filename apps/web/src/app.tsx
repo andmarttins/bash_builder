@@ -2867,7 +2867,7 @@ function IntegrationsModulePage({
           </label>
           <label>
             Configuração não sensível (JSON)
-            <textarea name="config" defaultValue="{}" maxLength={10000} />
+            <textarea name="config" defaultValue='{"url":"https://hooks.exemplo.com/eventos"}' maxLength={10000} />
           </label>
           <button
             className="primary-button compact"
@@ -2881,8 +2881,9 @@ function IntegrationsModulePage({
       <section className="admin-section">
         <h2>Conexões da organização</h2>
         <p className="section-note">
-          O teste valida somente a presença da variável protegida no runtime.
-          Ele não expõe segredos nem faz chamadas externas.
+          Webhooks exigem somente uma URL HTTPS pública no JSON. O teste valida
+          a configuração e a presença da variável protegida; não expõe segredos
+          nem faz chamadas externas.
         </p>
         {integrations.length === 0 ? (
           <p className="section-note">Nenhuma integração configurada.</p>
@@ -3010,6 +3011,8 @@ function integrationConfigurationLabel(state: string): string {
   if (state === "READY") return "variável protegida disponível.";
   if (state === "MISSING_SECRET_REFERENCE")
     return "informe uma referência de segredo antes de ativar.";
+  if (state === "WEBHOOK_CONFIG_INVALID")
+    return "webhook exige uma URL HTTPS pública válida no JSON.";
   return "variável protegida não encontrada na API; salve-a no Dokploy e faça deploy novamente.";
 }
 

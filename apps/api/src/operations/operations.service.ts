@@ -90,7 +90,7 @@ const integrationFieldsSchema = z.object({ name: text(2, 160), type: z.enum(inte
 const integrationSchema = integrationFieldsSchema.superRefine((input, context) => {
   if (input.status === 'ACTIVE' && !input.secretRef) context.addIssue({ code: 'custom', path: ['secretRef'], message: 'Uma integração ativa exige uma referência de segredo protegida.' });
 });
-const integrationUpdateSchema = integrationFieldsSchema.partial().refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined || input.secretRef !== undefined, 'Informe alguma alteração.');
+const integrationUpdateSchema = integrationFieldsSchema.partial().extend({ config: z.record(z.string(), z.unknown()).optional() }).refine((input) => input.name !== undefined || input.status !== undefined || input.config !== undefined || input.secretRef !== undefined, 'Informe alguma alteração.');
 const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
 const fileIntentSchema = z.object({ originalName: text(1, 255), contentType: z.enum(allowedFileTypes), byteSize: z.number().int().positive().max(10 * 1024 * 1024), checksum: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Informe o SHA-256 hexadecimal do arquivo.') });
 
@@ -114,6 +114,15 @@ export function classifyOutboxHealth(input: { failed: number; deadLetter: number
   if (input.deadLetter > 0 || input.expiredLeases > 0 || input.actionableAgeSeconds >= outboxOperationalThresholds.criticalMaximumAgeSeconds) return 'CRITICAL';
   if (input.failed > 0 || input.actionableAgeSeconds >= outboxOperationalThresholds.targetMaximumAgeSeconds) return 'DEGRADED';
   return 'HEALTHY';
+}
+
+function isPublicWebhookUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.hostname.toLowerCase() === 'localhost') return false;
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(url.hostname) || url.hostname.includes(':')) return false;
+    return true;
+  } catch { return false; }
 }
 
 @Injectable()
@@ -729,10 +738,11 @@ export class OperationsService {
 
   public createIntegration(identity: SessionIdentity, input: unknown) {
     const data = this.parse(integrationSchema, input); this.assertNonSecretConfig(data.config);
+    const config = this.normalizeIntegrationConfig(data.type, data.config);
     if (data.secretRef) this.assertSecretReferenceForOrganization(identity, data.secretRef);
     if (data.status === 'ACTIVE' && !this.isSecretReferenceConfigured(identity, data.secretRef)) throw new BadRequestException('A variável protegida desta integração não está configurada no runtime.');
     return this.withTenant(identity, async (tx) => {
-      const integration = await tx.integration.create({ data: { organizationId: identity.organization.id, name: data.name, type: data.type as IntegrationType, status: (data.status ?? 'DISABLED') as IntegrationStatus, config: data.config as Prisma.InputJsonValue, secretRef: data.secretRef ?? null } });
+      const integration = await tx.integration.create({ data: { organizationId: identity.organization.id, name: data.name, type: data.type as IntegrationType, status: (data.status ?? 'DISABLED') as IntegrationStatus, config: config as Prisma.InputJsonValue, secretRef: data.secretRef ?? null } });
       await this.record(tx, identity, 'integration.created', 'integration', integration.id, { type: integration.type, status: integration.status, hasSecretReference: Boolean(integration.secretRef) });
       return integration;
     });
@@ -742,12 +752,16 @@ export class OperationsService {
     const integrationId = this.id(integrationIdInput); const data = this.parse(integrationUpdateSchema, input);
     if (data.config) this.assertNonSecretConfig(data.config);
     return this.withTenant(identity, async (tx) => {
-      const current = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, status: true, secretRef: true } });
+      const current = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, type: true, status: true, secretRef: true, config: true } });
       if (!current) throw new NotFoundException('Integração não encontrada.');
       const nextSecretRef = data.secretRef === undefined ? current.secretRef : data.secretRef;
+      const nextConfig = data.config === undefined ? current.config : this.normalizeIntegrationConfig(current.type, data.config);
       if (nextSecretRef) this.assertSecretReferenceForOrganization(identity, nextSecretRef);
-      if ((data.status ?? current.status) === 'ACTIVE' && (!nextSecretRef || !this.isSecretReferenceConfigured(identity, nextSecretRef))) throw new BadRequestException('Uma integração ativa exige uma variável protegida configurada no runtime.');
-      const integration = await tx.integration.update({ where: { id: integrationId }, data: { ...(data.name === undefined ? {} : { name: data.name }), ...(data.status === undefined ? {} : { status: data.status as IntegrationStatus }), ...(data.config === undefined ? {} : { config: data.config as Prisma.InputJsonValue }), ...(data.secretRef === undefined ? {} : { secretRef: data.secretRef }) } });
+      if ((data.status ?? current.status) === 'ACTIVE') {
+        this.assertIntegrationConfig(current.type, nextConfig);
+        if (!nextSecretRef || !this.isSecretReferenceConfigured(identity, nextSecretRef)) throw new BadRequestException('Uma integração ativa exige uma variável protegida configurada no runtime.');
+      }
+      const integration = await tx.integration.update({ where: { id: integrationId }, data: { ...(data.name === undefined ? {} : { name: data.name }), ...(data.status === undefined ? {} : { status: data.status as IntegrationStatus }), ...(data.config === undefined ? {} : { config: nextConfig as Prisma.InputJsonValue }), ...(data.secretRef === undefined ? {} : { secretRef: data.secretRef }) } });
       await this.record(tx, identity, 'integration.updated', 'integration', integrationId, { status: integration.status, hasSecretReference: Boolean(integration.secretRef) });
       return integration;
     });
@@ -756,10 +770,10 @@ export class OperationsService {
   public checkIntegrationConfiguration(identity: SessionIdentity, integrationIdInput: string) {
     const integrationId = this.id(integrationIdInput);
     return this.withTenant(identity, async (tx) => {
-      const integration = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, type: true, secretRef: true } });
+      const integration = await tx.integration.findFirst({ where: { id: integrationId }, select: { id: true, type: true, secretRef: true, config: true } });
       if (!integration) throw new NotFoundException('Integração não encontrada.');
       if (integration.secretRef) this.assertSecretReferenceForOrganization(identity, integration.secretRef);
-      const state = !integration.secretRef ? 'MISSING_SECRET_REFERENCE' : this.isSecretReferenceConfigured(identity, integration.secretRef) ? 'READY' : 'SECRET_NOT_CONFIGURED';
+      const state = !this.isIntegrationConfigValid(integration.type, integration.config) ? 'WEBHOOK_CONFIG_INVALID' : !integration.secretRef ? 'MISSING_SECRET_REFERENCE' : this.isSecretReferenceConfigured(identity, integration.secretRef) ? 'READY' : 'SECRET_NOT_CONFIGURED';
       const updated = await tx.integration.update({ where: { id: integrationId }, data: { lastTestedAt: new Date() } });
       await this.record(tx, identity, 'integration.configuration_checked', 'integration', integrationId, { type: integration.type, state, hasSecretReference: Boolean(integration.secretRef) });
       return { integration: updated, configuration: { state } };
@@ -1141,6 +1155,24 @@ export class OperationsService {
       }
     };
     inspect(config);
+  }
+  private normalizeIntegrationConfig(type: IntegrationType | string, config: unknown): Record<string, unknown> {
+    if (type !== 'WEBHOOK') return config as Record<string, unknown>;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new BadRequestException('Webhook exige uma configuração válida.');
+    const keys = Object.keys(config as Record<string, unknown>);
+    const url = (config as Record<string, unknown>).url;
+    if (keys.length !== 1 || typeof url !== 'string' || url.length > 2_048 || !isPublicWebhookUrl(url)) throw new BadRequestException('Webhook exige somente uma URL HTTPS pública, sem credenciais ou endereço IP.');
+    const parsed = new URL(url.trim());
+    const hostname = parsed.hostname.replace(/\.$/, '').toLowerCase();
+    if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || parsed.search || parsed.hash || parsed.port) throw new BadRequestException('Webhook não permite localhost, portas não padrão, parâmetros ou fragmentos na URL.');
+    parsed.hostname = hostname;
+    return { url: parsed.toString() };
+  }
+  private assertIntegrationConfig(type: IntegrationType | string, config: unknown): void {
+    this.normalizeIntegrationConfig(type, config);
+  }
+  private isIntegrationConfigValid(type: IntegrationType | string, config: unknown): boolean {
+    try { this.assertIntegrationConfig(type, config); return true; } catch { return false; }
   }
   private assertSecretReferenceForOrganization(identity: SessionIdentity, secretRef: string): void {
     const prefix = `INTEGRATION_${identity.organization.slug.replace(/-/g, '_').toUpperCase()}_`;
