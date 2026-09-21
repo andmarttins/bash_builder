@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "sourceSystem": "builder-solutions-9",
+  "classification": "RESTRICTED",
+  "externalLocation": "external://encrypted-migration-maps/tenant-example",
+  "contentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "retention": "RETENTION-POLICY-EXAMPLE",
+  "accessPolicy": "external://access-policies/migration-map-example",
+  "approvedAssignment": "external://approvals/tenant-assignment-example"
+}

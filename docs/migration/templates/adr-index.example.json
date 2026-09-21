@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "adrs": [
+    { "id": "ADR-RESOURCE-GRANT", "subject": "Autorização por recurso", "status": "PENDING_APPROVAL", "location": "external://adrs/resource-grant" },
+    { "id": "ADR-FILE-RETENTION", "subject": "Arquivo, retenção e descarte", "status": "PENDING_APPROVAL", "location": "external://adrs/file-retention" },
+    { "id": "ADR-PUBLICATION", "subject": "Dados e links públicos", "status": "PENDING_APPROVAL", "location": "external://adrs/publication" },
+    { "id": "ADR-DUAL-RUN", "subject": "Dual-run, delta e rollback", "status": "PENDING_APPROVAL", "location": "external://adrs/dual-run" },
+    { "id": "ADR-INTEGRATIONS", "subject": "Integrações e segredos", "status": "PENDING_APPROVAL", "location": "external://adrs/integrations" }
+  ]
+}

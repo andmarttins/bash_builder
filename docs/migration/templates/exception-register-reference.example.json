@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "externalLocation": "external://encrypted-migration-exceptions/pilot-example",
+  "contentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "classification": "CONFIDENTIAL",
+  "retention": "RETENTION-POLICY-EXAMPLE",
+  "requiredFields": ["code", "asset", "legacyReference", "severity", "decision", "owner", "approval"],
+  "approvedBy": "external://approvals/exception-register-example"
+}

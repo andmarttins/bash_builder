@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "status": "APPROVED",
+  "policy": "RESET_REQUIRED",
+  "collisionReport": "external://migration-evidence/identity-collisions-example",
+  "membershipReconciliation": "external://migration-evidence/memberships-example",
+  "ownerReconciliation": "external://migration-evidence/owners-example",
+  "invitationPolicy": "RECREATE_PENDING_INVITATIONS",
+  "approval": "external://approvals/identity-example"
+}

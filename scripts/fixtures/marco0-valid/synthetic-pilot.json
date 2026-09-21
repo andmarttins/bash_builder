@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "synthetic-pilot",
+  "status": "ACTIVE",
+  "baseline": {
+    "repository": "https://github.com/andmarttins/builder-solutions-9",
+    "commit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24"
+  },
+  "scope": {
+    "assetGroups": ["FOR-01"],
+    "dependencies": [{ "id": "identity-readiness", "status": "APPROVED" }]
+  },
+  "ownership": {
+    "businessOwner": "external://people/business-owner",
+    "securityOwner": "external://people/security-owner",
+    "privacyOwner": "external://people/privacy-owner",
+    "cutoverOperator": "external://people/cutover-operator"
+  },
+  "approvals": [
+    { "role": "BUSINESS", "approvalId": "external://approvals/business", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "role": "SECURITY", "approvalId": "external://approvals/security", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    { "role": "PRIVACY", "approvalId": "external://approvals/privacy", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    { "role": "OPERATIONS", "approvalId": "external://approvals/operations", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+  ],
+  "references": {
+    "identityReadiness": "external://evidence/identity",
+    "tenantMapping": "external://evidence/tenant-map",
+    "exceptionRegister": "external://evidence/exceptions",
+    "reconciliationPlan": "external://evidence/reconciliation",
+    "accessPolicy": "external://evidence/access-policy",
+    "cutoverRunbook": "external://evidence/cutover"
+  },
+  "cutover": {
+    "rpoMinutes": 15,
+    "rtoMinutes": 60,
+    "incidentChannel": "external://incident-channels/migration",
+    "returnCriteria": "external://evidence/return-criteria"
+  }
+}

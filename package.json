@@ -27,6 +27,9 @@
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:status": "prisma migrate status --schema prisma/schema.prisma",
     "db:verify-acl": "node scripts/verify-migration-acls.mjs",
+    "migration:verify-marco0": "node scripts/verify-marco0.mjs",
+    "migration:gate-marco0": "node scripts/verify-marco0.mjs --require-active",
+    "migration:test-marco0": "cross-env MIGRATION_PILOTS_DIRECTORY=scripts/fixtures/marco0-valid node scripts/verify-marco0.mjs --require-active",
     "db:validate": "cross-env DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder prisma validate --schema prisma/schema.prisma"
   },
   "devDependencies": {

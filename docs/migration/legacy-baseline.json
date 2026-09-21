@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "legacyRepository": "https://github.com/andmarttins/builder-solutions-9",
+  "baselineCommit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24",
+  "baselineTree": "90ce153c920deb0414afadee1ef6af2fe10ca282",
+  "trackedFileCount": 346,
+  "capturedAt": "2026-09-21",
+  "assetGroups": [
+    "IDN-01", "IDN-02", "CFG-01", "FOR-01", "FOR-02", "PUB-01",
+    "FIL-01", "EVT-01", "BSH-01", "CHG-01", "HHT-01", "INT-01",
+    "INT-02", "INT-03", "ANL-01", "TV-01", "OPS-01", "EXT-01"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "assetGroup": "FOR-01",
+  "decision": "SUBSTITUTE",
+  "businessOwner": "external://people/business-owner-example",
+  "evidence": "external://evidence/usage-example",
+  "classification": "CONFIDENTIAL",
+  "retention": "RETENTION-POLICY-EXAMPLE",
+  "approval": {
+    "id": "external://approvals/asset-example",
+    "approvedAt": "2026-01-15T12:00:00Z",
+    "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "target": "Form, FormVersion, FieldDefinition",
+  "reconciliation": "external://migration-evidence/forms-reconciliation-example"
+}

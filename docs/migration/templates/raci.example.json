@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "roles": [
+    { "workstream": "Decisão de ativo e aceite funcional", "responsible": "external://people/business-owner-example", "accountable": "external://people/executive-sponsor-example", "consulted": ["external://people/privacy-owner-example"], "informed": ["external://people/cutover-operator-example"] },
+    { "workstream": "Segurança, acesso e retenção", "responsible": "external://people/security-owner-example", "accountable": "external://people/security-owner-example", "consulted": ["external://people/privacy-owner-example"], "informed": ["external://people/business-owner-example"] },
+    { "workstream": "Carga, reconciliação e corte", "responsible": "external://people/cutover-operator-example", "accountable": "external://people/business-owner-example", "consulted": ["external://people/security-owner-example"], "informed": ["external://people/support-example"] }
+  ]
+}

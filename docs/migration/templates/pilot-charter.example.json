@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "pilot-example-2026-01",
+  "status": "DRAFT",
+  "baseline": {
+    "repository": "https://github.com/andmarttins/builder-solutions-9",
+    "commit": "a4a0e0637ba7d47901b71b7d2c626ac5e2595f24"
+  },
+  "pilot": {
+    "tenantReference": "external://tenant-registry/example",
+    "classification": "CONFIDENTIAL",
+    "retention": "RETENTION-POLICY-EXAMPLE",
+    "volumesReference": "external://migration-evidence/volume-example"
+  },
+  "scope": {
+    "assetGroups": ["FOR-01", "FOR-02", "FIL-01"],
+    "capabilities": ["forms", "files"],
+    "dependencies": [
+      { "id": "identity-readiness", "status": "APPROVED" },
+      { "id": "storage-readiness", "status": "APPROVED" }
+    ]
+  },
+  "ownership": {
+    "businessOwner": "external://people/business-owner-example",
+    "securityOwner": "external://people/security-owner-example",
+    "privacyOwner": "external://people/privacy-owner-example",
+    "cutoverOperator": "external://people/operator-example"
+  },
+  "approvals": [
+    { "role": "BUSINESS", "approvalId": "external://approvals/business-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "role": "SECURITY", "approvalId": "external://approvals/security-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    { "role": "PRIVACY", "approvalId": "external://approvals/privacy-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    { "role": "OPERATIONS", "approvalId": "external://approvals/operations-example", "approvedAt": "2026-01-15T12:00:00Z", "evidenceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+  ],
+  "references": {
+    "identityReadiness": "external://migration-evidence/identity-example",
+    "tenantMapping": "external://migration-evidence/tenant-map-example",
+    "exceptionRegister": "external://migration-evidence/exceptions-example",
+    "reconciliationPlan": "external://migration-evidence/reconciliation-example",
+    "accessPolicy": "external://migration-evidence/access-policy-example",
+    "cutoverRunbook": "external://migration-evidence/cutover-example"
+  },
+  "cutover": {
+    "rpoMinutes": 15,
+    "rtoMinutes": 60,
+    "incidentChannel": "external://incident-channels/migration-example",
+    "returnCriteria": "external://migration-evidence/return-criteria-example"
+  }
+}

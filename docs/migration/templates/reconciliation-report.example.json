@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "migrationRunId": "external://migration-runs/example",
+  "organizationReference": "external://tenant-registry/example",
+  "transformVersion": "git:example",
+  "sourceSnapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "RECONCILING",
+  "metrics": [
+    { "asset": "Form", "sourceCount": 0, "targetCount": 0, "tolerance": 0, "exceptionRegister": "external://migration-evidence/exceptions-example" }
+  ],
+  "approvedBy": null
+}

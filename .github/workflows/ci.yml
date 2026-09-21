@@ -77,6 +77,8 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:validate
       - run: npm run db:verify-acl
+      - run: npm run migration:verify-marco0
+      - run: npm run migration:test-marco0
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
