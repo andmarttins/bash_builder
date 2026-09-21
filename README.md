@@ -38,3 +38,5 @@ O volume `redpanda_data` é persistente. Configure no serviço PostgreSQL separa
 - PostgreSQL e Redis são serviços independentes internos do Dokploy. A API verifica ambos em `/ready`; Redis fica preparado para cache, rate limit distribuído e jobs posteriores.
 - O broker é interno no Compose. Nenhuma porta de banco, Redis ou Kafka é publicada no host.
 - O primeiro acesso inclui bootstrap único de administrador, login, logout e sessão opaca revogável. Módulos administrativos e formulários de negócio continuam sendo entregas futuras.
+- Tabelas novas começam sem privilégios para `app_runtime`; cada migration deve conceder apenas as colunas e operações justificadas. Filas internas (`outbox_events`, `worker_event_receipts` e projeções) são acessadas por procedures com `SECURITY DEFINER`, nunca por grant direto ao worker.
+- Procedures cross-tenant executam como `app_migrator` sob RLS forçado. Elas exigem `search_path` fixo, `REVOKE` de `PUBLIC`, `GRANT` explícito e, quando forem exclusivas do worker, validam `session_user = 'app_worker'`. Alterações nessas procedures exigem teste que comprove que o runtime não enumera a tabela subjacente.

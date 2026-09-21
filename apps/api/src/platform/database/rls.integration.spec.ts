@@ -643,6 +643,18 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect(notificationDeliveryPermissions.rows).toEqual([{ worker: true, runtime: false }]);
     await expect(worker.query('SELECT id FROM "user_notifications"')).rejects.toThrow(/permission denied|does not exist/i);
     await expect(worker.query('SELECT id FROM "change_requests"')).rejects.toThrow(/permission denied|does not exist/i);
+    const receiptPrivileges = await bootstrap.query<{ select: boolean; insert: boolean; update: boolean; delete: boolean }>(
+      "SELECT has_table_privilege('app_runtime', 'public.worker_event_receipts', 'SELECT') AS select, has_table_privilege('app_runtime', 'public.worker_event_receipts', 'INSERT') AS insert, has_table_privilege('app_runtime', 'public.worker_event_receipts', 'UPDATE') AS update, has_table_privilege('app_runtime', 'public.worker_event_receipts', 'DELETE') AS delete"
+    );
+    expect(receiptPrivileges.rows).toEqual([{ select: false, insert: false, update: false, delete: false }]);
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      await expectRuntimeFailure(() => runtime.query('SELECT id FROM "worker_event_receipts"'), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query("INSERT INTO \"worker_event_receipts\" (organization_id, event_id, consumer_name) VALUES ($1, $2, 'runtime')", [tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380eff']), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query("UPDATE \"worker_event_receipts\" SET status = 'FAILED'"), /permission denied/i);
+      await expectRuntimeFailure(() => runtime.query('DELETE FROM "worker_event_receipts"'), /permission denied/i);
+    } finally { await runtime.query('ROLLBACK'); }
   });
 
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
