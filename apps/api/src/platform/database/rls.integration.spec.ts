@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { ConflictException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
@@ -217,6 +218,37 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally {
       await prisma.$disconnect();
     }
+  });
+
+  it('creates one same-tenant child treatment, propagates its outcome, and rejects cross-tenant parents', async () => {
+    const formA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da1';
+    const formB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da2';
+    const parentA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da3';
+    const parentB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da4';
+    const actor = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da5';
+    const membership = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da6';
+    const snapshot = JSON.stringify({ version: 1, fields: [] });
+    await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW())', [actor, 'treatment-owner@example.test']);
+    await bootstrap.query('INSERT INTO "memberships" (id, organization_id, identity_user_id, role, status, updated_at) VALUES ($1, $2, $3, \'OWNER\', \'ACTIVE\', NOW())', [membership, tenantA, actor]);
+    await bootstrap.query('INSERT INTO "forms" (id, organization_id, public_id, title, updated_at) VALUES ($1, $2, $3, \'A\', NOW()), ($4, $5, $6, \'B\', NOW())', [formA, tenantA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da7', formB, tenantB, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380da8']);
+    await bootstrap.query('INSERT INTO "form_submissions" (id, organization_id, form_id, form_version, form_snapshot, answers, updated_at) VALUES ($1, $2, $3, 1, $4, $5, NOW()), ($6, $7, $8, 1, $4, $5, NOW())', [parentA, tenantA, formA, snapshot, JSON.stringify({ note: 'A' }), parentB, tenantB, formB]);
+    await expect(bootstrap.query('INSERT INTO "form_submissions" (organization_id, form_id, parent_submission_id, form_version, form_snapshot, answers, treatment_note, updated_at) VALUES ($1, $2, $3, 1, $4, $5, \'cross tenant\', NOW())', [tenantA, formA, parentB, snapshot, '{}'])).rejects.toThrow(/foreign key/i);
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: runtimeUrl }) });
+    const service = new FormsService(new TenantTransactionService(prisma as never), new FormValidationService(), new PublicFormAccessService(prisma as never), new SubmissionCursorService('c'.repeat(32)));
+    const identity = { user: { id: actor, email: 'treatment-owner@example.test' }, organization: { id: tenantA, slug: 'tenant-a', name: 'Tenant A' }, membership: { id: membership, role: 'OWNER' as const }, access: { isPlatformAdmin: false, requiresPasswordChange: false } };
+    try {
+      const child = await service.createSubmissionTreatment(identity, formA, parentA, { note: 'Investigar causa raiz' });
+      await expect(service.createSubmissionTreatment(identity, formA, parentA, { note: 'Duplicada' })).rejects.toBeInstanceOf(ConflictException);
+      const listed = await service.listSubmissions(identity, formA, { pageSize: 25 });
+      expect(listed.submissions).toEqual([expect.objectContaining({ id: parentA, status: 'IN_REVIEW', treatment: expect.objectContaining({ id: child.id, note: 'Investigar causa raiz', status: 'IN_REVIEW' }) })]);
+      await expect(service.updateSubmissionStatus(identity, formA, child.id, { expectedStatus: 'IN_REVIEW', status: 'RESOLVED' })).resolves.toEqual({ id: child.id, status: 'RESOLVED' });
+      expect((await bootstrap.query('SELECT id, status::text FROM "form_submissions" WHERE id IN ($1, $2) ORDER BY id', [parentA, child.id])).rows).toEqual([{ id: parentA, status: 'RESOLVED' }, { id: child.id, status: 'RESOLVED' }]);
+    } finally { await prisma.$disconnect(); }
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "form_submissions" WHERE id = $1', [parentB])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
   });
 
   it('exports only the active tenant submissions through FormsService', async () => {

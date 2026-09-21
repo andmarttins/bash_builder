@@ -375,23 +375,29 @@ model FormField {
 }
 
 model FormSubmission {
-  id             String               @id @default(uuid()) @db.Uuid
-  organizationId String               @map("organization_id") @db.Uuid
-  formId         String               @map("form_id") @db.Uuid
-  formVersion    Int                  @map("form_version")
-  formSnapshot   Json                 @map("form_snapshot")
-  answers        Json
-  status         FormSubmissionStatus @default(RECEIVED)
-  submittedAt    DateTime             @default(now()) @map("submitted_at") @db.Timestamptz(6)
-  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  form           Form                 @relation(fields: [formId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  attachments    FormSubmissionAttachment[]
+  id                 String               @id @default(uuid()) @db.Uuid
+  organizationId     String               @map("organization_id") @db.Uuid
+  formId             String               @map("form_id") @db.Uuid
+  parentSubmissionId String?              @map("parent_submission_id") @db.Uuid
+  treatmentNote      String?              @map("treatment_note") @db.Text
+  formVersion        Int                  @map("form_version")
+  formSnapshot       Json                 @map("form_snapshot")
+  answers            Json
+  status             FormSubmissionStatus @default(RECEIVED)
+  submittedAt        DateTime             @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization       Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  form               Form                 @relation(fields: [formId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  parentSubmission   FormSubmission?      @relation("FormSubmissionTreatments", fields: [parentSubmissionId, organizationId, formId], references: [id, organizationId, formId], onDelete: Restrict)
+  treatment          FormSubmission?      @relation("FormSubmissionTreatments")
+  attachments        FormSubmissionAttachment[]
 
   @@index([formId, submittedAt(sort: Desc), id(sort: Desc)])
   @@index([formId, id(sort: Desc)])
   @@unique([id, organizationId])
+  @@unique([id, organizationId, formId])
+  @@unique([parentSubmissionId, organizationId, formId])
   @@map("form_submissions")
 }
 

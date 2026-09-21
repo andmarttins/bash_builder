@@ -18,7 +18,7 @@ const owner = {
 describe('FormsController authorization', () => {
   let app: NestFastifyApplication;
   const identity = { session: vi.fn() };
-  const forms = { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), replaceFields: vi.fn(), setStatus: vi.fn(), publish: vi.fn(), revokePublication: vi.fn(), listSubmissions: vi.fn(), exportSubmissions: vi.fn(), updateSubmissionStatus: vi.fn() };
+  const forms = { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), replaceFields: vi.fn(), setStatus: vi.fn(), publish: vi.fn(), revokePublication: vi.fn(), listSubmissions: vi.fn(), exportSubmissions: vi.fn(), updateSubmissionStatus: vi.fn(), createSubmissionTreatment: vi.fn() };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -82,6 +82,18 @@ describe('FormsController authorization', () => {
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json()).toEqual({ submission: { id: submissionId, status: 'IN_REVIEW' } });
     expect(forms.updateSubmissionStatus).toHaveBeenLastCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', submissionId, { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' });
+  });
+
+  it('allows only a treatment manager to open a child treatment', async () => {
+    const submissionId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16';
+    const url = `/v1/forms/a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14/submissions/${submissionId}/treatments`;
+    identity.session.mockResolvedValue({ ...owner, membership: { ...owner.membership, role: 'MEMBER' } });
+    expect((await app.inject({ method: 'POST', url, cookies: { [sessionCookieName]: 'opaque' }, payload: { note: 'Verificar causa.' } })).statusCode).toBe(403);
+    identity.session.mockResolvedValue(owner);
+    forms.createSubmissionTreatment.mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17', parentSubmissionId: submissionId, note: 'Verificar causa.', status: 'IN_REVIEW' });
+    const response = await app.inject({ method: 'POST', url, cookies: { [sessionCookieName]: 'opaque' }, payload: { note: 'Verificar causa.' } });
+    expect(response.statusCode).toBe(201);
+    expect(forms.createSubmissionTreatment).toHaveBeenLastCalledWith(owner, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', submissionId, { note: 'Verificar causa.' });
   });
 
   it('permits CSV export only to roles with the dedicated export capability', async () => {

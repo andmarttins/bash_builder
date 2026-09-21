@@ -71,6 +71,13 @@ export class FormsController {
     return this.forms.updateSubmissionStatus(request.identity, formId, submissionId, input).then((submission) => ({ submission }));
   }
 
+  @Post(':formId/submissions/:submissionId/treatments')
+  @UseGuards(CapabilityGuard)
+  @RequiredCapabilities('forms.submissions.manage')
+  public createSubmissionTreatment(@Req() request: AuthenticatedRequest, @Param('formId') formId: string, @Param('submissionId') submissionId: string, @Body() input: unknown) {
+    return this.forms.createSubmissionTreatment(request.identity, formId, submissionId, input).then((treatment) => ({ treatment }));
+  }
+
   @Post(':formId/submissions/:submissionId/attachments')
   @UseGuards(CapabilityGuard)
   @RequiredCapabilities('forms.submissions.manage')

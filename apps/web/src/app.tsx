@@ -100,6 +100,7 @@ type FormSubmission = {
   formSnapshot: { fields?: Array<{ key: string; label: string }> };
   answers: Record<string, unknown>;
   attachments: Array<{ id: string; category: string | null; description: string | null; file: { id: string; originalName: string; contentType: string; byteSize: number } }>;
+  treatment: { id: string; note: string; status: "RECEIVED" | "IN_REVIEW" | "RESOLVED" | "REJECTED"; submittedAt: string } | null;
 };
 type SubmissionPagination = {
   pageSize: number;
@@ -765,7 +766,7 @@ export function App(): React.JSX.Element {
     );
   }
   async function updateSubmissionStatus(
-    submission: FormSubmission,
+    submission: Pick<FormSubmission, "id" | "status">,
     status: FormSubmission["status"],
   ): Promise<void> {
     if (!selectedForm || status === submission.status) return;
@@ -786,6 +787,14 @@ export function App(): React.JSX.Element {
     } finally {
       setPending(false);
     }
+  }
+  async function createSubmissionTreatment(submissionId: string, formEvent: FormEvent<HTMLFormElement>): Promise<void> {
+    formEvent.preventDefault(); if (!selectedForm) return;
+    const note = new FormData(formEvent.currentTarget).get("note"); if (typeof note !== "string" || !note.trim()) return;
+    setPending(true); setError(null);
+    try { await api(`/v1/forms/${selectedForm.id}/submissions/${submissionId}/treatments`, { method: "POST", body: JSON.stringify({ note }) }); formEvent.currentTarget.reset(); await loadSubmissions(selectedForm.id, submissionPagination.page); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível abrir a tratativa."); }
+    finally { setPending(false); }
   }
   async function attachSubmissionFile(submissionId: string, formEvent: FormEvent<HTMLFormElement>): Promise<void> {
     formEvent.preventDefault(); if (!selectedForm) return;
@@ -1585,53 +1594,24 @@ export function App(): React.JSX.Element {
                             )}
                             {(identity.membership.role === "OWNER" ||
                               identity.membership.role === "ADMIN") && (
-                              <div className="action-row">
-                                <select
-                                  aria-label={`Novo status da resposta ${submission.id}`}
-                                  defaultValue=""
-                                >
-                                  <option value="" disabled>
-                                    Tratar resposta
-                                  </option>
-                                  {submission.status === "RECEIVED" && (
-                                    <>
-                                      <option value="IN_REVIEW">
-                                        Iniciar análise
-                                      </option>
-                                      <option value="REJECTED">Rejeitar</option>
-                                    </>
+                              submission.treatment ? (
+                                <section className="admin-section compact-form">
+                                  <strong>Tratativa · {submission.treatment.status}</strong>
+                                  <small>{submission.treatment.note}</small>
+                                  <small>Aberta em {new Date(submission.treatment.submittedAt).toLocaleString("pt-BR")}</small>
+                                  {submission.treatment.status === "IN_REVIEW" && (
+                                    <div className="action-row">
+                                      <button className="primary-button compact" type="button" disabled={pending} onClick={() => void updateSubmissionStatus(submission.treatment!, "RESOLVED")}>Resolver tratativa</button>
+                                      <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void updateSubmissionStatus(submission.treatment!, "REJECTED")}>Rejeitar tratativa</button>
+                                    </div>
                                   )}
-                                  {submission.status === "IN_REVIEW" && (
-                                    <>
-                                      <option value="RESOLVED">Resolver</option>
-                                      <option value="REJECTED">Rejeitar</option>
-                                    </>
-                                  )}
-                                </select>
-                                <button
-                                  className="secondary-button compact"
-                                  type="button"
-                                  disabled={
-                                    pending ||
-                                    submission.status === "RESOLVED" ||
-                                    submission.status === "REJECTED"
-                                  }
-                                  onClick={(event) => {
-                                    const status = (
-                                      event.currentTarget
-                                        .previousElementSibling as HTMLSelectElement | null
-                                    )?.value as
-                                      FormSubmission["status"] | undefined;
-                                    if (status)
-                                      void updateSubmissionStatus(
-                                        submission,
-                                        status,
-                                      );
-                                  }}
-                                >
-                                  Salvar tratativa
-                                </button>
-                              </div>
+                                </section>
+                              ) : submission.status !== "RESOLVED" && submission.status !== "REJECTED" ? (
+                                <form className="inline-form compact-form" onSubmit={(formEvent) => void createSubmissionTreatment(submission.id, formEvent)}>
+                                  <label>Nota da tratativa<textarea name="note" required maxLength={10000} placeholder="Descreva a ação necessária" /></label>
+                                  <button className="secondary-button compact" type="submit" disabled={pending}>Abrir tratativa</button>
+                                </form>
+                              ) : null
                             )}
                           </div>
                         </article>

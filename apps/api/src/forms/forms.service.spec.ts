@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { FormsService } from './forms.service.js';
 import { FormValidationService } from './form-validation.service.js';
@@ -85,10 +86,10 @@ describe('FormsService', () => {
     const service = new FormsService(tenants as never, new FormValidationService(), {} as never, cursors);
 
     const result = await service.listSubmissions(identity, formId, { status: 'RECEIVED', pageSize: '2' });
-    expect(result.submissions).toEqual([{ ...submission, submittedAt: '2026-09-20T00:00:00.000Z' }, { ...nextSubmission, submittedAt: '2026-09-19T00:00:00.000Z' }]);
+    expect(result.submissions).toEqual([{ ...submission, submittedAt: '2026-09-20T00:00:00.000Z', treatment: null }, { ...nextSubmission, submittedAt: '2026-09-19T00:00:00.000Z', treatment: null }]);
     expect(result.pagination).toMatchObject({ pageSize: 2, total: 3, nextCursor: expect.any(String) });
     expect(result.pagination.nextCursor).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
-    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { formId, status: 'RECEIVED' }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: 3 }));
+    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { formId, parentSubmissionId: null, status: 'RECEIVED' }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: 3 }));
   });
 
   it('rejects a forged or cross-form submission cursor before querying tenant rows', async () => {
@@ -116,8 +117,79 @@ describe('FormsService', () => {
     const service = new FormsService(tenants as never, new FormValidationService(), {} as never, cursors);
 
     await expect(service.updateSubmissionStatus(identity, formId, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', { expectedStatus: 'RECEIVED', status: 'IN_REVIEW' })).resolves.toEqual({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'IN_REVIEW' });
-    expect(tx.formSubmission.updateMany).toHaveBeenCalledWith({ where: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', formId, status: 'RECEIVED' }, data: { status: 'IN_REVIEW' } });
+    expect(tx.formSubmission.updateMany).toHaveBeenCalledWith({ where: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', formId, status: 'RECEIVED', treatment: { is: null } }, data: { status: 'IN_REVIEW' } });
     await expect(service.updateSubmissionStatus(identity, formId, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', { expectedStatus: 'RESOLVED', status: 'IN_REVIEW' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('opens one tenant-scoped child treatment and advances its parent into review', async () => {
+    const parentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16';
+    const treatment = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17', parentSubmissionId: parentId, treatmentNote: 'Investigar causa', status: 'IN_REVIEW' as const, submittedAt: new Date('2026-09-21T00:00:00.000Z') };
+    const tx = {
+      form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) },
+      formSubmission: { findFirst: vi.fn().mockResolvedValue({ id: parentId, formVersion: 2, formSnapshot: { fields: [] }, status: 'RECEIVED' }), create: vi.fn().mockResolvedValue(treatment), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.createSubmissionTreatment(identity, formId, parentId, { note: 'Investigar causa' })).resolves.toEqual({ id: treatment.id, parentSubmissionId: parentId, note: 'Investigar causa', status: 'IN_REVIEW', submittedAt: '2026-09-21T00:00:00.000Z' });
+    expect(tx.formSubmission.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organizationId: identity.organization.id, formId, parentSubmissionId: parentId, treatmentNote: 'Investigar causa', answers: {}, status: 'IN_REVIEW' }) }));
+    expect(tx.formSubmission.updateMany).toHaveBeenCalledWith({ where: { id: parentId, formId, parentSubmissionId: null, status: { in: ['RECEIVED', 'IN_REVIEW'] } }, data: { status: 'IN_REVIEW' } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submission.treatment_created', resourceId: treatment.id, metadata: { formId, parentSubmissionId: parentId } }) }));
+  });
+
+  it('does not overwrite a parent that already has a child treatment', async () => {
+    const parentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16';
+    const tx = {
+      form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) },
+      formSubmission: { findFirst: vi.fn().mockResolvedValue({ id: parentId, formVersion: 2, formSnapshot: {}, status: 'IN_REVIEW' }), create: vi.fn().mockRejectedValue(new Prisma.PrismaClientKnownRequestError('duplicate', { code: 'P2002', clientVersion: '6.19.3' })), updateMany: vi.fn() },
+      auditLog: { create: vi.fn() }
+    };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.createSubmissionTreatment(identity, formId, parentId, { note: 'Duplicada' })).rejects.toMatchObject({ status: 409 });
+    expect(tx.formSubmission.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('propagates a child treatment resolution to its parent and audits the transition', async () => {
+    const parentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16';
+    const treatmentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17';
+    const tx = {
+      form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) },
+      formSubmission: { findFirst: vi.fn().mockResolvedValue({ status: 'IN_REVIEW', parentSubmissionId: parentId, treatment: null }), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) }
+    };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.updateSubmissionStatus(identity, formId, treatmentId, { expectedStatus: 'IN_REVIEW', status: 'RESOLVED' })).resolves.toEqual({ id: treatmentId, status: 'RESOLVED' });
+    expect(tx.formSubmission.updateMany).toHaveBeenNthCalledWith(2, { where: { id: parentId, formId, status: 'IN_REVIEW' }, data: { status: 'RESOLVED' } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submission.treatment_status_updated', metadata: { from: 'IN_REVIEW', to: 'RESOLVED', parentSubmissionId: parentId } }) }));
+  });
+
+  it('does not allow a parent with a child treatment to bypass the child workflow', async () => {
+    const tx = {
+      form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) },
+      formSubmission: { findFirst: vi.fn().mockResolvedValue({ status: 'IN_REVIEW', parentSubmissionId: null, treatment: { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17' } }), updateMany: vi.fn() },
+      auditLog: { create: vi.fn() }
+    };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.updateSubmissionStatus(identity, formId, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', { expectedStatus: 'IN_REVIEW', status: 'RESOLVED' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.formSubmission.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a child treatment status when its parent can no longer be propagated', async () => {
+    const parentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16';
+    const tx = {
+      form: { findFirst: vi.fn().mockResolvedValue({ id: formId }) },
+      formSubmission: { findFirst: vi.fn().mockResolvedValue({ status: 'IN_REVIEW', parentSubmissionId: parentId, treatment: null }), updateMany: vi.fn().mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 }) },
+      auditLog: { create: vi.fn() }
+    };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.updateSubmissionStatus(identity, formId, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a17', { expectedStatus: 'IN_REVIEW', status: 'RESOLVED' })).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it('links only a ready tenant file to an existing submission and audits the evidence', async () => {
@@ -179,6 +251,14 @@ describe('FormsService', () => {
     expect(exported.csv).toContain('""note""');
     expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ formId, status: 'RECEIVED' }), orderBy: { id: 'desc' }, take: 100 }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'form_submissions.exported', metadata: expect.objectContaining({ asOf: expect.any(String) }) }) }));
+  });
+
+  it('exports only root submissions and never serializes child treatment rows', async () => {
+    const tx = { form: { findFirst: vi.fn().mockResolvedValue({ id: formId, title: 'Inspeção' }) }, formSubmission: { findMany: vi.fn().mockResolvedValue([{ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', status: 'IN_REVIEW', submittedAt: new Date('2026-09-20T00:00:00.000Z'), answers: { note: 'original' } }]) }, auditLog: { create: vi.fn() } };
+    const service = new FormsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.exportSubmissions(identity, formId, {})).resolves.toMatchObject({ count: 1 });
+    expect(tx.formSubmission.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ formId, parentSubmissionId: null }) }));
   });
 
   it('refuses an oversized export before writing an audit record', async () => {

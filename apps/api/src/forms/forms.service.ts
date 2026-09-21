@@ -19,6 +19,7 @@ const submissionStatusSchema = z.object({
   status: z.enum(formSubmissionStatuses),
   expectedStatus: z.enum(formSubmissionStatuses)
 });
+const treatmentSchema = z.object({ note: z.string().trim().min(1).max(10_000) });
 const attachmentSchema = z.object({ fileId: z.uuid(), category: z.string().trim().min(1).max(80).optional().nullable(), description: z.string().trim().min(1).max(10_000).optional().nullable() });
 const submissionListSchema = z.object({
   status: z.enum(formSubmissionStatuses).optional(),
@@ -156,7 +157,7 @@ export class FormsService {
     });
   }
 
-  public async listSubmissions(identity: SessionIdentity, formId: string, input: unknown): Promise<{ submissions: Array<{ id: string; formVersion: number; formSnapshot: unknown; answers: unknown; status: FormSubmissionStatus; submittedAt: string; attachments: Array<{ id: string; category: string | null; description: string | null; file: { id: string; originalName: string; contentType: string; byteSize: number } }> }>; pagination: { pageSize: number; total: number; nextCursor: string | null } }> {
+  public async listSubmissions(identity: SessionIdentity, formId: string, input: unknown): Promise<{ submissions: Array<{ id: string; formVersion: number; formSnapshot: unknown; answers: unknown; status: FormSubmissionStatus; submittedAt: string; attachments: Array<{ id: string; category: string | null; description: string | null; file: { id: string; originalName: string; contentType: string; byteSize: number } }>; treatment: { id: string; note: string; status: FormSubmissionStatus; submittedAt: string } | null }>; pagination: { pageSize: number; total: number; nextCursor: string | null } }> {
     const id = this.id(formId);
     const filters = this.parse(submissionListSchema, input);
     const cursorScope = this.submissionCursorScope(id, filters);
@@ -165,17 +166,40 @@ export class FormsService {
       await this.exists(tx, id);
       const baseWhere: Prisma.FormSubmissionWhereInput = {
         formId: id,
+        parentSubmissionId: null,
         ...(filters.status === undefined ? {} : { status: filters.status }),
         ...(filters.from === undefined && filters.to === undefined ? {} : { submittedAt: { ...(filters.from === undefined ? {} : { gte: filters.from }), ...(filters.to === undefined ? {} : { lte: filters.to }) } })
       };
       const where: Prisma.FormSubmissionWhereInput = cursor === undefined ? baseWhere : { ...baseWhere, OR: [{ submittedAt: { lt: cursor.submittedAt } }, { submittedAt: cursor.submittedAt, id: { lt: cursor.id } }] };
       const [rows, total] = await Promise.all([
-        tx.formSubmission.findMany({ where, select: { id: true, formVersion: true, formSnapshot: true, answers: true, status: true, submittedAt: true, attachments: { select: { id: true, category: true, description: true, file: { select: { id: true, originalName: true, contentType: true, byteSize: true } } }, orderBy: { createdAt: 'desc' } } }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: filters.pageSize + 1 }),
+        tx.formSubmission.findMany({ where, select: { id: true, formVersion: true, formSnapshot: true, answers: true, status: true, submittedAt: true, attachments: { select: { id: true, category: true, description: true, file: { select: { id: true, originalName: true, contentType: true, byteSize: true } } }, orderBy: { createdAt: 'desc' } }, treatment: { select: { id: true, treatmentNote: true, status: true, submittedAt: true } } }, orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }], take: filters.pageSize + 1 }),
         tx.formSubmission.count({ where: baseWhere })
       ]);
       const page = rows.slice(0, filters.pageSize);
       const last = page.at(-1);
-      return { submissions: page.map((row) => ({ ...row, submittedAt: row.submittedAt.toISOString() })), pagination: { pageSize: filters.pageSize, total, nextCursor: rows.length > filters.pageSize && last ? this.encodeSubmissionCursor(last.submittedAt, last.id, cursorScope) : null } };
+      return { submissions: page.map((row) => ({ ...row, submittedAt: row.submittedAt.toISOString(), treatment: row.treatment ? { id: row.treatment.id, note: row.treatment.treatmentNote ?? '', status: row.treatment.status, submittedAt: row.treatment.submittedAt.toISOString() } : null })), pagination: { pageSize: filters.pageSize, total, nextCursor: rows.length > filters.pageSize && last ? this.encodeSubmissionCursor(last.submittedAt, last.id, cursorScope) : null } };
+    });
+  }
+
+  public async createSubmissionTreatment(identity: SessionIdentity, formId: string, submissionId: string, input: unknown): Promise<{ id: string; parentSubmissionId: string; note: string; status: FormSubmissionStatus; submittedAt: string }> {
+    const id = this.id(formId);
+    const submission = this.id(submissionId);
+    const data = this.parse(treatmentSchema, input);
+    return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
+      await this.exists(tx, id);
+      const parent = await tx.formSubmission.findFirst({ where: { id: submission, formId: id, parentSubmissionId: null }, select: { id: true, formVersion: true, formSnapshot: true, status: true } });
+      if (!parent) throw new NotFoundException('Resposta original não encontrada.');
+      if (parent.status === 'RESOLVED' || parent.status === 'REJECTED') throw new BadRequestException('Não é possível abrir tratativa para uma resposta encerrada.');
+      try {
+        const treatment = await tx.formSubmission.create({ data: { organizationId: identity.organization.id, formId: id, parentSubmissionId: parent.id, treatmentNote: data.note, formVersion: parent.formVersion, formSnapshot: parent.formSnapshot as Prisma.InputJsonValue, answers: {}, status: 'IN_REVIEW' }, select: { id: true, parentSubmissionId: true, treatmentNote: true, status: true, submittedAt: true } });
+        const advanced = await tx.formSubmission.updateMany({ where: { id: parent.id, formId: id, parentSubmissionId: null, status: { in: ['RECEIVED', 'IN_REVIEW'] } }, data: { status: 'IN_REVIEW' } });
+        if (advanced.count !== 1) throw new ConflictException('A resposta foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
+        await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.treatment_created', resourceType: 'form_submission_treatment', resourceId: treatment.id, metadata: { formId: id, parentSubmissionId: parent.id } } });
+        return { id: treatment.id, parentSubmissionId: treatment.parentSubmissionId!, note: treatment.treatmentNote!, status: treatment.status, submittedAt: treatment.submittedAt.toISOString() };
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Esta resposta já possui uma tratativa aberta.');
+        throw error;
+      }
     });
   }
 
@@ -185,13 +209,18 @@ export class FormsService {
     const { status, expectedStatus } = this.parse(submissionStatusSchema, input);
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
       await this.exists(tx, id);
-      const current = await tx.formSubmission.findFirst({ where: { id: submission, formId: id }, select: { status: true } });
+      const current = await tx.formSubmission.findFirst({ where: { id: submission, formId: id }, select: { status: true, parentSubmissionId: true, treatment: { select: { id: true } } } });
       if (!current) throw new NotFoundException('Resposta não encontrada.');
+      if (!current.parentSubmissionId && current.treatment) throw new BadRequestException('Atualize a tratativa vinculada para encerrar esta resposta.');
       if (current.status !== expectedStatus) throw new ConflictException('A resposta foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
       if (!this.isSubmissionTransitionAllowed(expectedStatus, status)) throw new BadRequestException('A transição de tratativa solicitada não é permitida.');
-      const updated = await tx.formSubmission.updateMany({ where: { id: submission, formId: id, status: expectedStatus }, data: { status } });
+      const updated = await tx.formSubmission.updateMany({ where: { id: submission, formId: id, status: expectedStatus, ...(current.parentSubmissionId ? {} : { treatment: { is: null } }) }, data: { status } });
       if (updated.count !== 1) throw new ConflictException('A resposta foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
-      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form_submission.status_updated', resourceType: 'form_submission', resourceId: submission, metadata: { from: expectedStatus, to: status } } });
+      if (current.parentSubmissionId && (status === 'RESOLVED' || status === 'REJECTED')) {
+        const propagated = await tx.formSubmission.updateMany({ where: { id: current.parentSubmissionId, formId: id, status: 'IN_REVIEW' }, data: { status } });
+        if (propagated.count !== 1) throw new ConflictException('A resposta pai foi alterada por outra pessoa. Atualize a lista antes de tentar novamente.');
+      }
+      await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: current.parentSubmissionId ? 'form_submission.treatment_status_updated' : 'form_submission.status_updated', resourceType: current.parentSubmissionId ? 'form_submission_treatment' : 'form_submission', resourceId: submission, metadata: { from: expectedStatus, to: status, parentSubmissionId: current.parentSubmissionId } } });
       return { id: submission, status };
     });
   }
@@ -237,7 +266,7 @@ export class FormsService {
       // TIMESTAMPTZ microseconds when values cross the JavaScript Date boundary.
       const asOf = new Date();
       const to = filters.to && filters.to < asOf ? filters.to : asOf;
-      const where: Prisma.FormSubmissionWhereInput = { formId: id, ...(filters.status === undefined ? {} : { status: filters.status }), submittedAt: { ...(filters.from === undefined ? {} : { gte: filters.from }), lte: to } };
+      const where: Prisma.FormSubmissionWhereInput = { formId: id, parentSubmissionId: null, ...(filters.status === undefined ? {} : { status: filters.status }), submittedAt: { ...(filters.from === undefined ? {} : { gte: filters.from }), lte: to } };
       const escape = (value: unknown) => { const cell = String(value ?? ''); return `"${(/^[=+\-@]/.test(cell) ? `'${cell}` : cell).replaceAll('"', '""')}"`; };
       const header = '\ufeffid,status,enviado_em,respostas_json\n'; const lines: string[] = []; let bytes = Buffer.byteLength(header, 'utf8'); let count = 0;
       let cursorId: string | undefined;
