@@ -312,8 +312,15 @@ export class FormsService {
       const fields: StoredField[] = snapshot.fields.map((field) => ({ ...field, options: this.stringOptions(field.options) }));
       const answers = this.validation.validateAnswers(fields, input);
       const formSnapshot = { title: snapshot.title, version: snapshot.version, fields };
-      const submitted = await tx.formSubmission.create({ data: { organizationId: form.organizationId, formId: form.id, formVersion: snapshot.version, formSnapshot: formSnapshot as Prisma.InputJsonValue, answers: answers as Prisma.InputJsonValue }, select: { id: true, submittedAt: true } });
-      return { id: submitted.id, submittedAt: submitted.submittedAt.toISOString() };
+      // Public submissions may INSERT through RLS, but must never be readable
+      // through the public link. Prisma's create() uses RETURNING, which needs
+      // the SELECT policy and would expose that row. Generate the response
+      // metadata here and use an INSERT without RETURNING instead.
+      const id = crypto.randomUUID();
+      const submittedAt = new Date();
+      await tx.$executeRaw`INSERT INTO "form_submissions" (id, organization_id, form_id, form_version, form_snapshot, answers, submitted_at, updated_at)
+        VALUES (${id}::uuid, ${form.organizationId}::uuid, ${form.id}::uuid, ${snapshot.version}, ${JSON.stringify(formSnapshot)}::jsonb, ${JSON.stringify(answers)}::jsonb, ${submittedAt}, ${submittedAt})`;
+      return { id, submittedAt: submittedAt.toISOString() };
     });
   }
 

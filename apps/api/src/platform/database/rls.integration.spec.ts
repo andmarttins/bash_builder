@@ -499,6 +499,7 @@ describeIntegration('PostgreSQL row-level security', () => {
     const userA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a91';
     const userB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a92';
     await bootstrap.query('INSERT INTO "identity_users" (id, email, active, updated_at) VALUES ($1, $2, TRUE, NOW()), ($3, $4, TRUE, NOW())', [userA, 'deadline-a@example.test', userB, 'deadline-b@example.test']);
+    await bootstrap.query('INSERT INTO "memberships" (organization_id, identity_user_id, role, status, updated_at) VALUES ($1, $2, \'OWNER\', \'ACTIVE\', NOW()), ($3, $4, \'OWNER\', \'ACTIVE\', NOW())', [tenantA, userA, tenantB, userB]);
     await bootstrap.query('INSERT INTO "change_requests" (id, organization_id, public_code, title, created_by_id, due_at, updated_at) VALUES ($1, $2, \'MUD-A\', \'A\', $3, NOW() + INTERVAL \'1 hour\', NOW()), ($4, $5, \'MUD-B\', \'B\', $6, NOW() + INTERVAL \'1 hour\', NOW())', ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a95', tenantA, userA, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a96', tenantB, userB]);
     const notifications = (await worker.query<{ event_id: string; organization_id: string; aggregate_id: string; event_type: string; payload: Record<string, unknown>; occurred_at: Date }>('SELECT * FROM app.list_change_deadline_notifications($1, $2)', [25, 24])).rows;
     const tenantANotification = notifications.find((notification) => notification.organization_id === tenantA);

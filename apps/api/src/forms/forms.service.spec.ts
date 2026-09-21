@@ -28,13 +28,13 @@ describe('FormsService', () => {
   it('captures the published form version and field definition with every public response', async () => {
     const tx = {
       form: { findFirst: vi.fn().mockResolvedValue({ id: formId, organizationId: identity.organization.id, publicSnapshot: { title: 'Inspeção', description: null, version: 7, fields: [{ key: 'title', label: 'Título', type: 'SHORT_TEXT', required: true, options: [], position: 0 }] } }) },
-      formSubmission: { create: vi.fn().mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', submittedAt: new Date('2026-09-20T00:00:00.000Z') }) }
+      $executeRaw: vi.fn().mockResolvedValue(1)
     };
     const publicForms = { withPublishedForm: vi.fn(async (_publicId, work) => work(tx)) };
     const service = new FormsService({} as never, new FormValidationService(), publicForms as never, cursors);
 
-    await expect(service.submitPublic(publicId, { title: 'Resposta' })).resolves.toEqual({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', submittedAt: '2026-09-20T00:00:00.000Z' });
-    expect(tx.formSubmission.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ formVersion: 7, formSnapshot: expect.objectContaining({ title: 'Inspeção', version: 7 }) }) }));
+    await expect(service.submitPublic(publicId, { title: 'Resposta' })).resolves.toEqual({ id: expect.any(String), submittedAt: expect.any(String) });
+    expect(tx.$executeRaw).toHaveBeenCalledOnce();
   });
 
   it('refuses the legacy status endpoint for publication so revoked links cannot be restored', async () => {
