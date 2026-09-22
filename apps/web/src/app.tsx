@@ -459,7 +459,8 @@ export function App(): React.JSX.Element {
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     setProfileNotice(null);
@@ -475,7 +476,7 @@ export function App(): React.JSX.Element {
         },
       );
       setIdentity(result.identity);
-      event.currentTarget.reset();
+      formElement.reset();
       setProfileNotice(
         "Senha atualizada. As demais sessões desta conta foram encerradas.",
       );
@@ -582,7 +583,8 @@ export function App(): React.JSX.Element {
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     setInvitationUrl(null);
@@ -597,7 +599,7 @@ export function App(): React.JSX.Element {
           }),
         },
       );
-      event.currentTarget.reset();
+      formElement.reset();
       setInvitationUrl(
         `${window.location.origin}/?invite=${encodeURIComponent(result.invitationToken)}`,
       );
@@ -848,17 +850,19 @@ export function App(): React.JSX.Element {
   }
   async function createSubmissionTreatment(submissionId: string, formEvent: FormEvent<HTMLFormElement>): Promise<void> {
     formEvent.preventDefault(); if (!selectedForm) return;
-    const note = new FormData(formEvent.currentTarget).get("note"); if (typeof note !== "string" || !note.trim()) return;
+    const formElement = formEvent.currentTarget;
+    const note = new FormData(formElement).get("note"); if (typeof note !== "string" || !note.trim()) return;
     setPending(true); setError(null);
-    try { await api(`/v1/forms/${selectedForm.id}/submissions/${submissionId}/treatments`, { method: "POST", body: JSON.stringify({ note }) }); formEvent.currentTarget.reset(); await loadSubmissions(selectedForm.id, submissionPagination.page); }
+    try { await api(`/v1/forms/${selectedForm.id}/submissions/${submissionId}/treatments`, { method: "POST", body: JSON.stringify({ note }) }); formElement.reset(); await loadSubmissions(selectedForm.id, submissionPagination.page); }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível abrir a tratativa."); }
     finally { setPending(false); }
   }
   async function attachSubmissionFile(submissionId: string, formEvent: FormEvent<HTMLFormElement>): Promise<void> {
     formEvent.preventDefault(); if (!selectedForm) return;
-    const fileId = new FormData(formEvent.currentTarget).get("fileId"); if (typeof fileId !== "string" || !fileId) return;
+    const formElement = formEvent.currentTarget;
+    const fileId = new FormData(formElement).get("fileId"); if (typeof fileId !== "string" || !fileId) return;
     setPending(true); setError(null);
-    try { await api(`/v1/forms/${selectedForm.id}/submissions/${submissionId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) }); formEvent.currentTarget.reset(); await loadSubmissions(selectedForm.id, submissionPagination.page); }
+    try { await api(`/v1/forms/${selectedForm.id}/submissions/${submissionId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) }); formElement.reset(); await loadSubmissions(selectedForm.id, submissionPagination.page); }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível vincular o anexo."); }
     finally { setPending(false); }
   }
@@ -873,7 +877,8 @@ export function App(): React.JSX.Element {
   ): Promise<void> {
     event.preventDefault();
     if (!selectedForm) return;
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     const key = slugValue(String(values.get("label") ?? ""));
     const type = String(values.get("type")) as FormFieldSummary["type"];
     const options = ["SELECT", "MULTI_SELECT"].includes(type)
@@ -900,7 +905,7 @@ export function App(): React.JSX.Element {
           position: selectedForm.fields.length,
         },
       ]);
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -2709,7 +2714,8 @@ function OperationalModulePage({
 
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     const title = String(values.get("title") ?? "").trim();
     setPending(true);
     setError(null);
@@ -2718,7 +2724,7 @@ function OperationalModulePage({
         method: "POST",
         body: JSON.stringify(operationalPayload(view, title)),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -2845,7 +2851,8 @@ function IntegrationsModulePage({
 
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -2859,7 +2866,7 @@ function IntegrationsModulePage({
           config: parseIntegrationConfig(String(values.get("config") ?? "{}")),
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3179,7 +3186,8 @@ function FilesModulePage({
 
   async function uploadFile(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const file = new FormData(event.currentTarget).get("file");
+    const formElement = event.currentTarget;
+    const file = new FormData(formElement).get("file");
     if (!(file instanceof File) || file.size === 0) {
       setError("Selecione um arquivo válido.");
       return;
@@ -3220,7 +3228,7 @@ function FilesModulePage({
         headers: { "content-type": "application/octet-stream" },
         body: bytes,
       });
-      event.currentTarget.reset();
+      formElement.reset();
       setNotice(
         "Arquivo enviado e validado. Ele já pode ser vinculado como evidência em uma mudança.",
       );
@@ -3408,7 +3416,8 @@ function EventsModulePage({
   useEffect(() => { void api<{ items: Array<{ id: string; label: string; active: boolean }> }>("/v1/classifications?category=event_classification").then((response) => setEventClasses(response.items.filter((item) => item.active))).catch(() => setEventClasses([])); }, []);
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3429,7 +3438,7 @@ function EventsModulePage({
             : null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3446,7 +3455,8 @@ function EventsModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3460,7 +3470,7 @@ function EventsModulePage({
             : null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3474,12 +3484,13 @@ function EventsModulePage({
   }
   async function attach(eventId: string, event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const fileId = new FormData(event.currentTarget).get("fileId");
+    const formElement = event.currentTarget;
+    const fileId = new FormData(formElement).get("fileId");
     if (typeof fileId !== "string" || !fileId) return;
     setPending(true); setError(null);
     try {
       await api(`/v1/events/${eventId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) });
-      event.currentTarget.reset(); await load();
+      formElement.reset(); await load();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível vincular o arquivo.");
     } finally { setPending(false); }
@@ -3843,7 +3854,8 @@ function ChangesModulePage({
   }, [load]);
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3860,7 +3872,7 @@ function ChangesModulePage({
             : null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3877,7 +3889,8 @@ function ChangesModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3895,7 +3908,7 @@ function ChangesModulePage({
             : null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3912,7 +3925,8 @@ function ChangesModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3924,7 +3938,7 @@ function ChangesModulePage({
           role: values.get("role") || null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3943,7 +3957,8 @@ function ChangesModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3955,7 +3970,7 @@ function ChangesModulePage({
           expectedVersion: version,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -3972,7 +3987,8 @@ function ChangesModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -3984,7 +4000,7 @@ function ChangesModulePage({
           description: values.get("description") || null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -4003,7 +4019,8 @@ function ChangesModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -4023,7 +4040,7 @@ function ChangesModulePage({
           expectedVersion: version,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -4591,7 +4608,8 @@ function BashModulePage({
   }, [load]);
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -4608,7 +4626,7 @@ function BashModulePage({
             : null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -4625,7 +4643,8 @@ function BashModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -4633,7 +4652,7 @@ function BashModulePage({
         method: "POST",
         body: JSON.stringify({ content: values.get("content") }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -4647,12 +4666,13 @@ function BashModulePage({
   }
   async function attach(cardId: string, event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const fileId = new FormData(event.currentTarget).get("fileId");
+    const formElement = event.currentTarget;
+    const fileId = new FormData(formElement).get("fileId");
     if (typeof fileId !== "string" || !fileId) return;
     setPending(true); setError(null);
     try {
       await api(`/v1/bash/cards/${cardId}/attachments`, { method: "POST", body: JSON.stringify({ fileId }) });
-      event.currentTarget.reset(); await load();
+      formElement.reset(); await load();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível vincular o arquivo.");
     } finally { setPending(false); }
@@ -4904,7 +4924,8 @@ function HhtModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -4917,7 +4938,7 @@ function HhtModulePage({
           coordination: values.get("coordination") || null,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -5031,9 +5052,9 @@ function HhtModulePage({
     finally { setPending(false); }
   }
   async function grantLateException(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); const values = new FormData(event.currentTarget);
+    event.preventDefault(); const formElement = event.currentTarget; const values = new FormData(formElement);
     setPending(true); setError(null);
-    try { await api("/v1/hht/late-exceptions", { method: "POST", body: JSON.stringify({ companyId: values.get("companyId"), year: Number(values.get("year")), month: Number(values.get("month")), expiresAt: new Date(String(values.get("expiresAt"))).toISOString(), reason: values.get("reason") }) }); event.currentTarget.reset(); await load(); }
+    try { await api("/v1/hht/late-exceptions", { method: "POST", body: JSON.stringify({ companyId: values.get("companyId"), year: Number(values.get("year")), month: Number(values.get("month")), expiresAt: new Date(String(values.get("expiresAt"))).toISOString(), reason: values.get("reason") }) }); formElement.reset(); await load(); }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Não foi possível liberar o atraso HHT."); }
     finally { setPending(false); }
   }
@@ -5375,7 +5396,8 @@ function TvModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -5387,7 +5409,7 @@ function TvModulePage({
           refreshSeconds: 30,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
@@ -5469,7 +5491,8 @@ function TvModulePage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     const displayIds = values.getAll("displayIds").map(String);
     setPending(true);
     setError(null);
@@ -5482,7 +5505,7 @@ function TvModulePage({
           displayIds,
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
     } catch (requestError) {
       setError(
