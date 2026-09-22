@@ -4,6 +4,7 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { Client } from 'pg';
 
 type Identity = { user: { id: string }; organization: { id: string } };
+const fixtureSecretReference = 'INTEGRATION_CONTROL_PLANE_F4_E2E_WEBHOOK_SECRET';
 
 async function request(page: Page, path: string, method = 'GET', body?: unknown) {
   return page.evaluate(async ({ path: url, method: verb, body: payload }) => {
@@ -66,11 +67,11 @@ async function seedControlPlane(identity: Identity) {
     );
     await client.query(
       'INSERT INTO "integrations" (id, organization_id, name, type, status, config, secret_ref, created_at, updated_at) VALUES ($1, $2, $3, $4::"IntegrationType", $5::"IntegrationStatus", $6::jsonb, $7, NOW(), NOW())',
-      [integrationId, identity.organization.id, 'F4 DLQ webhook', 'WEBHOOK', 'ACTIVE', '{}', 'fixture-secret-ref']
+      [integrationId, identity.organization.id, 'F4 DLQ webhook', 'WEBHOOK', 'ACTIVE', '{}', fixtureSecretReference]
     );
     await client.query(
       'INSERT INTO "webhook_deliveries" (id, organization_id, integration_id, event_id, event_type, aggregate_id, occurred_at, payload, endpoint, secret_ref, status, attempt_count, available_at, last_error) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7::jsonb, $8, $9, $10::"WebhookDeliveryStatus", 3, NOW(), $11)',
-      [webhookDeliveryId, identity.organization.id, integrationId, randomUUID(), 'f4.webhook_dead_letter', randomUUID(), JSON.stringify({ privatePayload: 'webhook-payload-that-must-stay-private' }), 'https://private.invalid/f4', 'fixture-secret-ref', 'DEAD_LETTER', 'private provider failure']
+      [webhookDeliveryId, identity.organization.id, integrationId, randomUUID(), 'f4.webhook_dead_letter', randomUUID(), JSON.stringify({ privatePayload: 'webhook-payload-that-must-stay-private' }), 'https://private.invalid/f4', fixtureSecretReference, 'DEAD_LETTER', 'private provider failure']
     );
   } finally {
     await client.end();
@@ -114,7 +115,7 @@ test('controls notifications and operational DLQs through the UI without leaking
     await expect(page.getByText('f4.webhook_dead_letter')).toBeVisible();
     await expect(page.locator('main')).not.toContainText('queue-payload-that-must-stay-private');
     await expect(page.locator('main')).not.toContainText('webhook-payload-that-must-stay-private');
-    await expect(page.locator('main')).not.toContainText('fixture-secret-ref');
+    await expect(page.locator('main')).not.toContainText(fixtureSecretReference);
     page.once('dialog', (dialog) => dialog.accept());
     const redriveOutbox = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/operations/outbox/dead-letter/${fixture.outboxId}/redrive` && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Reenfileirar' }).first().click();
