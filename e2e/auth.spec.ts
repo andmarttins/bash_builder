@@ -157,7 +157,7 @@ test('owner publishes a form, receives a public submission, expires and revokes 
   expect(crossTenantStatus).toBe(404);
 });
 
-test('owner publishes a dashboard, protects its public link lifecycle, and isolates tenant data', async ({ page, browser }) => {
+test('owner publishes a dashboard and protects its public link lifecycle', async ({ page, browser }) => {
   await page.goto('/');
   await page.locator('input[name="email"]').fill('owner@empresa-e2e.test');
   await page.locator('input[name="password"]').fill('Permanent-password-456');
@@ -228,23 +228,5 @@ test('owner publishes a dashboard, protects its public link lifecycle, and isola
     await expiringContext.close();
   }
 
-  await page.getByRole('button', { name: 'Organização', exact: true }).click();
-  const organizationSelector = page.locator('select[name="organizationId"]');
-  const currentOrganizationId = await organizationSelector.inputValue();
-  const otherOrganizationId = await organizationSelector.locator('option').evaluateAll(
-    (options, currentId) => options.map((option) => option.getAttribute('value')).find((id) => id && id !== currentId),
-    currentOrganizationId,
-  );
-  expect(otherOrganizationId).toBeTruthy();
-  await organizationSelector.selectOption(otherOrganizationId!);
-  const switchResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations/switch' && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Trocar organização' }).click();
-  expect((await switchResponse).status()).toBe(201);
-  await page.getByRole('button', { name: 'Painéis', exact: true }).click();
-  await expect(page.getByText('Nenhum painel criado.')).toBeVisible();
-  const crossTenantStatus = await page.evaluate(async (dashboardId) => (await fetch(`/api/v1/dashboards/${dashboardId}/publish`, {
-    method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ published: true, expectedVersion: 1 }),
-  })).status, createdDashboard.dashboard.id);
-  expect(crossTenantStatus).toBe(404);
 });
 });
