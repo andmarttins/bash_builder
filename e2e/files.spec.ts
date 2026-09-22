@@ -15,7 +15,7 @@ test('owner uploads, downloads and cancels private files without crossing tenant
   await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Arquivos', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Arquivos' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Arquivos', exact: true })).toBeVisible();
   const configuration = await page.evaluate(async () => {
     const response = await fetch('/api/v1/files/configuration', { credentials: 'include' });
     return { status: response.status, body: await response.json() };
