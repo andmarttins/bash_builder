@@ -165,6 +165,7 @@ test('owner uploads, downloads and cancels private files without crossing tenant
   }, { fileId: infectedAsset.asset.id, bytes: [...eicarDocx] });
   expect(malwareUpload).toBe(400);
   await page.reload();
+  await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
   await page.getByRole('button', { name: 'Arquivos', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Arquivos', exact: true })).toBeVisible();
   const rejectedMalwareFile = page.locator('article.form-row', { hasText: 'rejected-eicar-e2e.docx' });
