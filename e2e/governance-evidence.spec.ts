@@ -119,7 +119,9 @@ test('governs form treatment, evidence, approvals, HHT and analytics without ten
 
     const event = await request(page, '/api/v1/events', 'POST', { code: 'EV-F4-EVIDENCE', title: 'Evento com evidência', occurredAt: new Date().toISOString(), origin: 'E2E' });
     expect(event.status).toBe(201);
-    const eventId = (event.body as { event: { id: string } }).event.id;
+    const createdEvent = (event.body as { event: { id: string; version: number } }).event;
+    const eventId = createdEvent.id;
+    expect((await request(page, `/api/v1/events/${eventId}/status`, 'POST', { status: 'OPEN', expectedVersion: createdEvent.version })).status).toBe(201);
     const eventAttachment = await request(page, `/api/v1/events/${eventId}/attachments`, 'POST', { fileId, category: 'evidence' });
     expect(eventAttachment.status).toBe(201);
     const eventAttachmentId = (eventAttachment.body as { attachment: { id: string } }).attachment.id;
