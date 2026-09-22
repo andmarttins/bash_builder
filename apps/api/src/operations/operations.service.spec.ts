@@ -192,6 +192,27 @@ describe('calculateHhtRates', () => {
     await expect(new OperationsService(tenants as never).createChange(identity, { publicCode: 'MUD-1', title: 'Mudança de teste' })).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('creates workflow steps through the parent relation without duplicating its tenant key', async () => {
+    const created = { id: changeId, publicCode: 'MUD-1' };
+    const tx = {
+      changeRequest: { create: vi.fn().mockResolvedValue(created) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+      outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
+    };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+
+    await expect(new OperationsService(tenants as never).createChange(identity, { publicCode: 'MUD-1', title: 'Mudança de teste' })).resolves.toEqual(created);
+    expect(tx.changeRequest.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        organizationId: identity.organization.id,
+        workflowSteps: { create: expect.arrayContaining([expect.objectContaining({ step: 'GENERAL_INFORMATION' })]) }
+      })
+    }));
+    const workflowSteps = tx.changeRequest.create.mock.calls[0]?.[0].data.workflowSteps.create;
+    expect(workflowSteps).toHaveLength(6);
+    expect(workflowSteps).toEqual(expect.not.arrayContaining([expect.objectContaining({ organizationId: expect.any(String) })]));
+  });
+
   it('requires the designated approver to record an approval decision', async () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },

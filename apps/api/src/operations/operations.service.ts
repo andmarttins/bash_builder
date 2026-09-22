@@ -245,7 +245,7 @@ export class OperationsService {
     return this.withTenant(identity, async (tx) => {
       let change;
       try {
-        change = await tx.changeRequest.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, ...data, workflowSteps: { create: Object.values(ChangeWorkflowStepName).map((step) => ({ organizationId: identity.organization.id, step })) } } });
+        change = await tx.changeRequest.create({ data: { organizationId: identity.organization.id, createdById: identity.user.id, ...data, workflowSteps: { create: Object.values(ChangeWorkflowStepName).map((step) => ({ step })) } } });
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Já existe uma mudança com este código nesta organização.');
         throw error;
