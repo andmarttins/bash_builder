@@ -25,6 +25,18 @@ describe('FormsService', () => {
     expect(tx.form.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: formId, version: 3 } }));
   });
 
+  it('creates initial fields through the parent form relation without a duplicate tenant key', async () => {
+    const created = { id: formId, publicId, title: 'Inspeção', description: null, status: 'DRAFT' as const, version: 1, fields: [{ key: 'descricao', label: 'Descrição', type: 'LONG_TEXT', required: true, options: [], position: 0 }] };
+    const tx = { form: { create: vi.fn().mockResolvedValue(created) }, auditLog: { create: vi.fn().mockResolvedValue({}) } };
+    const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
+    const service = new FormsService(tenants as never, new FormValidationService(), {} as never, cursors);
+
+    await expect(service.create(identity, { title: 'Inspeção', fields: [{ key: 'descricao', label: 'Descrição', type: 'LONG_TEXT', required: true, options: [] }] })).resolves.toEqual(created);
+    const nestedField = tx.form.create.mock.calls[0]![0].data.fields.create[0];
+    expect(nestedField).not.toHaveProperty('organizationId');
+    expect(nestedField).toMatchObject({ key: 'descricao', position: 0 });
+  });
+
   it('captures the published form version and field definition with every public response', async () => {
     const tx = {
       form: { findFirst: vi.fn().mockResolvedValue({ id: formId, organizationId: identity.organization.id, publicSnapshot: { title: 'Inspeção', description: null, version: 7, fields: [{ key: 'title', label: 'Título', type: 'SHORT_TEXT', required: true, options: [], position: 0 }] } }) },

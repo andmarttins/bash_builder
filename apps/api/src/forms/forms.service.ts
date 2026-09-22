@@ -85,7 +85,7 @@ export class FormsService {
           organizationId: identity.organization.id,
           title: data.title,
           description: data.description,
-          fields: fields.length === 0 ? undefined : { create: fields.map((field, position) => this.fieldCreate(identity.organization.id, field, position)) }
+          fields: fields.length === 0 ? undefined : { create: fields.map((field, position) => this.fieldData(field, position)) }
         },
         select: { id: true, publicId: true, title: true, description: true, status: true, version: true, fields: { select: { key: true, label: true, type: true, required: true, options: true, position: true }, orderBy: { position: 'asc' } } }
       });
@@ -111,7 +111,7 @@ export class FormsService {
     return this.tenants.withTenantTransaction(this.context(identity), async (tx) => {
       await this.claimVersion(tx, id, expectedVersion, {});
       await tx.formField.deleteMany({ where: { formId: id } });
-      await tx.formField.createMany({ data: fields.map((field, position) => ({ formId: id, ...this.fieldCreate(identity.organization.id, field, position) })) });
+      await tx.formField.createMany({ data: fields.map((field, position) => ({ organizationId: identity.organization.id, formId: id, ...this.fieldData(field, position) })) });
       const form = await this.getRecord(tx, id);
       await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action: 'form.fields_replaced', resourceType: 'form', resourceId: id, metadata: { version: form.version, fields: fields.length } } });
       return form as FormRecord;
@@ -344,8 +344,8 @@ export class FormsService {
     return this.publicForms.withPublishedForm(publicId, work);
   }
 
-  private fieldCreate(organizationId: string, field: FormFieldInput, position: number): { organizationId: string; key: string; label: string; type: FormFieldInput['type']; required: boolean; options: string[]; position: number } {
-    return { organizationId, ...field, position };
+  private fieldData(field: FormFieldInput, position: number): { key: string; label: string; type: FormFieldInput['type']; required: boolean; options: string[]; position: number } {
+    return { ...field, position };
   }
 
   private stringOptions(value: unknown): string[] {
