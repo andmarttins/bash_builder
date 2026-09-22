@@ -127,7 +127,7 @@ test('owner publishes a form, receives a public submission, expires and revokes 
 
   await page.getByRole('button', { name: 'Organização', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Organização e acesso' })).toBeVisible();
-  await page.locator('input[name="name"]').fill('Empresa isolada E2E');
+  await page.getByRole('textbox', { name: 'Nova organização' }).fill('Empresa isolada E2E');
   await page.locator('input[name="slug"]').fill('empresa-isolada-e2e');
   const createOrganization = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Criar organização' }).click();
