@@ -34,6 +34,14 @@ jobs:
       E2E_RUNTIME_DATABASE_URL: postgresql://app_runtime:runtime-test-password@localhost:5432/builder_e2e
       E2E_REDIS_URL: redis://:redis-e2e-password@localhost:6380
       E2E_ALLOW_DESTRUCTIVE: 'true'
+      E2E_S3_ENDPOINT: http://127.0.0.1:9000
+      E2E_S3_REGION: us-east-1
+      E2E_S3_BUCKET: builder-e2e-assets
+      E2E_S3_ACCESS_KEY_ID: e2e-minio-access
+      E2E_S3_SECRET_ACCESS_KEY: e2e-minio-secret-0123456789
+      E2E_S3_READINESS_KEY: builder-system/readiness
+      E2E_CLAMAV_HOST: 127.0.0.1
+      E2E_CLAMAV_PORT: '3310'
       TEST_REDIS_URL: redis://:redis-test-password@localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +71,31 @@ jobs:
           docker exec builder-redis-e2e redis-cli --no-auth-warning -a redis-e2e-password ping && exit 0;
           sleep 1;
           done;
+          exit 1
+      - name: Start private object storage for browser E2E
+        run: >-
+          docker run --detach --rm --name builder-minio-e2e -p 9000:9000
+          -e MINIO_ROOT_USER=e2e-minio-access
+          -e MINIO_ROOT_PASSWORD=e2e-minio-secret-0123456789
+          minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --address :9000
+      - name: Wait for private object storage
+        run: >-
+          for attempt in {1..30}; do
+          curl --fail --silent http://127.0.0.1:9000/minio/health/live && exit 0;
+          sleep 1;
+          done;
+          exit 1
+      - name: Start malware scanner for browser E2E
+        run: >-
+          docker run --detach --rm --name builder-clamav-e2e -p 3310:3310
+          clamav/clamav:1.4.0-1_base
+      - name: Wait for malware scanner
+        run: >-
+          for attempt in {1..120}; do
+          docker exec builder-clamav-e2e clamdcheck.sh && exit 0;
+          sleep 2;
+          done;
+          docker logs builder-clamav-e2e;
           exit 1
       - name: Validate PostgreSQL bootstrap script through its production URL path
         run: >-

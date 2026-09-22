@@ -20,7 +20,7 @@
     "test": "npm run build -w @builder/contracts && vitest run",
     "test:unit": "npm run build -w @builder/contracts && vitest run --exclude apps/api/src/platform/database/rls.integration.spec.ts --exclude apps/api/src/platform/redis/redis.integration.spec.ts",
     "test:integration": "npm run build -w @builder/contracts && vitest run apps/api/src/platform/database/rls.integration.spec.ts apps/api/src/platform/redis/redis.integration.spec.ts",
-    "test:e2e": "node e2e/prepare-database.mjs && playwright test e2e/auth.spec.ts && playwright test e2e/tv.spec.ts && playwright test e2e/tv-playlist.spec.ts && playwright test e2e/hht.spec.ts && playwright test e2e/operations.spec.ts && playwright test e2e/integrations.spec.ts",
+    "test:e2e": "node e2e/prepare-database.mjs && node e2e/prepare-storage.mjs && playwright test e2e/auth.spec.ts && playwright test e2e/tv.spec.ts && playwright test e2e/tv-playlist.spec.ts && playwright test e2e/hht.spec.ts && playwright test e2e/operations.spec.ts && playwright test e2e/integrations.spec.ts && playwright test e2e/files.spec.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
@@ -34,6 +34,7 @@
     "db:validate": "cross-env DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder prisma validate --schema prisma/schema.prisma"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1000.0",
     "@eslint/js": "9.39.5",
     "@playwright/test": "^1.63.0",
     "@types/node": "24.10.1",

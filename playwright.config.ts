@@ -22,6 +22,19 @@ if (new URL(runtimeDatabaseUrl).host !== new URL(migratorDatabaseUrl).host
 }
 const e2eRedisUrl = process.env.E2E_REDIS_URL;
 if (!e2eRedisUrl) throw new Error('E2E_REDIS_URL must be set for browser E2E tests.');
+const e2eStorage = {
+  endpoint: process.env.E2E_S3_ENDPOINT,
+  region: process.env.E2E_S3_REGION,
+  bucket: process.env.E2E_S3_BUCKET,
+  accessKeyId: process.env.E2E_S3_ACCESS_KEY_ID,
+  secretAccessKey: process.env.E2E_S3_SECRET_ACCESS_KEY,
+  readinessKey: process.env.E2E_S3_READINESS_KEY,
+  clamavHost: process.env.E2E_CLAMAV_HOST,
+  clamavPort: process.env.E2E_CLAMAV_PORT
+};
+for (const [name, value] of Object.entries(e2eStorage)) {
+  if (!value) throw new Error(`${name} must be set for browser file E2E tests.`);
+}
 
 export default defineConfig({
   testDir: './e2e',
@@ -49,7 +62,16 @@ export default defineConfig({
         REDIS_URL: e2eRedisUrl,
         BOOTSTRAP_TOKEN: 'e2e-bootstrap-token-0123456789abcdef',
         CURSOR_SIGNING_SECRET: 'e2e-cursor-signing-secret-0123456789abcdef',
-        INTEGRATION_EMPRESA_E2E_WEBHOOK_SECRET: 'e2e-only-runtime-secret-sentinel-not-for-production'
+        INTEGRATION_EMPRESA_E2E_WEBHOOK_SECRET: 'e2e-only-runtime-secret-sentinel-not-for-production',
+        S3_ENDPOINT: e2eStorage.endpoint,
+        S3_REGION: e2eStorage.region,
+        S3_BUCKET: e2eStorage.bucket,
+        S3_ACCESS_KEY_ID: e2eStorage.accessKeyId,
+        S3_SECRET_ACCESS_KEY: e2eStorage.secretAccessKey,
+        S3_READINESS_KEY: e2eStorage.readinessKey,
+        FILE_CLEANUP_REQUIRED: 'true',
+        CLAMAV_HOST: e2eStorage.clamavHost,
+        CLAMAV_PORT: e2eStorage.clamavPort
       }
     },
     {
