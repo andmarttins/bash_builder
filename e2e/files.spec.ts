@@ -4,7 +4,58 @@ import { expect, test } from '@playwright/test';
 const privatePdf = Buffer.from('%PDF-1.7\n% private E2E evidence\n', 'utf8');
 const pendingPdf = Buffer.from('%PDF-1.7\n% pending E2E evidence\n', 'utf8');
 const eicarSignature = ['X5O!P%@AP[4\\PZX54(', 'P^)7CC)7}', '$EICAR-STANDARD-', 'ANTIVIRUS-TEST-FILE!$H+H*'].join('');
-const eicarPdf = Buffer.from(`%PDF-1.7\n% E2E malware verification\n${eicarSignature}\n`, 'utf8');
+const eicarDocx = storedZip([
+  { name: '[Content_Types].xml', content: Buffer.from('<Types/>', 'utf8') },
+  { name: 'word/document.xml', content: Buffer.from('<w:document/>', 'utf8') },
+  { name: 'word/media/eicar.com', content: Buffer.from(eicarSignature, 'utf8') }
+]);
+
+function crc32(bytes: Uint8Array): number {
+  let value = 0xffff_ffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (value & 1 ? 0xedb8_8320 : 0);
+  }
+  return (value ^ 0xffff_ffff) >>> 0;
+}
+
+function storedZip(entries: Array<{ name: string; content: Buffer }>): Buffer {
+  const localEntries: Buffer[] = [];
+  const directoryEntries: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const checksum = crc32(entry.content);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x0403_4b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(entry.content.byteLength, 18);
+    local.writeUInt32LE(entry.content.byteLength, 22);
+    local.writeUInt16LE(name.byteLength, 26);
+    const localEntry = Buffer.concat([local, name, entry.content]);
+    localEntries.push(localEntry);
+    const directory = Buffer.alloc(46);
+    directory.writeUInt32LE(0x0201_4b50, 0);
+    directory.writeUInt16LE(20, 4);
+    directory.writeUInt16LE(20, 6);
+    directory.writeUInt32LE(checksum, 16);
+    directory.writeUInt32LE(entry.content.byteLength, 20);
+    directory.writeUInt32LE(entry.content.byteLength, 24);
+    directory.writeUInt16LE(name.byteLength, 28);
+    directory.writeUInt32LE(offset, 42);
+    directoryEntries.push(Buffer.concat([directory, name]));
+    offset += localEntry.byteLength;
+  }
+  const directory = Buffer.concat(directoryEntries);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x0605_4b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.byteLength, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localEntries, directory, end]);
+}
 
 test('owner uploads, downloads and cancels private files without crossing tenants', async ({ page }) => {
   test.setTimeout(120_000);
@@ -93,14 +144,14 @@ test('owner uploads, downloads and cancels private files without crossing tenant
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        originalName: 'rejected-eicar-e2e.pdf',
-        contentType: 'application/pdf',
+        originalName: 'rejected-eicar-e2e.docx',
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         byteSize: bytes.length,
         checksum
       })
     });
     return { status: response.status, body: await response.json() };
-  }, { bytes: [...eicarPdf], checksum: createHash('sha256').update(eicarPdf).digest('hex') });
+  }, { bytes: [...eicarDocx], checksum: createHash('sha256').update(eicarDocx).digest('hex') });
   expect(infectedIntent.status).toBe(201);
   const infectedAsset = infectedIntent.body as { asset: { id: string } };
   const malwareUpload = await page.evaluate(async ({ fileId, bytes }) => {
@@ -111,12 +162,12 @@ test('owner uploads, downloads and cancels private files without crossing tenant
       body: new Uint8Array(bytes)
     });
     return response.status;
-  }, { fileId: infectedAsset.asset.id, bytes: [...eicarPdf] });
+  }, { fileId: infectedAsset.asset.id, bytes: [...eicarDocx] });
   expect(malwareUpload).toBe(400);
   await page.reload();
   await page.getByRole('button', { name: 'Arquivos', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Arquivos', exact: true })).toBeVisible();
-  const rejectedMalwareFile = page.locator('article.form-row', { hasText: 'rejected-eicar-e2e.pdf' });
+  const rejectedMalwareFile = page.locator('article.form-row', { hasText: 'rejected-eicar-e2e.docx' });
   await expect(rejectedMalwareFile).toContainText('REJECTED');
   await expect(rejectedMalwareFile.getByRole('link', { name: 'Baixar' })).toHaveCount(0);
   const rejectedDownload = await page.evaluate(async (fileId) => fetch(`/api/v1/files/${fileId}/download`, { credentials: 'include' }).then((response) => response.status), infectedAsset.asset.id);
@@ -136,7 +187,7 @@ test('owner uploads, downloads and cancels private files without crossing tenant
   await page.getByRole('button', { name: 'Arquivos', exact: true }).click();
   await expect(page.getByText('private-e2e.pdf', { exact: true })).toHaveCount(0);
   await expect(page.getByText('cancel-e2e.pdf', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('rejected-eicar-e2e.pdf', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('rejected-eicar-e2e.docx', { exact: true })).toHaveCount(0);
   const crossTenantStatuses = await page.evaluate(async ({ readyFileId, pendingFileId, bytes }) => Promise.all([
     fetch(`/api/v1/files/${readyFileId}/download`, { credentials: 'include' }).then((response) => response.status),
     fetch(`/api/v1/files/${readyFileId}/content`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/octet-stream' }, body: new Uint8Array(bytes) }).then((response) => response.status),
