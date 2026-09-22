@@ -463,6 +463,23 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('isolates authenticated TV playlist reads and mutations to the active tenant', async () => {
+    const playlistA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a65';
+    const playlistB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
+    await bootstrap.query(
+      'INSERT INTO "tv_playlists" (id, organization_id, name, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',
+      [playlistA, tenantA, 'Tenant A playlist', playlistB, tenantB, 'Tenant B playlist']
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "tv_playlists" ORDER BY id')).rows).toEqual([{ id: playlistA }]);
+      expect((await runtime.query('SELECT id FROM "tv_playlists" WHERE id = $1', [playlistB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "tv_playlists" SET name = $1 WHERE id = $2 RETURNING id', ['Forbidden update', playlistB])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+    expect((await bootstrap.query<{ name: string }>('SELECT name FROM "tv_playlists" WHERE id = $1', [playlistB])).rows).toEqual([{ name: 'Tenant B playlist' }]);
+  });
+
   it('forces RLS on every operational table and prevents cross-tenant aggregates', async () => {
     const tableNames = ['classification_items', 'safety_events', 'safety_event_actions', 'safety_event_attachments', 'change_requests', 'change_risks', 'change_approvals', 'change_evidence', 'change_workflow_steps', 'bash_cards', 'bash_comments', 'bash_card_attachments', 'hht_companies', 'hht_reports', 'hht_report_windows', 'hht_reference_targets', 'hht_late_exceptions', 'hht_period_publications', 'dashboards', 'integrations', 'file_assets', 'form_submission_attachments', 'tv_displays', 'tv_playlists', 'domain_event_projections', 'user_notifications'];
     const policies = await bootstrap.query<{ tablename: string; policyname: string }>(
