@@ -7,7 +7,10 @@ import { getApiRuntimeConfig } from '../config/runtime-config.js';
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   public constructor() {
     const { DATABASE_URL: connectionString } = getApiRuntimeConfig();
-    super({ adapter: new PrismaPg({ connectionString }) });
+    super({
+      adapter: new PrismaPg({ connectionString }),
+      log: process.env.E2E_ALLOW_DESTRUCTIVE === 'true' ? ['query'] : []
+    });
   }
 
   public async onModuleInit(): Promise<void> {
