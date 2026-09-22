@@ -128,9 +128,16 @@ test('governs form treatment, evidence, approvals, HHT and analytics without ten
     const change = await request(page, '/api/v1/changes', 'POST', { publicCode: 'MUD-F4-EVIDENCE', title: 'Mudança aprovada por terceiro', requestedBy: 'E2E' });
     expect(change.status).toBe(201);
     const changeId = (change.body as { change: { id: string; version: number } }).change.id;
-    const changeEvidence = await request(page, `/api/v1/changes/${changeId}/evidence`, 'POST', { fileId, category: 'evidence' });
-    expect(changeEvidence.status).toBe(201);
-    const evidenceId = (changeEvidence.body as { evidence: { id: string } }).evidence.id;
+    await page.getByRole('button', { name: 'Mudanças', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Gestão de mudanças' })).toBeVisible();
+    const changeCard = page.locator('article.event-detail', { hasText: 'Mudança aprovada por terceiro' });
+    await changeCard.getByLabel('Arquivo pronto').selectOption(fileId);
+    await changeCard.getByLabel('Categoria').fill('evidence');
+    const addEvidence = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/changes/${changeId}/evidence` && response.request().method() === 'POST');
+    await changeCard.getByRole('button', { name: 'Vincular evidência' }).click();
+    const changeEvidence = await addEvidence;
+    expect(changeEvidence.status()).toBe(201);
+    const evidenceId = (await changeEvidence.json() as { evidence: { id: string } }).evidence.id;
     expect((await page.evaluate(async ({ changeId, evidenceId }) => fetch(`/api/v1/changes/${changeId}/evidence/${evidenceId}/download`, { credentials: 'include' }).then((response) => response.status), { changeId, evidenceId }))).toBe(200);
 
     let changeVersion = (change.body as { change: { version: number } }).change.version;
@@ -149,8 +156,14 @@ test('governs form treatment, evidence, approvals, HHT and analytics without ten
     const approvalVersion = (approval.body as { approval: { version: number } }).approval.version;
     const unauthorizedApproval = await request(page, `/api/v1/changes/${changeId}/approvals/${approvalId}/decision`, 'POST', { decision: 'APPROVED', expectedVersion: approvalVersion });
     expect(unauthorizedApproval.status).toBe(403);
-    const approved = await request(approver.page, `/api/v1/changes/${changeId}/approvals/${approvalId}/decision`, 'POST', { decision: 'APPROVED', expectedVersion: approvalVersion });
-    expect(approved.status).toBe(201);
+    await approver.page.getByRole('button', { name: 'Mudanças', exact: true }).click();
+    await expect(approver.page.getByRole('heading', { name: 'Gestão de mudanças' })).toBeVisible();
+    const approverChangeCard = approver.page.locator('article.event-detail', { hasText: 'Mudança aprovada por terceiro' });
+    const decisionForm = approverChangeCard.locator('form.approval-decision-form');
+    await expect(decisionForm).toBeVisible();
+    const decideApproval = approver.page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/changes/${changeId}/approvals/${approvalId}/decision` && response.request().method() === 'POST');
+    await decisionForm.getByRole('button', { name: 'Registrar decisão' }).click();
+    expect((await decideApproval).status()).toBe(201);
     const approvedChange = await request(page, `/api/v1/changes/${changeId}/status`, 'POST', { status: 'APPROVED', expectedVersion: changeVersion });
     expect(approvedChange.status).toBe(201);
 
@@ -170,7 +183,6 @@ test('governs form treatment, evidence, approvals, HHT and analytics without ten
     const lateException = await request(page, '/api/v1/hht/late-exceptions', 'POST', { companyId, year: 2026, month: 12, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), reason: 'Exceção testada para governança F4.' });
     expect(lateException.status).toBe(201);
     const exception = (lateException.body as { exception: { id: string; version: number } }).exception;
-    expect((await request(page, `/api/v1/hht/late-exceptions/${exception.id}/revoke`, 'POST', { expectedVersion: exception.version })).status).toBe(201);
 
     const summary = await request(page, '/api/v1/analytics/summary');
     expect(summary.status).toBe(200);
@@ -183,16 +195,23 @@ test('governs form treatment, evidence, approvals, HHT and analytics without ten
     const isolated = await request(page, '/api/v1/organizations', 'POST', { name: 'Isolamento F4 E2E', slug: 'isolamento-f4-e2e' });
     expect(isolated.status).toBe(201);
     expect((await request(page, '/api/v1/organizations/switch', 'POST', { organizationId: (isolated.body as { organization: { id: string } }).organization.id })).status).toBe(201);
-    const crossTenantStatuses = await page.evaluate(async ({ formId, submissionId, submissionAttachmentId, eventId, eventAttachmentId, changeId, evidenceId, cardId, cardAttachmentId }) => Promise.all([
+    const crossTenantStatuses = await page.evaluate(async ({ formId, submissionId, submissionAttachmentId, eventId, eventAttachmentId, changeId, evidenceId, cardId, cardAttachmentId, companyId, exception }) => Promise.all([
       fetch(`/api/v1/forms/${formId}/submissions/${submissionId}/attachments/${submissionAttachmentId}/download`, { credentials: 'include' }).then((response) => response.status),
       fetch(`/api/v1/events/${eventId}/attachments/${eventAttachmentId}/download`, { credentials: 'include' }).then((response) => response.status),
       fetch(`/api/v1/changes/${changeId}/evidence/${evidenceId}/download`, { credentials: 'include' }).then((response) => response.status),
       fetch(`/api/v1/bash/cards/${cardId}/attachments/${cardAttachmentId}/download`, { credentials: 'include' }).then((response) => response.status),
-      fetch(`/api/v1/forms/${formId}/submissions/export`, { credentials: 'include' }).then((response) => response.status)
-    ]), { formId: createdForm.id, submissionId: parentSubmission!.id, submissionAttachmentId, eventId, eventAttachmentId, changeId, evidenceId, cardId, cardAttachmentId });
-    expect(crossTenantStatuses).toEqual([404, 404, 404, 404, 404]);
+      fetch(`/api/v1/forms/${formId}/submissions/export`, { credentials: 'include' }).then((response) => response.status),
+      fetch('/api/v1/hht/late-exceptions', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ companyId, year: 2026, month: 11, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), reason: 'Tentativa cross-tenant.' }) }).then((response) => response.status),
+      fetch(`/api/v1/hht/late-exceptions/${exception.id}/revoke`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedVersion: exception.version }) }).then((response) => response.status)
+    ]), { formId: createdForm.id, submissionId: parentSubmission!.id, submissionAttachmentId, eventId, eventAttachmentId, changeId, evidenceId, cardId, cardAttachmentId, companyId, exception });
+    expect(crossTenantStatuses).toEqual([404, 404, 404, 404, 404, 404, 404]);
     const isolatedSummary = await request(page, '/api/v1/analytics/summary');
     expect((isolatedSummary.body as { safety: { open: number } }).safety.open).toBe(0);
+    expect((await request(page, '/api/v1/organizations/switch', 'POST', { organizationId })).status).toBe(201);
+    const originalHht = await request(page, '/api/v1/hht');
+    const persistedException = (originalHht.body as { lateExceptions: Array<{ id: string; revokedAt: string | null }> }).lateExceptions.find((item) => item.id === exception.id);
+    expect(persistedException?.revokedAt).toBeNull();
+    expect((await request(page, `/api/v1/hht/late-exceptions/${exception.id}/revoke`, 'POST', { expectedVersion: exception.version })).status).toBe(201);
   } finally {
     await approver.context.close();
   }

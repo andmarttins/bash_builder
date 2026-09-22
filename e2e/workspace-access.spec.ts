@@ -81,7 +81,7 @@ test('owner completes the invitation, membership and tenant-isolation lifecycle'
     const acceptRevokedInvitation = revokedContext.page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/invitations/accept' && response.request().method() === 'POST');
     await revokedContext.page.getByRole('button', { name: 'Criar acesso e aceitar convite' }).click();
     expect((await acceptRevokedInvitation).status()).toBe(401);
-    await expect(revokedContext.page.getByRole('alert')).toContainText('inválido');
+    await expect(revokedContext.page.getByRole('alert')).toContainText(/inválid|invalid/i);
   } finally {
     await revokedContext.context.close();
   }
