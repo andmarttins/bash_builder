@@ -65,7 +65,7 @@ async function seedControlPlane(identity: Identity) {
       [outboxId, identity.organization.id, randomUUID(), 'f4.dead_letter', JSON.stringify({ privatePayload: 'queue-payload-that-must-stay-private' }), 'DEAD_LETTER', 'private worker failure']
     );
     await client.query(
-      'INSERT INTO "integrations" (id, organization_id, name, type, status, config, secret_ref) VALUES ($1, $2, $3, $4::"IntegrationType", $5::"IntegrationStatus", $6::jsonb, $7)',
+      'INSERT INTO "integrations" (id, organization_id, name, type, status, config, secret_ref, created_at, updated_at) VALUES ($1, $2, $3, $4::"IntegrationType", $5::"IntegrationStatus", $6::jsonb, $7, NOW(), NOW())',
       [integrationId, identity.organization.id, 'F4 DLQ webhook', 'WEBHOOK', 'ACTIVE', '{}', 'fixture-secret-ref']
     );
     await client.query(
