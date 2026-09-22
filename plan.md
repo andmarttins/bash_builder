@@ -6,11 +6,16 @@ Este é o registro executivo do trabalho restante. A fonte técnica detalhada
 continua sendo `docs/LEGACY_MIGRATION_LEDGER.md`; ADRs e o protocolo de ETL
 definem decisões e gates específicos.
 
-**Regra obrigatória:** toda conclusão de item deste plano deve atualizar este
+**Regra obrigatória:** toda conclusão de frente deste plano deve atualizar este
 arquivo no mesmo conjunto de mudanças. A atualização deve registrar: status,
 evidência (commit, teste/CI ou documento), data, impacto e próximo item. Um
 item só pode ser marcado como concluído quando seus critérios de aceite forem
 atendidos; aprovação pendente, deploy, ETL ou piloto não são inferidos.
+
+**Regra de baixa:** os contadores oficiais acompanham as cinco frentes grandes
+abaixo, e não microtarefas. Uma frente só recebe baixa quando todos os seus
+critérios estão atendidos. Os IDs P0–P4 que aparecem depois são checkpoints e
+dependências para executar a frente; eles não entram novamente na contagem.
 
 Toda solicitação que mencionar plano, próximos passos, pendências, progresso,
 roadmap, piloto ou corte deve começar pela consulta deste arquivo. O `README.md`
@@ -25,15 +30,28 @@ o referencia como a raiz do plano em curso.
 
 **Última revisão:** 22/09/2026, commit `d69db82`; CI `35731296112` aprovado.
 
-## Status consolidado
+## Status executivo — frentes grandes
 
 | Situação | Quantidade |
 | --- | ---: |
-| Concluídos | 21 |
-| Pendentes | 2 |
-| Bloqueados | 14 |
-| Não iniciar | 5 |
-| Não concluídos (total) | 21 |
+| Frentes concluídas | 0 |
+| Frentes pendentes | 1 |
+| Frentes bloqueadas | 4 |
+| Frentes não concluídas (total) | 5 |
+
+**Entregas técnicas já validadas:** 21 incrementos de código concluídos. Elas
+reduzem o escopo de cada frente, mas não encerram a migração sem as aprovações,
+dados de piloto e corte exigidos.
+
+## Frentes de execução e baixa
+
+| ID | Frente grande | Status | Critério de baixa | Próximo movimento |
+| --- | --- | --- | --- | --- |
+| F1 | **Escopo e dados do piloto.** Consolidar carta do piloto, inventário legado, de-para de tenant/identidade/ownership e exceções. | `BLOQUEADO` | Carta aprovada; todas as linhas do piloto decididas; manifesto criptografado com hashes; carga de identidade reconciliada. | Disponibilizar dono, organização piloto e aprovações P0.1–P0.3. |
+| F2 | **Decisões funcionais e autorização.** Fechar grants, configurações/catálogos, deltas de formulários, BASH, HHT e reconciliação dos domínios aprovados. | `BLOQUEADO` | ADRs e aceites aprovados; somente decisões aprovadas implementadas, auditadas, isoladas por tenant e reconciliadas. | Aprovar P1 e P2, que definem o escopo de implementação. |
+| F3 | **Integrações e operação.** Homologar webhook/adapters exigidos e observabilidade de produção, com segredos protegidos e operação exercitada. | `BLOQUEADO` | Integrações do piloto homologadas; retry/DLQ/rotação/re-drive testados; SLOs, alertas, retenção e plantão aprovados. | Definir adapters, destino homologado, responsável e política operacional. |
+| F4 | **Qualidade integral do escopo aprovado.** Consolidar cobertura E2E/RLS dos fluxos escolhidos e completar a revisão crítica independente de todo o escopo do piloto. | `PENDENTE` | Fluxo principal e negativos públicos/entre tenants de cada capacidade do piloto passam em CI; revisão independente final >=9/10, com achados corrigidos. | Mapear, no escopo aprovado, qualquer capacidade ainda sem fluxo E2E e executá-la como um único pacote de qualidade. |
+| F5 | **Migração, corte e retirada do legado.** Executar dual-run, carga reexecutável, reconciliação, delta final, rollback, aceite e desativação controlada. | `BLOQUEADO` | Gates F1–F4 aprovados; RPO/RTO e rollback ensaiados; aceite, retenção e data de retirada registrados. | Liberar F1–F4; não iniciar corte ou retirada antes disso. |
 
 ## Revisão do que foi entregue
 
@@ -52,7 +70,11 @@ o referencia como a raiz do plano em curso.
 | Analytics, painéis e TV | `CONCLUÍDO (código)` | fontes allowlisted, snapshots públicos e revogação | relatórios, fontes ou widgets extras somente se aprovados |
 | Operação | `CONCLUÍDO (código/documentação)` | health, métricas internas, DLQ, runbook e ADR de monitoramento | SLO, retenção, alertas, plantão e plataforma de observabilidade |
 
-## Itens restantes, em ordem de execução
+## Checkpoints e dependências das frentes
+
+Esta seção preserva a rastreabilidade técnica do ledger. Seus itens não são
+microtarefas a executar isoladamente nem alteram os contadores executivos: são
+evidências e pré-requisitos da frente correspondente.
 
 ### P0 — liberar um escopo de piloto
 
@@ -111,9 +133,11 @@ o referencia como a raiz do plano em curso.
 
 ## Próxima ação objetiva
 
-O próximo passo que desbloqueia o plano é **P0.1**: criar e aprovar a carta de
-piloto. Enquanto ela não existir, o próximo incremento técnico seguro é P4.2,
-ampliando os testes end-to-end sem alterar o escopo de negócio.
+O desbloqueio externo prioritário é **F1/P0.1**: criar e aprovar a carta de
+piloto. Em paralelo, a frente ativa é **F4**: executar uma avaliação única da
+cobertura E2E/RLS de todas as capacidades já implementadas, agrupar os gaps em
+um pacote de qualidade e somente então dar baixa na frente quando o escopo do
+piloto estiver totalmente coberto.
 
 ## Histórico de atualizações
 
@@ -130,3 +154,4 @@ ampliando os testes end-to-end sem alterar o escopo de negócio.
 | 22/09/2026 | P4.2g e P4.3 | cobertura E2E do inventário Webhook: configuração sem referência, estado `MISSING_SECRET_REFERENCE`, bloqueio de ativação, estado `READY` com sentinela exclusiva de E2E e ausência desse valor na resposta, DOM e auditoria; isolamento por listagem, alteração e verificação entre tenants. Avaliação independente: 8/10 inicial, 9/10 final. | commits `2dce189`–`dde0e72`; CI `35724770312` aprovado |
 | 22/09/2026 | P4.2h e P4.3 | cobertura E2E de Arquivos privados com MinIO e ClamAV efêmeros: upload pela UI, checksum, persistência/validação S3, download autenticado, cancelamento e isolamento por tenant. O ciclo crítico encontrou e corrigiu acesso anônimo ao objeto real, montagem segura do EICAR em DOCX/ZIP, imagem MinIO no Quay, seletor de título e retorno à aba após reload. Avaliação independente: 7,5/10 inicial, 9/10 final. | commits `d1160fe`–`e08da67`; CI `35729188873` aprovado |
 | 22/09/2026 | P4.2i e P4.3 | cobertura E2E de Grupos e classificações tipadas de Eventos: criação, associação, edição, persistência após recarga, exclusão, desativação, bloqueio de classificação inativa e negativas cross-tenant. O ciclo crítico encontrou o join indevido de `identity_users` na listagem de grupos, incompatível com a revogação intencional de leitura do papel runtime; a resposta passou a projetar somente IDs de associação, e a UI continua usando a rota já autorizada de membros para dados de exibição. Avaliação independente: 6,5/10 inicial, 9/10 final. | commits `0c352c2`, `d69db82`; CI `35731296112` aprovado |
+| 22/09/2026 | modelo de baixa | replanejamento para cinco frentes grandes. Os contadores passaram a refletir frentes encerráveis, enquanto P0–P4 permanecem como checkpoints rastreáveis. Nenhuma pendência foi baixada artificialmente. | revisão do plano |
