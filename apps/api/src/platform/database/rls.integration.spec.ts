@@ -678,6 +678,7 @@ describeIntegration('PostgreSQL row-level security', () => {
 
   it('limits runtime queue access to operational columns and bounded redrive procedures', async () => {
     const outboxId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef1';
+    const runtimeOutboxId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef8';
     const deliveryA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef2';
     const deliveryB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef3';
     const outboxPrivileges = await bootstrap.query<{ insert: boolean; update: boolean; payload: boolean; status: boolean }>(
@@ -709,6 +710,12 @@ describeIntegration('PostgreSQL row-level security', () => {
     let committed = false;
     try {
       await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      await runtime.query(
+        `INSERT INTO "outbox_events" (id, organization_id, aggregate_id, event_type, payload)
+         VALUES ($1, $2, $1, 'queue.runtime_created', '{}')`,
+        [runtimeOutboxId, tenantA]
+      );
+      expect((await runtime.query<{ id: string }>('SELECT id FROM "outbox_events" WHERE id = $1', [runtimeOutboxId])).rows).toEqual([{ id: runtimeOutboxId }]);
       await expectRuntimeFailure(() => runtime.query('SELECT payload FROM "outbox_events"'), /permission denied/i);
       await expectRuntimeFailure(() => runtime.query("UPDATE \"outbox_events\" SET status = 'PUBLISHED'"), /permission denied/i);
       for (const column of ['payload', 'endpoint', 'secret_ref', 'lease_token', 'last_error']) {
@@ -726,6 +733,7 @@ describeIntegration('PostgreSQL row-level security', () => {
       if (!committed) await runtime.query('ROLLBACK');
     }
     expect((await bootstrap.query<{ last_error: null }>('SELECT last_error FROM "webhook_deliveries" WHERE id = $1', [deliveryA])).rows).toEqual([{ last_error: null }]);
+    expect((await bootstrap.query<{ id: string }>('SELECT id FROM "outbox_events" WHERE id = $1', [runtimeOutboxId])).rows).toEqual([{ id: runtimeOutboxId }]);
   });
 
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
