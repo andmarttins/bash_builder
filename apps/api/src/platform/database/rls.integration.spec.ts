@@ -381,6 +381,23 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('isolates authenticated HHT publication reads and mutations to the active tenant', async () => {
+    const publicationA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a67';
+    const publicationB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a68';
+    await bootstrap.query(
+      'INSERT INTO "hht_period_publications" (id, organization_id, year, month, updated_at) VALUES ($1, $2, 2026, 9, NOW()), ($3, $4, 2026, 9, NOW())',
+      [publicationA, tenantA, publicationB, tenantB]
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "hht_period_publications" ORDER BY id')).rows).toEqual([{ id: publicationA }]);
+      expect((await runtime.query('SELECT id FROM "hht_period_publications" WHERE id = $1', [publicationB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "hht_period_publications" SET published = TRUE WHERE id = $1 RETURNING id', [publicationB])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+    expect((await bootstrap.query<{ published: boolean }>('SELECT published FROM "hht_period_publications" WHERE id = $1', [publicationB])).rows).toEqual([{ published: false }]);
+  });
+
   it('exposes only an active TV display snapshot selected by its token digest', async () => {
     const dashboardId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a52';
     const published = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a53';

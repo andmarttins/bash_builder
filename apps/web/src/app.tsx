@@ -17,6 +17,7 @@ import {
   DashboardsModulePage,
   PublicDashboardPage,
 } from "./dashboard-publication.js";
+import { PublicHhtPage } from "./hht-publication.js";
 import { PublicTvDisplayPage, PublicTvPlaylistPage } from "./tv-publication.js";
 
 type Identity = {
@@ -176,6 +177,9 @@ export function App(): React.JSX.Element {
   const publicDashboardToken = /^\/p\/([A-Za-z0-9_-]{43})$/.exec(
     window.location.pathname,
   )?.[1];
+  const publicHhtToken = /^\/hht\/([A-Za-z0-9_-]{43})$/.exec(
+    window.location.pathname,
+  )?.[1];
   const publicTvDisplayToken = /^\/tv\/([A-Za-z0-9_-]{43})$/.exec(
     window.location.pathname,
   )?.[1];
@@ -227,6 +231,7 @@ export function App(): React.JSX.Element {
       if (
         publicFormId ||
         publicDashboardToken ||
+        publicHhtToken ||
         publicTvDisplayToken ||
         publicTvPlaylistToken
       )
@@ -260,6 +265,7 @@ export function App(): React.JSX.Element {
     invitationToken,
     publicDashboardToken,
     publicFormId,
+    publicHhtToken,
     publicTvDisplayToken,
     publicTvPlaylistToken,
   ]);
@@ -1103,6 +1109,7 @@ export function App(): React.JSX.Element {
   if (publicFormId) return <PublicFormPage publicId={publicFormId} />;
   if (publicDashboardToken)
     return <PublicDashboardPage token={publicDashboardToken} />;
+  if (publicHhtToken) return <PublicHhtPage token={publicHhtToken} />;
   if (publicTvDisplayToken)
     return <PublicTvDisplayPage token={publicTvDisplayToken} />;
   if (publicTvPlaylistToken)
@@ -5073,8 +5080,10 @@ function HhtModulePage({
   async function publishPeriod(year: number, month: number, expectedVersion?: number): Promise<void> {
     setPending(true); setError(null);
     try {
-      const response = await api<{ url: string | null }>(`/v1/hht/publications/${year}/${month}`, { method: "POST", body: JSON.stringify({ published: true, expectedVersion }) });
-      setPublicationUrl(response.url); await load();
+      const expiry = (document.getElementById(`hht-publication-expiry-${year}-${month}`) as HTMLInputElement | null)?.value;
+      const response = await api<{ url: string | null }>(`/v1/hht/publications/${year}/${month}`, { method: "POST", body: JSON.stringify({ published: true, expectedVersion, expiresAt: expiry ? new Date(expiry).toISOString() : null }) });
+      const token = response.url?.match(/\/v1\/public\/hht\/([A-Za-z0-9_-]{43})$/)?.[1];
+      setPublicationUrl(token ? `${window.location.origin}/hht/${token}` : null); await load();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível publicar o consolidado HHT.");
     } finally { setPending(false); }
@@ -5284,7 +5293,7 @@ function HhtModulePage({
           const ended = new Date(String(window.closesAt)).getTime() <= Date.now();
           const publication = publications.find((item) => Number(item.year) === Number(window.year) && Number(item.month) === Number(window.month));
           const publicationVersion = typeof publication?.version === "number" ? publication.version : undefined;
-          return <li key={String(window.id)}>{String(window.month).padStart(2, "0")}/{String(window.year)} · {String(window.status)} {canManage && window.status === "OPEN" && ended && <button className="secondary-button compact" type="button" disabled={pending || version < 1} onClick={() => void closeWindow(Number(window.year), Number(window.month), version)}>Encerrar e bloquear enviados</button>} {canManage && window.status === "CLOSED" && (publication?.published ? <button className="secondary-button compact" type="button" disabled={pending || publicationVersion === undefined} onClick={() => { if (publicationVersion !== undefined) void revokePeriod(Number(window.year), Number(window.month), publicationVersion); }}>Revogar publicação</button> : <button className="secondary-button compact" type="button" disabled={pending} onClick={() => void publishPeriod(Number(window.year), Number(window.month), publicationVersion)}>Publicar consolidado</button>)}</li>;
+          return <li key={String(window.id)}>{String(window.month).padStart(2, "0")}/{String(window.year)} · {String(window.status)} {canManage && window.status === "OPEN" && ended && <button className="secondary-button compact" type="button" disabled={pending || version < 1} onClick={() => void closeWindow(Number(window.year), Number(window.month), version)}>Encerrar e bloquear enviados</button>} {canManage && window.status === "CLOSED" && (publication?.published ? <button className="secondary-button compact" type="button" disabled={pending || publicationVersion === undefined} onClick={() => { if (publicationVersion !== undefined) void revokePeriod(Number(window.year), Number(window.month), publicationVersion); }}>Revogar publicação</button> : <><label>Expira em (opcional)<input id={`hht-publication-expiry-${window.year}-${window.month}`} type="datetime-local" disabled={pending} /></label><button className="secondary-button compact" type="button" disabled={pending} onClick={() => void publishPeriod(Number(window.year), Number(window.month), publicationVersion)}>Publicar consolidado</button></>)}</li>;
         })}</ul>}
         {reports.length === 0 ? (
           <p className="section-note">Nenhum relatório registrado.</p>
