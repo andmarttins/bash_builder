@@ -23,7 +23,17 @@ o referencia como a raiz do plano em curso.
 | `BLOQUEADO` | Exige decisão, evidência, acesso ou aprovação externa. |
 | `NÃO INICIAR` | Não deve ser implementado até constar no escopo aprovado do piloto. |
 
-**Última revisão:** 21/09/2026, commit `e0525a1`.
+**Última revisão:** 21/09/2026, commit `0628df3`; CI `35672957600` aprovado.
+
+## Status consolidado
+
+| Situação | Quantidade |
+| --- | ---: |
+| Concluídos | 13 |
+| Pendentes | 2 |
+| Bloqueados | 14 |
+| Não iniciar | 5 |
+| Não concluídos (total) | 21 |
 
 ## Revisão do que foi entregue
 
@@ -86,6 +96,7 @@ o referencia como a raiz do plano em curso.
 | --- | --- | --- | --- |
 | P4.1 | Decidir relatórios, fontes analíticas, widgets ou BI adicionais. | `BLOQUEADO` | Fonte allowlisted/contrato tipado ou aceite de descontinuação. |
 | P4.2 | Ampliar cobertura Playwright para o caminho principal de cada capacidade escolhida e links públicos inválidos/expirados/revogados. | `PENDENTE` | Fluxos do escopo piloto passam em CI, incluindo isolamento entre tenants. |
+| P4.2a | Cobrir o ciclo de formulários públicos no Playwright: criação com campo inicial, publicação, submissão anônima, links inválido/revogado/expirado e isolamento entre tenants. | `CONCLUÍDO (código)` | CI `35672957600` passou com E2E isolado, integração, unitários e build; revisão independente final 9/10. |
 | P4.3 | Executar revisão crítica independente por incremento e corrigir até nota >= 9/10, sem ajuste artificial. | `PENDENTE` | Registro da nota, achados, correções e reavaliação anexado ao item entregue. |
 | P4.4 | Produzir runbook de dual-run e corte; executar carga reexecutável, reconciliação, delta final e rollback ensaiado. | `BLOQUEADO` | Gates P0–P3 aprovados, smoke tests e RPO/RTO comprovados. |
 | P4.5 | Desativar capacidades legadas após aceite e retenção. | `NÃO INICIAR` | Aceite formal, data de retirada, evidências arquivadas e plano de reversão/compensação. |
@@ -102,3 +113,4 @@ ampliando os testes end-to-end sem alterar o escopo de negócio.
 | --- | --- | --- | --- |
 | 21/09/2026 | revisão inicial | plano criado a partir do ledger, ADRs, protocolo de ETL e estado do commit atual | `e0525a1`; CI do `main` aprovado |
 | 21/09/2026 | convenção de planejamento | `README.md` passou a apontar `plan.md` como raiz obrigatória para consulta e atualização | alteração conjunta em `README.md` e `plan.md` |
+| 21/09/2026 | P4.2a e P4.3 | cobertura E2E de ciclo público de formulários e correções reveladas pelo CI: seletor acessível, criação aninhada de campos, preservação de formulários em handlers assíncronos e isolamento por tenant. Avaliação independente: 3/10 inicial, 9/10 final. | commits `df35881`–`0628df3`; CI `35672957600` aprovado |
