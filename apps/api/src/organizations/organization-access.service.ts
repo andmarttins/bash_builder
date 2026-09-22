@@ -236,11 +236,14 @@ export class OrganizationAccessService {
       const groups = await tx.tenantGroup.findMany({
         where: { organizationId: identity.organization.id },
         orderBy: { name: 'asc' },
-        include: { memberships: { include: { membership: { include: { identityUser: { select: { email: true } } } } }, orderBy: { createdAt: 'asc' } } }
+        // The runtime database role deliberately cannot read identity_users. The
+        // organization-members endpoint is the scoped capability that provides
+        // display data; groups need only membership IDs to preselect that roster.
+        include: { memberships: { select: { membershipId: true }, orderBy: { createdAt: 'asc' } } }
       });
       return groups.map((group) => ({
         id: group.id, name: group.name, description: group.description, version: group.version,
-        members: group.memberships.map((entry) => ({ id: entry.membership.id, email: entry.membership.identityUser.email, role: entry.membership.role, status: entry.membership.status }))
+        members: group.memberships.map((entry) => ({ id: entry.membershipId }))
       }));
     });
   }

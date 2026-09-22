@@ -94,6 +94,25 @@ describe('OrganizationAccessService', () => {
     expect(outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tenant_group.created', aggregateId: group.id }) }));
   });
 
+  it('lists group membership IDs without reading identity users', async () => {
+    const groupId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14';
+    const membershipId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15';
+    const tenantGroup = {
+      findMany: vi.fn().mockResolvedValue([{
+        id: groupId, name: 'Investigação', description: null, version: 1,
+        memberships: [{ membershipId }]
+      }])
+    };
+    const { service } = serviceWith({ membership: {}, tenantGroup } as never);
+
+    await expect(service.listCurrentGroups(identity)).resolves.toEqual([{
+      id: groupId, name: 'Investigação', description: null, version: 1, members: [{ id: membershipId }]
+    }]);
+    expect(tenantGroup.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: { memberships: { select: { membershipId: true }, orderBy: { createdAt: 'asc' } } }
+    }));
+  });
+
   it('replaces a group membership atomically only with active members of the active tenant', async () => {
     const groupId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14'; const memberId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a15';
     const tenantGroup = { findFirst: vi.fn().mockResolvedValue({ id: groupId }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: groupId, version: 2 }) };

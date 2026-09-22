@@ -75,7 +75,7 @@ type TenantGroup = {
   name: string;
   description: string | null;
   version: number;
-  members: Array<{ id: string; email: string; role: string; status: string }>;
+  members: Array<{ id: string }>;
 };
 type FormFieldSummary = {
   key: string;
