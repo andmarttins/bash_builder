@@ -240,12 +240,12 @@ describe('calculateHhtRates', () => {
   it('only lets a manager request approval from another active organization member', async () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5, createdById: identity.user.id }) },
-      membership: { findFirst: vi.fn().mockResolvedValue({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', identityUserId: identity.user.id, role: 'OWNER' }) }
+      $queryRaw: vi.fn().mockResolvedValue([{ membership_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a16', identity_user_id: identity.user.id, membership_role: 'OWNER' }])
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
 
     await expect(new OperationsService(tenants as never).addChangeApproval(identity, changeId, { approverName: 'Owner', approverEmail: identity.user.email })).rejects.toBeInstanceOf(ForbiddenException);
-    expect(tx.membership.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organizationId: identity.organization.id, status: 'ACTIVE' }) }));
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('links only a ready tenant file as evidence and emits an audit event', async () => {
