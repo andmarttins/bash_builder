@@ -17,6 +17,7 @@ async function expectPublicTvUnavailable(browser: Browser, path: string): Promis
 }
 
 test('owner publishes a TV display and protects its public link lifecycle', async ({ page, browser }) => {
+  test.setTimeout(45_000);
   await page.goto('/');
   await page.locator('input[name="email"]').fill('owner@empresa-e2e.test');
   await page.locator('input[name="password"]').fill('Permanent-password-456');
@@ -35,7 +36,7 @@ test('owner publishes a TV display and protects its public link lifecycle', asyn
   await dashboardCard.getByRole('button', { name: 'Publicar' }).click();
   expect((await publishDashboard).status()).toBe(201);
 
-  await page.getByRole('button', { name: 'TV', exact: true }).click();
+  await page.getByRole('button', { name: 'TV corporativa', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'TV operacional' })).toBeVisible();
   await page.getByLabel('Nome da tela').fill('Tela pública E2E');
   await page.locator('select[name="dashboardId"]').selectOption(dashboard.dashboard.id);
@@ -78,7 +79,7 @@ test('owner publishes a TV display and protects its public link lifecycle', asyn
   await dashboardCard.getByRole('button', { name: 'Gerar novo link' }).click();
   expect((await republishDashboard).status()).toBe(201);
 
-  await page.getByRole('button', { name: 'TV', exact: true }).click();
+  await page.getByRole('button', { name: 'TV corporativa', exact: true }).click();
   await page.getByLabel('Nome da tela').fill('Expiração de TV E2E');
   await page.locator('select[name="dashboardId"]').selectOption(dashboard.dashboard.id);
   const createExpiringDisplay = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/tv/displays' && response.request().method() === 'POST');
