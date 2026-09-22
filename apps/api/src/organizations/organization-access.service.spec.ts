@@ -85,13 +85,13 @@ describe('OrganizationAccessService', () => {
     const group = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a14', name: 'Investigação', description: 'Equipe de análise', version: 1 };
     const tenantGroup = { create: vi.fn().mockResolvedValue(group) };
     const auditLog = { create: vi.fn().mockResolvedValue({}) };
-    const outboxEvent = { create: vi.fn().mockResolvedValue({}) };
+    const outboxEvent = { createMany: vi.fn().mockResolvedValue({ count: 1 }) };
     const { service } = serviceWith({ membership: {}, tenantGroup, auditLog, outboxEvent } as never);
 
     await expect(service.createGroup(identity, { name: group.name, description: group.description })).resolves.toEqual({ ...group, members: [] });
     expect(tenantGroup.create).toHaveBeenCalledWith({ data: { organizationId: identity.organization.id, name: group.name, description: group.description } });
     expect(auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'tenant_group.created', resourceId: group.id }) }));
-    expect(outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tenant_group.created', aggregateId: group.id }) }));
+    expect(outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tenant_group.created', aggregateId: group.id }) }));
   });
 
   it('replaces a group membership atomically only with active members of the active tenant', async () => {
@@ -99,7 +99,7 @@ describe('OrganizationAccessService', () => {
     const tenantGroup = { findFirst: vi.fn().mockResolvedValue({ id: groupId }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: groupId, version: 2 }) };
     const membership = { findMany: vi.fn().mockResolvedValue([{ id: memberId }]) };
     const tenantGroupMembership = { deleteMany: vi.fn().mockResolvedValue({ count: 0 }), createMany: vi.fn().mockResolvedValue({ count: 1 }) };
-    const auditLog = { create: vi.fn().mockResolvedValue({}) }; const outboxEvent = { create: vi.fn().mockResolvedValue({}) };
+    const auditLog = { create: vi.fn().mockResolvedValue({}) }; const outboxEvent = { createMany: vi.fn().mockResolvedValue({ count: 1 }) };
     const { service } = serviceWith({ membership, tenantGroup, tenantGroupMembership, auditLog, outboxEvent } as never);
 
     await expect(service.replaceGroupMembers(identity, groupId, { membershipIds: [memberId], expectedVersion: 1 })).resolves.toEqual({ id: groupId, version: 2 });

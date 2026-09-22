@@ -322,7 +322,7 @@ export class OrganizationAccessService {
 
   private async recordGroupMutation(tx: TenantTransaction, identity: SessionIdentity, action: string, groupId: string, metadata: Record<string, string | number | boolean>): Promise<void> {
     await tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action, resourceType: 'tenant_group', resourceId: groupId, metadata: metadata as Prisma.InputJsonValue } });
-    await tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: groupId, eventType: action, payload: metadata as Prisma.InputJsonValue } });
+    await tx.outboxEvent.createMany({ data: { organizationId: identity.organization.id, aggregateId: groupId, eventType: action, payload: metadata as Prisma.InputJsonValue } });
   }
 
   private requireTokenHash(token: string | undefined): string {

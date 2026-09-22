@@ -1214,7 +1214,7 @@ export class OperationsService {
   private async record(tx: TenantTransaction, identity: SessionIdentity, action: string, resourceType: string, resourceId: string, metadata: Record<string, unknown>): Promise<void> {
     await Promise.all([
       tx.auditLog.create({ data: { organizationId: identity.organization.id, actorId: identity.user.id, action, resourceType, resourceId, metadata: metadata as Prisma.InputJsonValue } }),
-      tx.outboxEvent.create({ data: { organizationId: identity.organization.id, aggregateId: resourceId, eventType: action, payload: metadata as Prisma.InputJsonValue }, select: { id: true } })
+      tx.outboxEvent.createMany({ data: { organizationId: identity.organization.id, aggregateId: resourceId, eventType: action, payload: metadata as Prisma.InputJsonValue } })
     ]);
   }
   private async resetQuarantinedUpload(identity: SessionIdentity, assetId: string): Promise<void> {

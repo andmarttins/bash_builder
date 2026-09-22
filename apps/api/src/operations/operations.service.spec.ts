@@ -37,7 +37,7 @@ describe('calculateHhtRates', () => {
       safetyEvent: { findFirst: vi.fn().mockResolvedValue({ id: eventId, status: 'OPEN' }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(updated) },
       safetyEventAction: { count: vi.fn() },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
-      outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const service = new OperationsService(tenants as never);
@@ -45,7 +45,7 @@ describe('calculateHhtRates', () => {
     await expect(service.transitionEvent(identity, eventId, { status: 'IN_REVIEW', expectedVersion: 3 })).resolves.toEqual(updated);
     expect(tx.safetyEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 3 }, data: expect.objectContaining({ status: 'IN_REVIEW' }) }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'safety_event.status_changed', resourceId: eventId }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'safety_event.status_changed', aggregateId: eventId }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'safety_event.status_changed', aggregateId: eventId }) }));
   });
 
   it('classifies actionable outbox age, failures, expired leases, and dead letters conservatively', () => {
@@ -71,7 +71,7 @@ describe('calculateHhtRates', () => {
     const created = { id: eventId, code: 'EVT-SLA' };
     const tx = {
       safetyEvent: { create: vi.fn().mockResolvedValue(created) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const service = new OperationsService(tenants as never);
@@ -87,7 +87,7 @@ describe('calculateHhtRates', () => {
   it('resolves actual and potential event classifications by ID or legacy value', async () => {
     const classId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a19';
     const potentialId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a20';
-    const tx = { classificationItem: { findMany: vi.fn().mockResolvedValue([{ id: classId, value: 'near-miss' }, { id: potentialId, value: 'serious' }]) }, safetyEvent: { create: vi.fn().mockResolvedValue({ id: eventId, code: 'EVT-CLASS' }) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { classificationItem: { findMany: vi.fn().mockResolvedValue([{ id: classId, value: 'near-miss' }, { id: potentialId, value: 'serious' }]) }, safetyEvent: { create: vi.fn().mockResolvedValue({ id: eventId, code: 'EVT-CLASS' }) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.createEvent(identity, { code: 'EVT-CLASS', title: 'Classificado', origin: 'MANUAL', occurredAt: '2026-09-20T12:00:00.000Z', actualClassificationId: classId, potentialClassificationId: potentialId })).resolves.toMatchObject({ id: eventId });
     expect(tx.classificationItem.findMany).toHaveBeenCalledWith({ where: { category: 'event_classification', active: true, OR: [{ id: { in: [classId, potentialId] } }] }, select: { id: true, value: true } });
@@ -100,12 +100,12 @@ describe('calculateHhtRates', () => {
 
   it('retires an approved tenant classification with optimistic concurrency and an audit event', async () => {
     const item = { id: eventId, category: 'event_classification', value: 'near-miss', active: false, version: 2 };
-    const tx = { classificationItem: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(item) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { classificationItem: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(item) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.updateClassification(identity, eventId, { active: false, expectedVersion: 1 })).resolves.toEqual(item);
     expect(tx.classificationItem.updateMany).toHaveBeenCalledWith({ where: { id: eventId, version: 1 }, data: { label: undefined, position: undefined, active: false, version: { increment: 1 } } });
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'classification.retired', resourceId: eventId }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'classification.retired', aggregateId: eventId }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'classification.retired', aggregateId: eventId }) }));
   });
 
   it('rejects unapproved classification categories before the tenant transaction', () => {
@@ -122,7 +122,7 @@ describe('calculateHhtRates', () => {
       bashCard: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
       fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: fileId }) },
       bashCardAttachment: { create: vi.fn().mockResolvedValue({ id: attachmentId, fileId }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.addCardAttachment(identity, eventId, { fileId, category: 'photo' })).resolves.toMatchObject({ id: attachmentId });
@@ -140,7 +140,7 @@ describe('calculateHhtRates', () => {
       safetyEvent: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
       fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: fileId }) },
       safetyEventAttachment: { create: vi.fn().mockResolvedValue({ id: attachmentId, fileId }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.addEventAttachment(identity, eventId, { fileId, category: 'foto' })).resolves.toMatchObject({ id: attachmentId });
@@ -158,7 +158,7 @@ describe('calculateHhtRates', () => {
     const attachmentId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a25';
     const tx = {
       safetyEventAttachment: { findFirst: vi.fn().mockResolvedValue({ id: attachmentId, fileId: eventId, file: { status: 'READY', storageKey: 'acme/evidence.pdf', originalName: 'evidence.pdf' } }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const storage = { isConfigured: vi.fn().mockReturnValue(true), openDownload: vi.fn().mockResolvedValue({ body: Buffer.from('ok'), contentType: 'application/pdf', contentLength: 2 }) };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never, storage as never);
@@ -207,13 +207,13 @@ describe('calculateHhtRates', () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'IN_REVIEW', currentStep: 5 }) },
       changeApproval: { findFirst: vi.fn().mockResolvedValue({ approverUserId: identity.user.id }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(decided) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
 
     await expect(new OperationsService(tenants as never).decideChangeApproval(identity, changeId, eventId, { decision: 'APPROVED', expectedVersion: 1 })).resolves.toEqual(decided);
     expect(tx.changeApproval.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, changeId, decision: 'PENDING', version: 1 } }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'change.approval_decided' }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'change.approval_decided' }) }));
   });
 
   it('only lets a manager request approval from another active organization member', async () => {
@@ -233,13 +233,13 @@ describe('calculateHhtRates', () => {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId }) },
       fileAsset: { findFirst: vi.fn().mockResolvedValue({ id: eventId }) },
       changeEvidence: { create: vi.fn().mockResolvedValue(evidence) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
 
     await expect(new OperationsService(tenants as never).addChangeEvidence(identity, changeId, { fileId: eventId, category: 'Plano de retorno' })).resolves.toEqual(evidence);
     expect(tx.fileAsset.findFirst).toHaveBeenCalledWith({ where: { id: eventId, status: 'READY' }, select: { id: true } });
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'change.evidence_linked' }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'change.evidence_linked' }) }));
   });
 
   it('does not approve a change request without a registered risk', async () => {
@@ -256,7 +256,7 @@ describe('calculateHhtRates', () => {
     const tx = {
       changeRequest: { findFirst: vi.fn().mockResolvedValue({ id: changeId, status: 'DRAFT', currentStep: 1 }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(completed) },
       changeWorkflowStep: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
 
@@ -289,7 +289,7 @@ describe('calculateHhtRates', () => {
         findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, stage: 'DESIGN', position: new Prisma.Decimal('1.5'), version: 2 })
       },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
-      outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const service = new OperationsService(tenants as never);
@@ -311,7 +311,7 @@ describe('calculateHhtRates', () => {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, stage: 'BACKLOG', position: new Prisma.Decimal('1.5'), version: 2 })
       },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
 
@@ -331,21 +331,21 @@ describe('calculateHhtRates', () => {
 
   it('stores a tenant-scoped HHT reference target with optimistic concurrency and audit outbox', async () => {
     const target = { id: eventId, year: 2026, site: 'Principal', refTrifr: new Prisma.Decimal(2.79), refLtifr: new Prisma.Decimal(1.79), refLtifr13: new Prisma.Decimal(1.07), refLtisr: new Prisma.Decimal(59), version: 2 };
-    const tx = { hhtReferenceTarget: { findFirst: vi.fn().mockResolvedValue(target), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(target) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { hhtReferenceTarget: { findFirst: vi.fn().mockResolvedValue(target), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(target) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.upsertHhtReferenceTarget(identity, { year: 2026, site: 'Principal', refTrifr: 2.79, refLtifr: 1.79, refLtifr13: 1.07, refLtisr: 59, expectedVersion: 1 })).resolves.toMatchObject({ refTrifr: 2.79, version: 2 });
     expect(tx.hhtReferenceTarget.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 } }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'hht_reference_target.updated', resourceId: eventId }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_reference_target.updated', aggregateId: eventId }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_reference_target.updated', aggregateId: eventId }) }));
   });
 
   it('grants a bounded late HHT exception only while its report window remains open', async () => {
     const exception = { id: eventId, companyId: changeId, year: 2026, month: 9, expiresAt: new Date(Date.now() + 60_000) };
-    const tx = { hhtCompany: { findFirst: vi.fn().mockResolvedValue({ id: changeId }) }, hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ status: 'OPEN' }) }, hhtLateException: { create: vi.fn().mockResolvedValue(exception) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { hhtCompany: { findFirst: vi.fn().mockResolvedValue({ id: changeId }) }, hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ status: 'OPEN' }) }, hhtLateException: { create: vi.fn().mockResolvedValue(exception) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.grantHhtLateException(identity, { companyId: changeId, year: 2026, month: 9, expiresAt: exception.expiresAt.toISOString(), reason: 'Documento de fechamento recebido após o prazo.' })).resolves.toEqual(exception);
     expect(tx.hhtLateException.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organizationId: identity.organization.id, grantedById: identity.user.id, companyId: changeId }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_late_exception.granted', aggregateId: eventId }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_late_exception.granted', aggregateId: eventId }) }));
   });
 
   it('closes an elapsed HHT window once and locks only its submitted reports', async () => {
@@ -353,7 +353,7 @@ describe('calculateHhtRates', () => {
     const tx = {
       $executeRaw: vi.fn(), hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ id: windowId, status: 'OPEN', closesAt: new Date(Date.now() - 1_000), version: 3 }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: windowId, status: 'CLOSED' }) },
       hhtReport: { count: vi.fn().mockResolvedValue(0), updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.closeHhtWindow(identity, '2026', '9', { expectedVersion: 3 })).resolves.toMatchObject({ lockedReports: 2 });
@@ -371,7 +371,7 @@ describe('calculateHhtRates', () => {
       $executeRaw: vi.fn(), hhtPeriodPublication: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: publicationId, version: 1 }) },
       hhtReportWindow: { findFirst: vi.fn().mockResolvedValue({ status: 'CLOSED', closedAt: new Date('2026-09-30T00:00:00.000Z') }) },
       hhtReport: { count: vi.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(2), aggregate: vi.fn().mockResolvedValue({ _sum: { hhtWorked: 400_000, hhtMeal: 12_000, workforce: 80, lostDays: 3, lti: 1 } }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     const result = await service.publishHhtPeriod(identity, '2026', '9', { published: true });
@@ -395,7 +395,7 @@ describe('calculateHhtRates', () => {
 
   it('returns a proxied upload intent only when the private object-storage adapter is configured', async () => {
     const asset = { id: eventId, organizationId: identity.organization.id, storageKey: `${identity.organization.id}/random`, contentType: 'application/pdf', byteSize: 42 };
-    const tx = { fileAsset: { create: vi.fn().mockResolvedValue(asset) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { fileAsset: { create: vi.fn().mockResolvedValue(asset) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const storage = { isConfigured: vi.fn().mockReturnValue(true) };
     const scanner = { isConfigured: vi.fn().mockReturnValue(true) };
@@ -468,7 +468,7 @@ describe('calculateHhtRates', () => {
       dashboard: { findFirst: vi.fn().mockResolvedValue(dashboard), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ ...dashboard, published: true, version: 2 }) },
       safetyEvent: { count: vi.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(3) },
       tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1 })).resolves.toMatchObject({ publication: { token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) } });
@@ -490,7 +490,7 @@ describe('calculateHhtRates', () => {
     const ready = { ...pending, status: 'READY' };
     const tx = {
       fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(ready) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn().mockResolvedValue(undefined), verifyObject: vi.fn().mockResolvedValue(true) };
@@ -508,7 +508,7 @@ describe('calculateHhtRates', () => {
     const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
     const tx = {
       fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn().mockResolvedValue(undefined), verifyObject: vi.fn().mockResolvedValue(false) };
@@ -547,7 +547,7 @@ describe('calculateHhtRates', () => {
     const pending = { id: eventId, storageKey: 'tenant/key', contentType: 'application/pdf', byteSize: content.byteLength, checksum: createHash('sha256').update(content).digest('hex'), status: 'PENDING', uploadExpiresAt: new Date(Date.now() + 60_000) };
     const tx = {
       fileAsset: { findFirst: vi.fn().mockResolvedValue(pending), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const storage = { isConfigured: vi.fn().mockReturnValue(true), putObject: vi.fn() };
@@ -556,7 +556,7 @@ describe('calculateHhtRates', () => {
     await expect(new OperationsService(tenants as never, storage as never, scanner as never).uploadFileContent(identity, eventId, content)).rejects.toBeInstanceOf(BadRequestException);
     expect(storage.putObject).not.toHaveBeenCalled();
     expect(tx.fileAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, status: 'QUARANTINED' }, data: expect.objectContaining({ status: 'REJECTED', scannedAt: expect.any(Date) }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'file_asset.rejected' }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'file_asset.rejected' }) }));
   });
 
   it('commits the malware rejection before returning the HTTP error', async () => {
@@ -578,7 +578,7 @@ describe('calculateHhtRates', () => {
               return { count: 1 };
             })
           },
-          auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+          auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
         };
         const result = await work(tx);
         committedStatus = stagedStatus;
@@ -613,7 +613,7 @@ describe('calculateHhtRates', () => {
               return { count: 1 };
             })
           },
-          auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+          auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
         };
         const result = await work(tx);
         committed = staged;
@@ -645,7 +645,7 @@ describe('calculateHhtRates', () => {
       dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, widgets: dashboard.widgets }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
       tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0),
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const result = await new OperationsService(tenants as never).publishDashboard(identity, eventId, { published: true, expectedVersion: 1 });
@@ -654,7 +654,7 @@ describe('calculateHhtRates', () => {
     expect(tx.dashboard.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ published: true, publicTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), publicRevokedAt: null }) }));
     expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { dashboardId: eventId, published: true }, data: expect.objectContaining({ published: false, publicTokenHash: null, publicRevokedAt: expect.any(Date) }) }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'dashboard.publication_created', metadata: expect.not.objectContaining({ token: expect.anything() }) }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'dashboard.publication_created' }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'dashboard.publication_created' }) }));
   });
 
   it('never selects publication token hashes for the internal dashboard listing', async () => {
@@ -680,7 +680,7 @@ describe('calculateHhtRates', () => {
     const dashboard = { id: eventId, version: 2, title: 'Status', published: true };
     const tx = {
       dashboard: { findFirst: vi.fn().mockResolvedValue({ id: eventId, published: true }), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(dashboard) },
-      tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) }, tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0), auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      tvDisplay: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) }, tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0), auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).updateDashboard(identity, eventId, { expectedVersion: 1, widgets: [{ type: 'NOTICE', title: 'Resumo', config: { message: 'Atualizado' } }] })).resolves.toEqual(dashboard);
@@ -707,7 +707,7 @@ describe('calculateHhtRates', () => {
       tvDisplay: { findFirst: vi.fn().mockResolvedValue(display), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue({ id: eventId, version: 2, published: true }) },
       tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       $executeRaw: vi.fn().mockResolvedValue(0),
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const result = await new OperationsService(tenants as never).publishTvDisplay(identity, eventId, { published: true, expectedVersion: 1 });
@@ -716,7 +716,7 @@ describe('calculateHhtRates', () => {
     expect(result.publication?.expiresAt).toEqual(dashboard.publicExpiresAt);
     expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ published: true, publicTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/), publicSnapshot: { title: 'Status operacional', description: 'Snapshot aprovado', widgets: [{ type: 'METRIC', title: 'TRIFR', config: { value: 0, label: 'Meta' } }] } }) }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'tv_display.publication_created', metadata: expect.not.objectContaining({ token: expect.anything() }) }) }));
-    expect(tx.outboxEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tv_display.publication_created' }) }));
+    expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'tv_display.publication_created' }) }));
   });
 
   it('rejects an already expired TV publication before opening a tenant transaction', async () => {
@@ -734,7 +734,7 @@ describe('calculateHhtRates', () => {
 
   it('deactivates a TV screen by revoking its publication and uses version control', async () => {
     const updated = { id: eventId, version: 2, active: false, published: false };
-    const tx = { tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(updated) }, tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0), auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { tvDisplay: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirst: vi.fn().mockResolvedValue(updated) }, tvPlaylist: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(0), auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     await expect(new OperationsService(tenants as never).updateTvDisplay(identity, eventId, { active: false, expectedVersion: 1 })).resolves.toEqual(updated);
     expect(tx.tvDisplay.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: eventId, version: 1 }, data: expect.objectContaining({ active: false, published: false, publicTokenHash: null, publicSnapshot: expect.anything() }) }));
@@ -755,7 +755,7 @@ describe('calculateHhtRates', () => {
     const result = { id: eventId, name: 'Unidades', version: 2, published: true };
     const tx = {
       tvPlaylist: { findFirst: vi.fn().mockResolvedValue(playlist), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findFirstOrThrow: vi.fn().mockResolvedValue(result) },
-      tvDisplay: { findMany: vi.fn().mockResolvedValue([display]) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      tvDisplay: { findMany: vi.fn().mockResolvedValue([display]) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     const published = await new OperationsService(tenants as never).publishTvPlaylist(identity, eventId, { published: true, expectedVersion: 1 });
@@ -790,13 +790,13 @@ describe('calculateHhtRates', () => {
     const updated = { id: eventId, type: 'WEBHOOK', secretRef, lastTestedAt: new Date() };
     const tx = {
       integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef, config }), update: vi.fn().mockResolvedValue(updated) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     try {
       await expect(new OperationsService(tenants as never).checkIntegrationConfiguration(identity, eventId)).resolves.toEqual({ integration: updated, configuration: { state: 'READY' } });
       expect(tx.integration.update).toHaveBeenCalledWith({ where: { id: eventId }, data: { lastTestedAt: expect.any(Date) } });
-      const recorded = JSON.stringify([tx.auditLog.create.mock.calls[0]![0], tx.outboxEvent.create.mock.calls[0]![0]]);
+      const recorded = JSON.stringify([tx.auditLog.create.mock.calls[0]![0], tx.outboxEvent.createMany.mock.calls[0]![0]]);
       expect(recorded).not.toContain(secretValue);
       expect(recorded).toContain('integration.configuration_checked');
     } finally {
@@ -827,7 +827,7 @@ describe('calculateHhtRates', () => {
     const secretRef = 'INTEGRATION_ACME_EMAIL_SECRET';
     const original = process.env[secretRef]; process.env[secretRef] = 'value-that-must-never-appear-in-audit';
     const updated = { id: eventId, type: 'EMAIL', secretRef, lastTestedAt: new Date() };
-    const tx = { integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'EMAIL', secretRef, config: {} }), update: vi.fn().mockResolvedValue(updated) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) } };
+    const tx = { integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'EMAIL', secretRef, config: {} }), update: vi.fn().mockResolvedValue(updated) }, auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) } };
     try {
       await expect(new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never).checkIntegrationConfiguration(identity, eventId)).resolves.toEqual({ integration: updated, configuration: { state: 'UNSUPPORTED_TYPE' } });
     } finally {
@@ -842,7 +842,7 @@ describe('calculateHhtRates', () => {
     const updated = { id: eventId, type: 'WEBHOOK', secretRef, lastTestedAt: new Date() };
     const tx = {
       integration: { findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', secretRef, config }), update: vi.fn().mockResolvedValue(updated) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const tenants = { withTenantTransaction: vi.fn(async (_context, work) => work(tx)) };
     try {
@@ -867,7 +867,7 @@ describe('calculateHhtRates', () => {
     const updated = { id: eventId, name: 'Renamed', status: 'DISABLED', config: {} };
     const tx = {
       integration: { create: vi.fn().mockResolvedValue(created), findFirst: vi.fn().mockResolvedValue({ id: eventId, type: 'WEBHOOK', status: 'DISABLED', secretRef: null, config: {} }), update: vi.fn().mockResolvedValue(updated) },
-      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { create: vi.fn().mockResolvedValue({}) }
+      auditLog: { create: vi.fn().mockResolvedValue({}) }, outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     };
     const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
     await expect(service.createIntegration(identity, { name: 'Webhook', type: 'WEBHOOK', config: { url: 'HTTPS://Hooks.Example.Test:443/events' } })).resolves.toEqual(created);
