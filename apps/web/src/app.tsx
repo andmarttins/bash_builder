@@ -4624,13 +4624,13 @@ function BashModulePage({
         method: "POST",
         body: JSON.stringify({
           title: values.get("title"),
-          description: values.get("description") || null,
-          client: values.get("client") || null,
-          criticality: values.get("criticality") || null,
-          assignedTo: values.get("assignedTo") || null,
+          description: values.get("description") || undefined,
+          client: values.get("client") || undefined,
+          criticality: values.get("criticality") || undefined,
+          assignedTo: values.get("assignedTo") || undefined,
           dueAt: values.get("dueAt")
             ? new Date(String(values.get("dueAt"))).toISOString()
-            : null,
+            : undefined,
         }),
       });
       formElement.reset();
