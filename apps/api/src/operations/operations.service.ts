@@ -545,6 +545,7 @@ export class OperationsService {
   public revokeHhtLateException(identity: SessionIdentity, exceptionIdInput: string, input: unknown) {
     const exceptionId = this.id(exceptionIdInput); const data = this.parse(hhtLateExceptionRevokeSchema, input);
     return this.withTenant(identity, async (tx) => {
+      if (!await tx.hhtLateException.findFirst({ where: { id: exceptionId }, select: { id: true } })) throw new NotFoundException('Exceção de atraso HHT não encontrada.');
       const revoked = await tx.hhtLateException.updateMany({ where: { id: exceptionId, version: data.expectedVersion, revokedAt: null }, data: { revokedAt: new Date(), version: { increment: 1 } } });
       if (revoked.count !== 1) throw new ConflictException('A exceção de atraso foi alterada ou revogada por outra pessoa. Atualize a página antes de tentar novamente.');
       const exception = await tx.hhtLateException.findFirstOrThrow({ where: { id: exceptionId } });

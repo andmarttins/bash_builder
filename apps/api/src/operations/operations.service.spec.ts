@@ -369,6 +369,14 @@ describe('calculateHhtRates', () => {
     expect(tx.outboxEvent.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ eventType: 'hht_late_exception.granted', aggregateId: eventId }) }));
   });
 
+  it('does not expose a late HHT exception outside the active tenant while revoking it', async () => {
+    const tx = { hhtLateException: { findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn() } };
+    const service = new OperationsService({ withTenantTransaction: vi.fn(async (_context, work) => work(tx)) } as never);
+
+    await expect(service.revokeHhtLateException(identity, eventId, { expectedVersion: 1 })).rejects.toBeInstanceOf(NotFoundException);
+    expect(tx.hhtLateException.updateMany).not.toHaveBeenCalled();
+  });
+
   it('closes an elapsed HHT window once and locks only its submitted reports', async () => {
     const windowId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a23';
     const tx = {
