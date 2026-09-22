@@ -702,7 +702,8 @@ export function App(): React.JSX.Element {
   }
   async function createGroup(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -711,7 +712,7 @@ export function App(): React.JSX.Element {
         { method: "POST", body: JSON.stringify({ name: values.get("name"), description: values.get("description") || null }) },
       );
       setGroups((current) => [...current, result.group].sort((left, right) => left.name.localeCompare(right.name)));
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível criar o grupo.");
     } finally { setPending(false); }
