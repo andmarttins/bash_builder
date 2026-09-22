@@ -343,6 +343,23 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('isolates authenticated dashboard reads and mutations to the active tenant', async () => {
+    const dashboardA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a47';
+    const dashboardB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a48';
+    await bootstrap.query(
+      'INSERT INTO "dashboards" (id, organization_id, title, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',
+      [dashboardA, tenantA, 'Tenant A dashboard', dashboardB, tenantB, 'Tenant B dashboard']
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "dashboards" ORDER BY id')).rows).toEqual([{ id: dashboardA }]);
+      expect((await runtime.query('SELECT id FROM "dashboards" WHERE id = $1', [dashboardB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "dashboards" SET title = $1 WHERE id = $2 RETURNING id', ['Forbidden update', dashboardB])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+    expect((await bootstrap.query<{ title: string }>('SELECT title FROM "dashboards" WHERE id = $1', [dashboardB])).rows).toEqual([{ title: 'Tenant B dashboard' }]);
+  });
+
   it('exposes only an active HHT aggregate publication selected by its token digest', async () => {
     const published = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380b41';
     const revoked = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380b42';
