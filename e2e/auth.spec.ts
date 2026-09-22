@@ -5,6 +5,10 @@ function localDateTime(value: Date): string {
   return `${value.getFullYear()}-${part(value.getMonth() + 1)}-${part(value.getDate())}T${part(value.getHours())}:${part(value.getMinutes())}:${part(value.getSeconds())}`;
 }
 
+function expectedLocalDateTimeValue(value: string): RegExp {
+  return new RegExp(`^${value.slice(0, 16)}${value.endsWith(':00') ? '(?::00)?' : value.slice(16)}$`);
+}
+
 async function expectPublicFormUnavailable(browser: Browser, path: string): Promise<void> {
   const context = await browser.newContext();
   try {
@@ -117,7 +121,7 @@ test('owner publishes a form, receives a public submission, expires and revokes 
   const expiryInput = page.locator('input[name="expiresAt"]');
   const expiry = localDateTime(new Date(Date.now() + 10_000));
   await expiryInput.evaluate((node, value) => { const input = node as HTMLInputElement; input.step = '1'; input.value = value; }, expiry);
-  await expect(expiryInput).toHaveValue(expiry);
+  await expect(expiryInput).toHaveValue(expectedLocalDateTimeValue(expiry));
   const expiringPublish = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/publication') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Publicar e gerar novo link' }).click();
   expect((await expiringPublish).status()).toBe(201);
@@ -209,7 +213,7 @@ test('owner publishes a dashboard and protects its public link lifecycle', async
   const expiryInput = expiringCard.locator('input[type="datetime-local"]');
   const expiry = localDateTime(new Date(Date.now() + 10_000));
   await expiryInput.evaluate((node, value) => { const input = node as HTMLInputElement; input.step = '1'; input.value = value; }, expiry);
-  await expect(expiryInput).toHaveValue(expiry);
+  await expect(expiryInput).toHaveValue(expectedLocalDateTimeValue(expiry));
   const expiringPublish = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith(`/dashboards/${expiringDashboard.dashboard.id}/publish`) && response.request().method() === 'POST');
   await expiringCard.getByRole('button', { name: 'Publicar' }).click();
   expect((await expiringPublish).status()).toBe(201);

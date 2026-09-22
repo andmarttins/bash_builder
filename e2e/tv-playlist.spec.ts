@@ -5,6 +5,10 @@ function localDateTime(value: Date): string {
   return `${value.getFullYear()}-${part(value.getMonth() + 1)}-${part(value.getDate())}T${part(value.getHours())}:${part(value.getMinutes())}:${part(value.getSeconds())}`;
 }
 
+function expectedLocalDateTimeValue(value: string): RegExp {
+  return new RegExp(`^${value.slice(0, 16)}${value.endsWith(':00') ? '(?::00)?' : value.slice(16)}$`);
+}
+
 async function expectPublicPlaylistUnavailable(browser: Browser, path: string): Promise<void> {
   const context = await browser.newContext();
   try {
@@ -86,7 +90,7 @@ test('owner publishes a TV playlist and protects its public link lifecycle', asy
   const dashboardExpiry = dashboardCard.locator('input[type="datetime-local"]');
   const expiry = localDateTime(new Date(Date.now() + 30_000));
   await dashboardExpiry.evaluate((node, value) => { const input = node as HTMLInputElement; input.step = '1'; input.value = value; }, expiry);
-  await expect(dashboardExpiry).toHaveValue(expiry);
+  await expect(dashboardExpiry).toHaveValue(expectedLocalDateTimeValue(expiry));
   const republishDashboard = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith(`/dashboards/${dashboard.dashboard.id}/publish`) && response.request().method() === 'POST');
   await dashboardCard.getByRole('button', { name: 'Gerar novo link' }).click();
   expect((await republishDashboard).status()).toBe(201);

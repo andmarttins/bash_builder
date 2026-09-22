@@ -5,6 +5,10 @@ function localDateTime(value: Date): string {
   return `${value.getFullYear()}-${part(value.getMonth() + 1)}-${part(value.getDate())}T${part(value.getHours())}:${part(value.getMinutes())}:${part(value.getSeconds())}`;
 }
 
+function expectedLocalDateTimeValue(value: string): RegExp {
+  return new RegExp(`^${value.slice(0, 16)}${value.endsWith(':00') ? '(?::00)?' : value.slice(16)}$`);
+}
+
 async function expectPublicHhtUnavailable(browser: Browser, path: string): Promise<void> {
   const context = await browser.newContext();
   try {
@@ -108,7 +112,7 @@ test('owner publishes an HHT aggregate and protects its public link lifecycle', 
   const expiryInput = periodItem.locator('input[type="datetime-local"]');
   const expiry = localDateTime(new Date(Date.now() + 30_000));
   await expiryInput.evaluate((node, value) => { const input = node as HTMLInputElement; input.step = '1'; input.value = value as string; }, expiry);
-  await expect(expiryInput).toHaveValue(expiry);
+  await expect(expiryInput).toHaveValue(expectedLocalDateTimeValue(expiry));
   const republishPeriod = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/hht/publications/${year}/${month}` && response.request().method() === 'POST');
   await periodItem.getByRole('button', { name: 'Publicar consolidado' }).click();
   expect((await republishPeriod).status()).toBe(201);
