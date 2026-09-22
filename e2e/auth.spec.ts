@@ -55,7 +55,7 @@ test('owner publishes a form, receives a public submission, expires and revokes 
   await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Formulários', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Formulários' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Formulários', exact: true })).toBeVisible();
   await page.locator('input[name="title"]').fill('Inspeção pública E2E');
   const createResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/forms' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Criar formulário' }).click();
