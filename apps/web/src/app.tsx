@@ -521,7 +521,8 @@ export function App(): React.JSX.Element {
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
-    const values = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
     setPending(true);
     setError(null);
     try {
@@ -532,7 +533,7 @@ export function App(): React.JSX.Element {
           slug: values.get("slug"),
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       const result = await api<{ organizations: Organization[] }>(
         "/v1/organizations",
       );
