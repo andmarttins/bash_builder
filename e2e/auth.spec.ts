@@ -16,6 +16,17 @@ async function expectPublicFormUnavailable(browser: Browser, path: string): Prom
   }
 }
 
+async function expectPublicDashboardUnavailable(browser: Browser, path: string): Promise<void> {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.goto(path);
+    await expect(page.getByRole('heading', { name: 'Painel indisponível' })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+}
+
 test.describe.serial('authentication and public form lifecycle', () => {
 test('bootstrap forces password replacement, then supports login and logout', async ({ page }) => {
   await page.goto('/');
@@ -143,6 +154,97 @@ test('owner publishes a form, receives a public submission, expires and revokes 
   await expect(page.getByText('Ainda não há formulários nesta empresa.')).toBeVisible();
   await expect(page.getByText('Inspeção pública E2E', { exact: true })).toHaveCount(0);
   const crossTenantStatus = await page.evaluate(async (formId) => (await fetch(`/api/v1/forms/${formId}`, { credentials: 'include' })).status, createdForm.form.id);
+  expect(crossTenantStatus).toBe(404);
+});
+
+test('owner publishes a dashboard, protects its public link lifecycle, and isolates tenant data', async ({ page, browser }) => {
+  await page.goto('/');
+  await page.locator('input[name="email"]').fill('owner@empresa-e2e.test');
+  await page.locator('input[name="password"]').fill('Permanent-password-456');
+  await page.getByRole('button', { name: 'Entrar' }).click();
+  await expect(page.getByRole('heading', { name: 'Visão geral da empresa' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Painéis', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Painéis', exact: true })).toBeVisible();
+  await page.locator('input[name="title"]').fill('Indicadores públicos E2E');
+  const createResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/dashboards' && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Criar painel' }).click();
+  const createdDashboardResponse = await createResponse;
+  expect(createdDashboardResponse.status()).toBe(201);
+  const createdDashboard = await createdDashboardResponse.json() as { dashboard: { id: string } };
+  const dashboardCard = page.locator('article.event-detail', { hasText: 'Indicadores públicos E2E' });
+  await expect(dashboardCard).toBeVisible();
+
+  const publishResponse = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith(`/dashboards/${createdDashboard.dashboard.id}/publish`) && response.request().method() === 'POST');
+  await dashboardCard.getByRole('button', { name: 'Publicar' }).click();
+  expect((await publishResponse).status()).toBe(201);
+  const publicLink = await page.locator('code').filter({ hasText: '/p/' }).textContent();
+  expect(publicLink).toMatch(/\/p\/[A-Za-z0-9_-]{43}$/);
+  const publicPath = new URL(publicLink!).pathname;
+
+  const publicContext = await browser.newContext();
+  try {
+    const publicPage = await publicContext.newPage();
+    await publicPage.goto(publicPath);
+    await expect(publicPage.getByRole('heading', { name: 'Indicadores públicos E2E' })).toBeVisible();
+    await expect(publicPage.getByText('Eventos em acompanhamento', { exact: true })).toBeVisible();
+  } finally {
+    await publicContext.close();
+  }
+
+  await expectPublicDashboardUnavailable(browser, `/p/${'a'.repeat(43)}`);
+  page.once('dialog', (dialog) => dialog.accept());
+  const revokeResponse = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith(`/dashboards/${createdDashboard.dashboard.id}/publish`) && response.request().method() === 'POST');
+  await dashboardCard.getByRole('button', { name: 'Revogar' }).click();
+  expect((await revokeResponse).status()).toBe(201);
+  await expectPublicDashboardUnavailable(browser, publicPath);
+
+  await page.locator('input[name="title"]').fill('Expiração do painel E2E');
+  const expiringCreate = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/dashboards' && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Criar painel' }).click();
+  const expiringDashboardResponse = await expiringCreate;
+  expect(expiringDashboardResponse.status()).toBe(201);
+  const expiringDashboard = await expiringDashboardResponse.json() as { dashboard: { id: string } };
+  const expiringCard = page.locator('article.event-detail', { hasText: 'Expiração do painel E2E' });
+  const expiryInput = expiringCard.locator('input[type="datetime-local"]');
+  const expiry = localDateTime(new Date(Date.now() + 10_000));
+  await expiryInput.evaluate((node, value) => { const input = node as HTMLInputElement; input.step = '1'; input.value = value; }, expiry);
+  await expect(expiryInput).toHaveValue(expiry);
+  const expiringPublish = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith(`/dashboards/${expiringDashboard.dashboard.id}/publish`) && response.request().method() === 'POST');
+  await expiringCard.getByRole('button', { name: 'Publicar' }).click();
+  expect((await expiringPublish).status()).toBe(201);
+  const expiringLink = await page.locator('code').filter({ hasText: '/p/' }).textContent();
+  const expiringPath = new URL(expiringLink!).pathname;
+  const expiringContext = await browser.newContext();
+  try {
+    const expiringPage = await expiringContext.newPage();
+    await expiringPage.goto(expiringPath);
+    await expect(expiringPage.getByRole('heading', { name: 'Expiração do painel E2E' })).toBeVisible();
+    await expect(async () => {
+      await expiringPage.reload();
+      await expect(expiringPage.getByRole('heading', { name: 'Painel indisponível' })).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] });
+  } finally {
+    await expiringContext.close();
+  }
+
+  await page.getByRole('button', { name: 'Organização', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Nova organização' }).fill('Empresa painéis E2E');
+  await page.locator('input[name="slug"]').fill('empresa-paineis-e2e');
+  const createOrganization = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations' && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Criar organização' }).click();
+  const organizationResponse = await createOrganization;
+  expect(organizationResponse.status()).toBe(201);
+  const createdOrganization = await organizationResponse.json() as { organization: { id: string } };
+  await page.locator('select[name="organizationId"]').selectOption(createdOrganization.organization.id);
+  const switchResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations/switch' && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Trocar organização' }).click();
+  expect((await switchResponse).status()).toBe(201);
+  await page.getByRole('button', { name: 'Painéis', exact: true }).click();
+  await expect(page.getByText('Nenhum painel criado.')).toBeVisible();
+  const crossTenantStatus = await page.evaluate(async (dashboardId) => (await fetch(`/api/v1/dashboards/${dashboardId}/publish`, {
+    method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ published: true, expectedVersion: 1 }),
+  })).status, createdDashboard.dashboard.id);
   expect(crossTenantStatus).toBe(404);
 });
 });

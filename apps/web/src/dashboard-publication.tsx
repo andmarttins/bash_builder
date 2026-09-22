@@ -21,9 +21,11 @@ export function DashboardsModulePage({ canManage }: { canManage: boolean }): Rea
   const load = useCallback(async () => { try { const [panel, summary] = await Promise.all([request<{ dashboards: Dashboard[] }>('/v1/dashboards'), request<AnalyticsSummary>('/v1/analytics/summary')]); setDashboards(panel.dashboards); setAnalytics(summary); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível carregar os painéis.'); } }, []);
   useEffect(() => { void load(); }, [load]);
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); setPending(true); setError(null);
-    const title = String(new FormData(event.currentTarget).get('title') ?? '').trim();
-    try { await request('/v1/dashboards', { method: 'POST', body: JSON.stringify({ title, widgets: [{ type: 'ANALYTICS', title: 'Eventos em acompanhamento', config: { source: 'safety.open_events', metric: 'total' } }, { type: 'ANALYTICS', title: 'Mudanças registradas', config: { source: 'changes.by_status', metric: 'total' } }, { type: 'ANALYTICS', title: 'Cartões BASH', config: { source: 'bash.by_stage', metric: 'total' } }, { type: 'ANALYTICS', title: 'TRIFR do período', config: { source: 'hht.latest_rates', metric: 'trifr' } }] }) }); event.currentTarget.reset(); await load(); }
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    setPending(true); setError(null);
+    const title = String(new FormData(formElement).get('title') ?? '').trim();
+    try { await request('/v1/dashboards', { method: 'POST', body: JSON.stringify({ title, widgets: [{ type: 'ANALYTICS', title: 'Eventos em acompanhamento', config: { source: 'safety.open_events', metric: 'total' } }, { type: 'ANALYTICS', title: 'Mudanças registradas', config: { source: 'changes.by_status', metric: 'total' } }, { type: 'ANALYTICS', title: 'Cartões BASH', config: { source: 'bash.by_stage', metric: 'total' } }, { type: 'ANALYTICS', title: 'TRIFR do período', config: { source: 'hht.latest_rates', metric: 'trifr' } }] }) }); formElement.reset(); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível criar o painel.'); } finally { setPending(false); }
   }
   async function publish(dashboard: Dashboard, regenerate = false): Promise<void> {
