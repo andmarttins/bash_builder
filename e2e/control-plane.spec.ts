@@ -59,7 +59,7 @@ async function seedControlPlane(identity: Identity) {
   try {
     await client.query(
       'INSERT INTO "user_notifications" (id, organization_id, identity_user_id, event_id, type, title, body, target) VALUES ($1, $2, $3, $4, $5, $6, $7, $8), ($9, $2, $3, $10, $5, $11, $12, $8)',
-      [notificationIds[0], identity.organization.id, identity.user.id, randomUUID(), 'change.deadline_reminder', 'F4 notification one', 'Apenas o destinatário pode ler este aviso.', 'changes', notificationIds[1], randomUUID(), 'F4 notification two', 'O segundo aviso comprova a leitura em lote.']
+      [notificationIds[0], identity.organization.id, identity.user.id, randomUUID(), 'change.deadline_reminder', 'F4 notification one', 'Apenas o destinatário pode ler este aviso.', null, notificationIds[1], randomUUID(), 'F4 notification two', 'O segundo aviso comprova a leitura em lote.']
     );
     await client.query(
       'INSERT INTO "outbox_events" (id, organization_id, aggregate_id, event_type, schema_version, payload, status, attempt_count, available_at, last_error) VALUES ($1, $2, $3, $4, 1, $5::jsonb, $6::"OutboxStatus", 3, NOW(), $7)',
