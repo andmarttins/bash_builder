@@ -61,7 +61,7 @@ test('owner completes the invitation, membership and tenant-isolation lifecycle'
   }, acceptedMember!.id);
   expect(updatedMember.status).toBe(200);
   expect(updatedMember.body).toEqual({ member: { id: acceptedMember!.id, role: 'VIEWER', status: 'SUSPENDED' } });
-  await expect(page.locator('form.member-row', { hasText: 'aceito-acesso-e2e@example.test' })).toContainText('aceito-acesso-e2e@example.test');
+  await expect(page.getByText('aceito-acesso-e2e@example.test', { exact: true })).toBeVisible();
 
   await invitationForm.getByLabel('E-mail do novo membro').fill('revogado-acesso-e2e@example.test');
   const createRevokedInvitation = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations/current/invitations' && response.request().method() === 'POST');
