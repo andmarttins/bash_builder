@@ -23,13 +23,13 @@ o referencia como a raiz do plano em curso.
 | `BLOQUEADO` | Exige decisão, evidência, acesso ou aprovação externa. |
 | `NÃO INICIAR` | Não deve ser implementado até constar no escopo aprovado do piloto. |
 
-**Última revisão:** 22/09/2026, commit `e08da67`; CI `35729188873` aprovado.
+**Última revisão:** 22/09/2026, commit `d69db82`; CI `35731296112` aprovado.
 
 ## Status consolidado
 
 | Situação | Quantidade |
 | --- | ---: |
-| Concluídos | 20 |
+| Concluídos | 21 |
 | Pendentes | 2 |
 | Bloqueados | 14 |
 | Não iniciar | 5 |
@@ -104,6 +104,7 @@ o referencia como a raiz do plano em curso.
 | P4.2f | Cobrir os fluxos privados centrais de Eventos, Mudanças e BASH: ação e ciclo de evento, workflow de Mudança com bloqueio de risco, criação/comentário/movimentação de cartão e negação de mutações entre tenants. | `CONCLUÍDO (código)` | CI `35722752525` passou com Playwright, integração RLS, lint, tipos, 310 unitários e build; revisão independente: 6/10 inicial, 9/10 final. |
 | P4.2g | Cobrir o inventário seguro de Integrações/Webhook: cadastro desativado, verificação de configuração sem segredo, bloqueio de ativação, ausência de vazamento do valor de runtime e negação de leitura/mutação entre tenants. | `CONCLUÍDO (código)` | CI `35724770312` passou com Playwright, integração RLS, lint, tipos, unitários e build; revisão independente: 8/10 inicial, 9/10 final. |
 | P4.2h | Cobrir Arquivos privados com dependências efêmeras reais: upload no navegador, checksum, ClamAV, MinIO, download autenticado, cancelamento, rejeição de malware e isolamento entre tenants. | `CONCLUÍDO (código)` | CI `35729188873` passou com MinIO, ClamAV, Playwright, integração, lint, tipos, 310 unitários e build; revisão independente: 7,5/10 inicial, 9/10 final. |
+| P4.2i | Cobrir Grupos e classificações tipadas de eventos: CRUD/membros, persistência após recarga, desativação, bloqueio de catálogo inativo e isolamento de leitura/mutação entre tenants. | `CONCLUÍDO (código)` | CI `35731296112` passou com Playwright, integração RLS, lint, tipos, unitários e build; revisão independente: 6,5/10 inicial, 9/10 final. |
 | P4.3 | Executar revisão crítica independente por incremento e corrigir até nota >= 9/10, sem ajuste artificial. | `PENDENTE` | Registro da nota, achados, correções e reavaliação anexado ao item entregue. |
 | P4.4 | Produzir runbook de dual-run e corte; executar carga reexecutável, reconciliação, delta final e rollback ensaiado. | `BLOQUEADO` | Gates P0–P3 aprovados, smoke tests e RPO/RTO comprovados. |
 | P4.5 | Desativar capacidades legadas após aceite e retenção. | `NÃO INICIAR` | Aceite formal, data de retirada, evidências arquivadas e plano de reversão/compensação. |
@@ -128,3 +129,4 @@ ampliando os testes end-to-end sem alterar o escopo de negócio.
 | 22/09/2026 | P4.2f e P4.3 | cobertura E2E privada de Eventos, Mudanças e BASH, com tentativas de mutação entre tenants. O ciclo crítico encontrou e corrigiu: serialização de `datetime-local` com segundos zero, criação aninhada das etapas Prisma, seletor Playwright do workflow de Mudança e serialização de campos opcionais vazios do cartão BASH. Avaliação independente: 6/10 inicial, 9/10 final. | commits `42b227d`–`3eeec1c`; CI `35722752525` aprovado |
 | 22/09/2026 | P4.2g e P4.3 | cobertura E2E do inventário Webhook: configuração sem referência, estado `MISSING_SECRET_REFERENCE`, bloqueio de ativação, estado `READY` com sentinela exclusiva de E2E e ausência desse valor na resposta, DOM e auditoria; isolamento por listagem, alteração e verificação entre tenants. Avaliação independente: 8/10 inicial, 9/10 final. | commits `2dce189`–`dde0e72`; CI `35724770312` aprovado |
 | 22/09/2026 | P4.2h e P4.3 | cobertura E2E de Arquivos privados com MinIO e ClamAV efêmeros: upload pela UI, checksum, persistência/validação S3, download autenticado, cancelamento e isolamento por tenant. O ciclo crítico encontrou e corrigiu acesso anônimo ao objeto real, montagem segura do EICAR em DOCX/ZIP, imagem MinIO no Quay, seletor de título e retorno à aba após reload. Avaliação independente: 7,5/10 inicial, 9/10 final. | commits `d1160fe`–`e08da67`; CI `35729188873` aprovado |
+| 22/09/2026 | P4.2i e P4.3 | cobertura E2E de Grupos e classificações tipadas de Eventos: criação, associação, edição, persistência após recarga, exclusão, desativação, bloqueio de classificação inativa e negativas cross-tenant. O ciclo crítico encontrou o join indevido de `identity_users` na listagem de grupos, incompatível com a revogação intencional de leitura do papel runtime; a resposta passou a projetar somente IDs de associação, e a UI continua usando a rota já autorizada de membros para dados de exibição. Avaliação independente: 6,5/10 inicial, 9/10 final. | commits `0c352c2`, `d69db82`; CI `35731296112` aprovado |
