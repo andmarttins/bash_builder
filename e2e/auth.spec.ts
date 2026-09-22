@@ -131,9 +131,11 @@ test('owner publishes a form, receives a public submission, expires and revokes 
   await page.locator('input[name="slug"]').fill('empresa-isolada-e2e');
   const createOrganization = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Criar organização' }).click();
-  expect((await createOrganization).status()).toBe(201);
+  const organizationResponse = await createOrganization;
+  expect(organizationResponse.status()).toBe(201);
+  const createdOrganization = await organizationResponse.json() as { organization: { id: string } };
   const organizationSelector = page.locator('select[name="organizationId"]');
-  await organizationSelector.selectOption({ label: /Empresa isolada E2E/ });
+  await organizationSelector.selectOption(createdOrganization.organization.id);
   const switchResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations/switch' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Trocar organização' }).click();
   expect((await switchResponse).status()).toBe(201);
