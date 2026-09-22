@@ -78,6 +78,8 @@ test('owner uploads, downloads and cancels private files without crossing tenant
   expect(pendingIntent.status).toBe(201);
   const pendingAsset = pendingIntent.body as { asset: { id: string } };
   await page.reload();
+  await page.getByRole('button', { name: 'Arquivos', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Arquivos', exact: true })).toBeVisible();
   const pendingFile = page.locator('article.form-row', { hasText: 'cancel-e2e.pdf' });
   await expect(pendingFile).toContainText('PENDING');
   const cancelUpload = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/files/${pendingAsset.asset.id}/cancel` && response.request().method() === 'POST');
@@ -112,6 +114,8 @@ test('owner uploads, downloads and cancels private files without crossing tenant
   }, { fileId: infectedAsset.asset.id, bytes: [...eicarPdf] });
   expect(malwareUpload).toBe(400);
   await page.reload();
+  await page.getByRole('button', { name: 'Arquivos', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Arquivos', exact: true })).toBeVisible();
   const rejectedMalwareFile = page.locator('article.form-row', { hasText: 'rejected-eicar-e2e.pdf' });
   await expect(rejectedMalwareFile).toContainText('REJECTED');
   await expect(rejectedMalwareFile.getByRole('link', { name: 'Baixar' })).toHaveCount(0);
