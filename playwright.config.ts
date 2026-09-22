@@ -48,7 +48,8 @@ export default defineConfig({
         DATABASE_URL: runtimeDatabaseUrl,
         REDIS_URL: e2eRedisUrl,
         BOOTSTRAP_TOKEN: 'e2e-bootstrap-token-0123456789abcdef',
-        CURSOR_SIGNING_SECRET: 'e2e-cursor-signing-secret-0123456789abcdef'
+        CURSOR_SIGNING_SECRET: 'e2e-cursor-signing-secret-0123456789abcdef',
+        INTEGRATION_EMPRESA_E2E_WEBHOOK_SECRET: 'e2e-only-runtime-secret-sentinel-not-for-production'
       }
     },
     {
