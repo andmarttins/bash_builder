@@ -28,7 +28,9 @@ o referencia como a raiz do plano em curso.
 | `BLOQUEADO` | Exige decisão, evidência, acesso ou aprovação externa. |
 | `NÃO INICIAR` | Não deve ser implementado até constar no escopo aprovado do piloto. |
 
-**Última revisão:** 22/09/2026, commit `d69db82`; CI `35731296112` aprovado.
+**Última validação de código:** 22/09/2026, commit `d69db82`; CI
+`35731296112` aprovado. A última atualização de planejamento está registrada
+no histórico deste arquivo.
 
 ## Status executivo — frentes grandes
 
