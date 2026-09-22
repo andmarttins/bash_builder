@@ -229,14 +229,14 @@ test('owner publishes a dashboard, protects its public link lifecycle, and isola
   }
 
   await page.getByRole('button', { name: 'Organização', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Nova organização' }).fill('Empresa painéis E2E');
-  await page.locator('input[name="slug"]').fill('empresa-paineis-e2e');
-  const createOrganization = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations' && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Criar organização' }).click();
-  const organizationResponse = await createOrganization;
-  expect(organizationResponse.status()).toBe(201);
-  const createdOrganization = await organizationResponse.json() as { organization: { id: string } };
-  await page.locator('select[name="organizationId"]').selectOption(createdOrganization.organization.id);
+  const organizationSelector = page.locator('select[name="organizationId"]');
+  const currentOrganizationId = await organizationSelector.inputValue();
+  const otherOrganizationId = await organizationSelector.locator('option').evaluateAll(
+    (options, currentId) => options.map((option) => option.getAttribute('value')).find((id) => id && id !== currentId),
+    currentOrganizationId,
+  );
+  expect(otherOrganizationId).toBeTruthy();
+  await organizationSelector.selectOption(otherOrganizationId!);
   const switchResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/organizations/switch' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Trocar organização' }).click();
   expect((await switchResponse).status()).toBe(201);

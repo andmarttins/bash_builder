@@ -736,6 +736,27 @@ describeIntegration('PostgreSQL row-level security', () => {
     expect((await bootstrap.query<{ id: string }>('SELECT id FROM "outbox_events" WHERE id = $1', [runtimeOutboxId])).rows).toEqual([{ id: runtimeOutboxId }]);
   });
 
+  it('allows the runtime ORM to enqueue only a tenant-scoped initial outbox event', async () => {
+    const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380ef9';
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: runtimeUrl }) });
+    try {
+      const result = await new TenantTransactionService(prisma as never).withTenantTransaction({
+        tenantId: tenantA,
+        tenantSlug: 'tenant-a',
+        membershipId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380efa',
+        actorId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380efb'
+      }, (tx) => tx.outboxEvent.createMany({
+        data: { organizationId: tenantA, aggregateId, eventType: 'queue.orm_created', payload: {} }
+      }));
+      expect(result.count).toBe(1);
+    } finally {
+      await prisma.$disconnect();
+    }
+    expect((await bootstrap.query<{ organization_id: string; status: string; attempt_count: number }>(
+      'SELECT organization_id, status::text, attempt_count FROM "outbox_events" WHERE aggregate_id = $1', [aggregateId]
+    )).rows).toEqual([{ organization_id: tenantA, status: 'PENDING', attempt_count: 0 }]);
+  });
+
   it('persists a domain projection only through the worker procedure and de-duplicates redelivery', async () => {
     const eventId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a85';
     const aggregateId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a86';
