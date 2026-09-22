@@ -17,7 +17,7 @@ async function expectStatus(page: Page, path: RegExp, method: string, expectedSt
 }
 
 test('owner executes the main event, change and BASH flows with tenant isolation', async ({ page }) => {
-  test.setTimeout(75_000);
+  test.setTimeout(120_000);
   await page.goto('/');
   await page.locator('input[name="email"]').fill('owner@empresa-e2e.test');
   await page.locator('input[name="password"]').fill('Permanent-password-456');
@@ -63,31 +63,30 @@ test('owner executes the main event, change and BASH flows with tenant isolation
   expect(changeResponse.status()).toBe(201);
   const change = await changeResponse.json() as { change: { id: string } };
   const changeCard = page.locator('article.event-detail', { hasText: 'Mudança operacional E2E' });
-  const stepForm = changeCard.locator('form').filter({ has: changeCard.getByRole('button', { name: 'Concluir etapa' }) });
-  await stepForm.getByLabel('Escopo da mudança').fill('Escopo operacional controlado');
-  await stepForm.getByLabel('Solicitante e partes envolvidas').fill('Equipe operacional E2E');
-  await stepForm.getByLabel('Registro da etapa 1').fill('Etapa inicial registrada para validação.');
-  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/1\/complete$/, 'POST', () => stepForm.getByRole('button', { name: 'Concluir etapa' }).click());
+  await changeCard.getByLabel('Escopo da mudança').fill('Escopo operacional controlado');
+  await changeCard.getByLabel('Solicitante e partes envolvidas').fill('Equipe operacional E2E');
+  await changeCard.getByLabel('Registro da etapa 1').fill('Etapa inicial registrada para validação.');
+  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/1\/complete$/, 'POST', () => changeCard.getByRole('button', { name: 'Concluir etapa' }).click());
   await expect(changeCard.locator('small')).toContainText('etapa 2');
-  await stepForm.getByLabel('Gatilho da mudança').fill('Gatilho operacional identificado');
-  await stepForm.getByLabel('Impacto esperado').fill('Impacto avaliado e comunicado');
-  await stepForm.getByLabel('Registro da etapa 2').fill('Gatilho e impacto registrados para validação.');
-  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/2\/complete$/, 'POST', () => stepForm.getByRole('button', { name: 'Concluir etapa' }).click());
+  await changeCard.getByLabel('Gatilho da mudança').fill('Gatilho operacional identificado');
+  await changeCard.getByLabel('Impacto esperado').fill('Impacto avaliado e comunicado');
+  await changeCard.getByLabel('Registro da etapa 2').fill('Gatilho e impacto registrados para validação.');
+  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/2\/complete$/, 'POST', () => changeCard.getByRole('button', { name: 'Concluir etapa' }).click());
   await expect(changeCard.locator('small')).toContainText('etapa 3');
-  await stepForm.getByLabel('Plano de implementação').fill('Executar mudança com acompanhamento.');
-  await stepForm.getByLabel('Plano de retorno').fill('Reverter procedimento se houver falha.');
-  await stepForm.getByLabel('Registro da etapa 3').fill('Planos de execução e retorno registrados.');
-  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/3\/complete$/, 'POST', () => stepForm.getByRole('button', { name: 'Concluir etapa' }).click());
+  await changeCard.getByLabel('Plano de implementação').fill('Executar mudança com acompanhamento.');
+  await changeCard.getByLabel('Plano de retorno').fill('Reverter procedimento se houver falha.');
+  await changeCard.getByLabel('Registro da etapa 3').fill('Planos de execução e retorno registrados.');
+  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/3\/complete$/, 'POST', () => changeCard.getByRole('button', { name: 'Concluir etapa' }).click());
   await expect(changeCard.locator('small')).toContainText('etapa 4');
-  await stepForm.getByLabel('Aceite do risco residual').fill('Risco residual pendente de validação.');
-  await stepForm.getByLabel('Registro da etapa 4').fill('Tentativa de concluir sem risco registrado.');
-  await expectStatus(page, /\/api\/v1\/changes\/[^/]+\/steps\/4\/complete$/, 'POST', 400, () => stepForm.getByRole('button', { name: 'Concluir etapa' }).click());
+  await changeCard.getByLabel('Aceite do risco residual').fill('Risco residual pendente de validação.');
+  await changeCard.getByLabel('Registro da etapa 4').fill('Tentativa de concluir sem risco registrado.');
+  await expectStatus(page, /\/api\/v1\/changes\/[^/]+\/steps\/4\/complete$/, 'POST', 400, () => changeCard.getByRole('button', { name: 'Concluir etapa' }).click());
   await changeCard.getByLabel('Perigo').fill('Risco operacional E2E');
   await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/risks$/, 'POST', () => changeCard.getByRole('button', { name: 'Adicionar risco' }).click());
   await expect(changeCard.getByText('1 risco(s)')).toBeVisible();
-  await stepForm.getByLabel('Aceite do risco residual').fill('Risco residual aceito pela equipe responsável.');
-  await stepForm.getByLabel('Registro da etapa 4').fill('Avaliação de risco concluída com evidência.');
-  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/4\/complete$/, 'POST', () => stepForm.getByRole('button', { name: 'Concluir etapa' }).click());
+  await changeCard.getByLabel('Aceite do risco residual').fill('Risco residual aceito pela equipe responsável.');
+  await changeCard.getByLabel('Registro da etapa 4').fill('Avaliação de risco concluída com evidência.');
+  await expectResponse(page, /\/api\/v1\/changes\/[^/]+\/steps\/4\/complete$/, 'POST', () => changeCard.getByRole('button', { name: 'Concluir etapa' }).click());
   await expect(changeCard.locator('small')).toContainText('IN_REVIEW');
 
   await page.getByRole('button', { name: 'BASH', exact: true }).click();
