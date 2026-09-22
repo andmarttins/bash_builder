@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { BashStage, ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
+import { BashStage, ChangeStatus, ChangeWorkflowStepName, HhtReportStatus, IntegrationStatus, IntegrationType, MembershipRole, Prisma, SafetyEventStatus, type HhtReport } from '@prisma/client';
 import { z } from 'zod';
 import type { SessionIdentity } from '../identity/identity.service.js';
 import { assertFileContentMatchesType } from '../platform/storage/file-content-validation.js';
@@ -273,11 +273,14 @@ export class OperationsService {
       const change = await tx.changeRequest.findFirst({ where: { id: changeId }, select: { status: true, currentStep: true, createdById: true } });
       if (!change) throw new NotFoundException('Mudança não encontrada.');
       if (change.status !== 'IN_REVIEW' || change.currentStep !== 5) throw new BadRequestException('Aprovadores só podem ser definidos durante a etapa formal de revisão.');
-      const approver = await tx.membership.findFirst({ where: { organizationId: identity.organization.id, status: 'ACTIVE', identityUser: { email: data.approverEmail, active: true } }, select: { id: true, identityUserId: true, role: true } });
+      const approvers = await tx.$queryRaw<Array<{ membership_id: string; identity_user_id: string; membership_role: MembershipRole }>>(Prisma.sql`
+        SELECT * FROM app.resolve_active_approver_membership(${data.approverEmail}::citext)
+      `);
+      const approver = approvers[0];
       if (!approver) throw new BadRequestException('O aprovador deve ser um membro ativo desta organização.');
-      if (approver.identityUserId === identity.user.id) throw new ForbiddenException('Quem solicita uma aprovação não pode decidir a própria solicitação.');
-      if (change.createdById === approver.identityUserId) throw new ForbiddenException('A pessoa que criou a mudança não pode ser seu aprovador.');
-      const approval = await tx.changeApproval.create({ data: { organizationId: identity.organization.id, changeId, approverUserId: approver.identityUserId, approverMembershipId: approver.id, approverMembershipRole: approver.role, ...data } });
+      if (approver.identity_user_id === identity.user.id) throw new ForbiddenException('Quem solicita uma aprovação não pode decidir a própria solicitação.');
+      if (change.createdById === approver.identity_user_id) throw new ForbiddenException('A pessoa que criou a mudança não pode ser seu aprovador.');
+      const approval = await tx.changeApproval.create({ data: { organizationId: identity.organization.id, changeId, approverUserId: approver.identity_user_id, approverMembershipId: approver.membership_id, approverMembershipRole: approver.membership_role, ...data } });
       await this.record(tx, identity, 'change.approval_requested', 'change_approval', approval.id, { changeId, approverEmail: approval.approverEmail });
       return approval;
     });
