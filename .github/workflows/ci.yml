@@ -77,7 +77,7 @@ jobs:
           docker run --detach --rm --name builder-minio-e2e -p 9000:9000
           -e MINIO_ROOT_USER=e2e-minio-access
           -e MINIO_ROOT_PASSWORD=e2e-minio-secret-0123456789
-          minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --address :9000
+          quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z server /data --address :9000
       - name: Wait for private object storage
         run: >-
           for attempt in {1..30}; do
