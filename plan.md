@@ -23,13 +23,13 @@ o referencia como a raiz do plano em curso.
 | `BLOQUEADO` | Exige decisão, evidência, acesso ou aprovação externa. |
 | `NÃO INICIAR` | Não deve ser implementado até constar no escopo aprovado do piloto. |
 
-**Última revisão:** 22/09/2026, commit `5f27cf2`; CI `35718935350` aprovado.
+**Última revisão:** 22/09/2026, commit `3eeec1c`; CI `35722752525` aprovado.
 
 ## Status consolidado
 
 | Situação | Quantidade |
 | --- | ---: |
-| Concluídos | 17 |
+| Concluídos | 18 |
 | Pendentes | 2 |
 | Bloqueados | 14 |
 | Não iniciar | 5 |
@@ -101,6 +101,7 @@ o referencia como a raiz do plano em curso.
 | P4.2c | Cobrir o ciclo público de Tela TV: Painel publicado, criação da tela, publicação, acesso anônimo, token inválido, revogação e expiração herdada; provar o isolamento autenticado de telas entre tenants. | `CONCLUÍDO (código)` | CI `35715637710` passou com duas suítes Playwright isoladas, integração RLS, lint, tipos, unitários e build; revisão independente: 4/10 inicial, 9/10 final. |
 | P4.2d | Cobrir o ciclo público de Playlist TV: Painel e Tela publicados, criação da playlist, acesso anônimo, token inválido, revogação e expiração herdada; provar o isolamento autenticado de playlists entre tenants. | `CONCLUÍDO (código)` | CI `35717066775` passou com três suítes Playwright isoladas, integração RLS, lint, tipos, unitários e build; revisão independente: 7/10 inicial, 9/10 final. |
 | P4.2e | Cobrir o ciclo público do consolidado HHT: empresa, janela, reporte, bloqueio, encerramento, publicação, acesso anônimo, token inválido, revogação e expiração; provar também o isolamento autenticado de publicações HHT entre tenants. | `CONCLUÍDO (código)` | CI `35718935350` passou com quatro suítes Playwright isoladas, integração RLS, lint, tipos, unitários e build; revisão independente: 4/10 inicial, 9/10 final. |
+| P4.2f | Cobrir os fluxos privados centrais de Eventos, Mudanças e BASH: ação e ciclo de evento, workflow de Mudança com bloqueio de risco, criação/comentário/movimentação de cartão e negação de mutações entre tenants. | `CONCLUÍDO (código)` | CI `35722752525` passou com Playwright, integração RLS, lint, tipos, 310 unitários e build; revisão independente: 6/10 inicial, 9/10 final. |
 | P4.3 | Executar revisão crítica independente por incremento e corrigir até nota >= 9/10, sem ajuste artificial. | `PENDENTE` | Registro da nota, achados, correções e reavaliação anexado ao item entregue. |
 | P4.4 | Produzir runbook de dual-run e corte; executar carga reexecutável, reconciliação, delta final e rollback ensaiado. | `BLOQUEADO` | Gates P0–P3 aprovados, smoke tests e RPO/RTO comprovados. |
 | P4.5 | Desativar capacidades legadas após aceite e retenção. | `NÃO INICIAR` | Aceite formal, data de retirada, evidências arquivadas e plano de reversão/compensação. |
@@ -122,3 +123,4 @@ ampliando os testes end-to-end sem alterar o escopo de negócio.
 | 22/09/2026 | P4.2c e P4.3 | cobertura E2E da Tela TV: criação a partir de Painel publicado, acesso público, token inválido, revogação e expiração herdada; isolamento autenticado de telas provado no RLS. As suítes browser foram separadas para reiniciar somente o rate limiter em memória, sem reduzir a proteção de produção. Corrigidos o rótulo real da navegação e o timeout do cenário de expiração. Avaliação independente: 4/10 inicial, 9/10 final. | commits `979f568`–`45af03e`; CI `35715637710` aprovado |
 | 22/09/2026 | P4.2d e P4.3 | cobertura E2E da Playlist TV: criação a partir de Tela publicada, acesso público, token inválido, revogação e expiração herdada; isolamento autenticado de playlists provado no RLS. Corrigidos o prazo de expiração insuficiente e o seletor dependente da ordem de formulários. Avaliação independente: 7/10 inicial, 9/10 final. | commit `11466f9`; CI `35717066775` aprovado |
 | 22/09/2026 | P4.2e e P4.3 | cobertura E2E do consolidado público HHT: empresa, janela, reporte, bloqueio, encerramento, publicação, acesso anônimo, token inválido, revogação e expiração; isolamento autenticado de publicações provado no RLS. Corrigida a ordem temporal do cenário: a janela permanece aberta até o reporte estar bloqueado, e só então é encerrada/publicada. A tela pública passou a expor apenas o snapshot agregado por URL opaca. Avaliação independente: 4/10 inicial, 9/10 final. | commit `5f27cf2`; CI `35718935350` aprovado |
+| 22/09/2026 | P4.2f e P4.3 | cobertura E2E privada de Eventos, Mudanças e BASH, com tentativas de mutação entre tenants. O ciclo crítico encontrou e corrigiu: serialização de `datetime-local` com segundos zero, criação aninhada das etapas Prisma, seletor Playwright do workflow de Mudança e serialização de campos opcionais vazios do cartão BASH. Avaliação independente: 6/10 inicial, 9/10 final. | commits `42b227d`–`3eeec1c`; CI `35722752525` aprovado |
