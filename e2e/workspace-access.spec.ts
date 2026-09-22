@@ -33,7 +33,7 @@ test('owner completes the invitation, membership and tenant-isolation lifecycle'
 
   const acceptedContext = await openInvitation(browser, acceptedInvitation.invitationToken);
   try {
-    await acceptedContext.page.locator('input[name="password"]').fill('Accepted-invitation-password-789');
+    await acceptedContext.page.getByRole('textbox', { name: 'Nova senha' }).fill('Accepted-invitation-password-789');
     const acceptInvitation = acceptedContext.page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/invitations/accept' && response.request().method() === 'POST');
     await acceptedContext.page.getByRole('button', { name: 'Criar acesso e aceitar convite' }).click();
     expect((await acceptInvitation).status()).toBe(201);
@@ -77,7 +77,7 @@ test('owner completes the invitation, membership and tenant-isolation lifecycle'
 
   const revokedContext = await openInvitation(browser, revokedInvitation.invitationToken);
   try {
-    await revokedContext.page.locator('input[name="password"]').fill('Revoked-invitation-password-789');
+    await revokedContext.page.getByRole('textbox', { name: 'Nova senha' }).fill('Revoked-invitation-password-789');
     const acceptRevokedInvitation = revokedContext.page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/invitations/accept' && response.request().method() === 'POST');
     await revokedContext.page.getByRole('button', { name: 'Criar acesso e aceitar convite' }).click();
     expect((await acceptRevokedInvitation).status()).toBe(401);

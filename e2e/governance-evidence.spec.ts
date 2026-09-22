@@ -45,7 +45,7 @@ async function acceptApproverInvitation(browser: Browser, token: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto(`/?invite=${encodeURIComponent(token)}`);
-  await page.locator('input[name="password"]').fill('Approver-invitation-password-789');
+  await page.getByRole('textbox', { name: 'Nova senha' }).fill('Approver-invitation-password-789');
   const accepted = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/invitations/accept' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Criar acesso e aceitar convite' }).click();
   expect((await accepted).status()).toBe(201);
