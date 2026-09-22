@@ -413,6 +413,29 @@ describeIntegration('PostgreSQL row-level security', () => {
     } finally { await runtime.query('ROLLBACK'); }
   });
 
+  it('isolates authenticated TV display reads and mutations to the active tenant', async () => {
+    const dashboardA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a61';
+    const dashboardB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a62';
+    const displayA = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a63';
+    const displayB = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a64';
+    await bootstrap.query(
+      'INSERT INTO "dashboards" (id, organization_id, title, updated_at) VALUES ($1, $2, $3, NOW()), ($4, $5, $6, NOW())',
+      [dashboardA, tenantA, 'Tenant A TV source', dashboardB, tenantB, 'Tenant B TV source']
+    );
+    await bootstrap.query(
+      'INSERT INTO "tv_displays" (id, organization_id, dashboard_id, name, updated_at) VALUES ($1, $2, $3, $4, NOW()), ($5, $6, $7, $8, NOW())',
+      [displayA, tenantA, dashboardA, 'Tenant A display', displayB, tenantB, dashboardB, 'Tenant B display']
+    );
+    await runtime.query('BEGIN');
+    try {
+      await runtime.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+      expect((await runtime.query('SELECT id FROM "tv_displays" ORDER BY id')).rows).toEqual([{ id: displayA }]);
+      expect((await runtime.query('SELECT id FROM "tv_displays" WHERE id = $1', [displayB])).rows).toEqual([]);
+      expect((await runtime.query('UPDATE "tv_displays" SET name = $1 WHERE id = $2 RETURNING id', ['Forbidden update', displayB])).rows).toEqual([]);
+    } finally { await runtime.query('ROLLBACK'); }
+    expect((await bootstrap.query<{ name: string }>('SELECT name FROM "tv_displays" WHERE id = $1', [displayB])).rows).toEqual([{ name: 'Tenant B display' }]);
+  });
+
   it('exposes only an active TV playlist snapshot selected by its token digest', async () => {
     const published = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a58';
     const revoked = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a59';
