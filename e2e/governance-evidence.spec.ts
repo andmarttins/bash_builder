@@ -181,6 +181,13 @@ test('governs form treatment, evidence, approvals, HHT and analytics without ten
     const target = await request(page, '/api/v1/hht/reference-targets', 'PUT', { year: 2026, site: 'Principal', refTrifr: 1, refLtifr: 1, refLtifr13: 1, refLtisr: 1 });
     expect(target.status).toBeGreaterThanOrEqual(200);
     expect(target.status).toBeLessThan(300);
+    const reportWindow = await request(page, '/api/v1/hht/windows', 'PUT', {
+      year: 2026,
+      month: 12,
+      opensAt: new Date(Date.now() - 86_400_000).toISOString(),
+      closesAt: new Date(Date.now() + 86_400_000).toISOString()
+    });
+    expect(reportWindow.status).toBe(200);
     const lateException = await request(page, '/api/v1/hht/late-exceptions', 'POST', { companyId, year: 2026, month: 12, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), reason: 'Exceção testada para governança F4.' });
     expect(lateException.status).toBe(201);
     const exception = (lateException.body as { exception: { id: string; version: number } }).exception;
